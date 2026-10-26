@@ -16,7 +16,7 @@ class RelationshipEngine(private val scope:CoroutineScope,private val repo:Proce
     fun afterChat(friendId:String){evaluate(friendId,false)}
     fun cancel(friendId:String){active.remove(friendId)?.let{a->a.lease.cancel();a.job?.cancel();a.work?.let{w->scope.launch(NonCancellable){repository.fail(w,"CANCELLED");changed()}}}}
     suspend fun recover(){repository.recoverAbandoned(session);repo.store.friends().forEach{evaluate(it.id,false,true)}}
-    suspend fun reassess(friendId:String):RelationshipCandidate {
+    suspend fun reassess(friendId:String):RelationshipCandidate=Diagnostics.span("relationship.reassess",mapOf("character" to friendId)){
         val task=Active(ChatAttemptLease(),currentCoroutineContext()[Job])
         rejectUnless(active.putIfAbsent(friendId,task)==null,"BUSY")
         try {
@@ -29,7 +29,7 @@ class RelationshipEngine(private val scope:CoroutineScope,private val repo:Proce
             val result=client.complete(credentials.config,credentials.key,request)
             currentCoroutineContext().ensureActive()
             rejectUnless(task.lease.isActive(),"CANCELLED")
-            return when(result){
+            return@span when(result){
                 is TextChatResult.Failure->throw ProcessingRejected("MODEL_${result.reason.name}")
                 is TextChatResult.Success->review.preview(plan,JSONObject(result.text)){access.current(ModelPurpose.RELATIONSHIP,credentials.stamp)}
             }
@@ -37,10 +37,10 @@ class RelationshipEngine(private val scope:CoroutineScope,private val repo:Proce
             task.lease.cancel();active.remove(friendId,task)
         }
     }
-    suspend fun adopt(candidate:RelationshipCandidate)=review.adopt(candidate,{access.current(ModelPurpose.RELATIONSHIP,candidate.plan.work.configStamp)})
+    suspend fun adopt(candidate:RelationshipCandidate)=Diagnostics.span("relationship.adopt",mapOf("character" to candidate.plan.work.friendId,"expected_version" to candidate.plan.expectedVersion)){review.adopt(candidate,{access.current(ModelPurpose.RELATIONSHIP,candidate.plan.work.configStamp)})}
     fun evaluate(friendId:String,manual:Boolean=true,recovery:Boolean=false):Job? {
         val task=Active(ChatAttemptLease());if(active.putIfAbsent(friendId,task)!=null)return null
-        val job=scope.launch{
+        val job=scope.launch(Diagnostics.context("relationship")){
             try{
                 val p=repo.policy(friendId).first
                 if(!p.relationshipEnabled||p.historyChoice=="UNCONFIRMED"||(!manual&&!p.relationshipAutomatic))return@launch
@@ -53,6 +53,7 @@ class RelationshipEngine(private val scope:CoroutineScope,private val repo:Proce
                 }
                 currentCoroutineContext().ensureActive()
                 val work=task.work?:return@launch
+                Diagnostics.event("relationship.evaluate",mapOf("character" to friendId,"task" to work.id,"previous_version" to work.previous.version,"sources" to work.targets.map{mapOf("turn" to it.source.turnId,"version" to it.source.version)},"manual" to manual,"recovery" to recovery))
                 val friend=repo.read{repo.friend(it,friendId)}
                 val prompts=RolePromptStore.decode(repo.store.preference(RolePromptStore.key(friendId),""))
                 val request=makeRequest(work,friend,prompts,credentials.config.outputTokens)

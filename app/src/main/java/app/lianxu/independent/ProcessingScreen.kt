@@ -34,6 +34,7 @@ internal fun processingMessage(code:String)=when(code){
     else->"本次未完整完成，旧记录保留。请检查配置后重试。"
 }
 internal fun taskDescription(s:ProcessingRepository.TaskStatus)=when(s.state){
+    "ARCHIVED"->"导入的历史快照已归档，不恢复旧任务"
     "IDLE"->"尚未运行";"RUNNING"->"处理中";"WAITING"->"等待有界重试（第 ${s.attempt} 次）";"COMMITTED","COMPLETED"->"已完整保存";else->processingMessage(s.error)
 }
 @Composable internal fun ProcessingDirectory(vm:AppState){

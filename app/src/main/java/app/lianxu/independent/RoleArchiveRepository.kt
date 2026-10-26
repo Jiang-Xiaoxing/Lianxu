@@ -11,6 +11,7 @@ import java.util.UUID
 
 /** Selected-role snapshots only. Preview is optimistic; commit rechecks inside one SQLite transaction. */
 internal class RoleArchiveRepository(private val store:Store) {
+    internal fun validateForBackup(db:SQLiteDatabase,p:RoleArchive.Package)=validate(db,p)
     data class Preview(val archive:RoleArchive.Package,val target:String?,val fingerprint:String?,val impact:String)
     private val order=RoleArchive.tables.keys.toList()
     private fun rows(db:SQLiteDatabase,table:String,id:String):JsonArray {
@@ -49,7 +50,8 @@ internal class RoleArchiveRepository(private val store:Store) {
                 else "覆盖「${f["name"].asString}」全部角色资料及记录：本地聊天 ${counts["messages"].asJsonArray.size()} 条、记忆 ${counts["memory_current"].asJsonArray.size()} 条、关系历史 ${counts["relationship_history"].asJsonArray.size()} 版将由包内资料替换。旧任务与派生缓存会清理，无法在此撤销，请先导出备份。\n${archive.summary}")
         }
     }
-    suspend fun commit(preview:Preview,confirmOverwrite:Boolean=false,checkpoint:()->Unit={}):String=atomic(mutation=true){db->
+    suspend fun commit(preview:Preview,confirmOverwrite:Boolean=false,lease:ChatAttemptLease=ChatAttemptLease(),checkpoint:()->Unit={}):String=atomic(mutation=true){db->
+        check(lease.isActive()){"导入已取消"}
         val archive=RoleArchive.validate(preview.archive.raw.toByteArray());require(archive.digest==preview.archive.digest)
         validate(db,archive)
         val target=preview.target
@@ -74,7 +76,7 @@ internal class RoleArchiveRepository(private val store:Store) {
         // No import can activate paid evaluation or restore model selection.
         db.delete("processing_policies","friend_id=?",arrayOf(id))
         db.insertOrThrow("processing_policies",null,ContentValues().apply{put("friend_id",id);put("json",ProcessingPolicy().json().toString());put("version",1)})
-        checkpoint();id
+        checkpoint();check(lease.commit{true}){"导入已取消"};id
     }
     private fun clearJobs(db:SQLiteDatabase,id:String){
         listOf("memory_operations","memory_batch_reviews").forEach{db.delete(it,"batch_id IN (SELECT id FROM memory_batches WHERE friend_id=?)",arrayOf(id))}

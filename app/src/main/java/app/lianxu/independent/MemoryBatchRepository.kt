@@ -40,7 +40,7 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
         rejectUnless(db.rawQuery("SELECT 1 FROM memory_operations WHERE batch_id=? AND result_id=?",arrayOf(batchId,memoryId)).use{it.moveToFirst()},"STALE_TASK")
         db.insertWithOnConflict("memory_batch_reviews",null,ContentValues().apply{put("batch_id",batchId);put("memory_id",memoryId);put("version",m.version);put("digest",reviewDigest(db,work,m));put("decision","KEEP_CURRENT");put("created",System.currentTimeMillis())},SQLiteDatabase.CONFLICT_REPLACE)
     }
-    private fun pendingWork(db:SQLiteDatabase,friendId:String):MemoryWork?=db.rawQuery("SELECT json FROM memory_batches WHERE friend_id=? AND state<>'COMMITTED' ORDER BY rowid",arrayOf(friendId)).use{c->var found:MemoryWork?=null;while(found==null&&c.moveToNext()){val w=MemoryWork.from(JSONObject(c.getString(0)));if(repo.sourcesMatch(db,w.targets))found=w};found}
+    private fun pendingWork(db:SQLiteDatabase,friendId:String):MemoryWork?=db.rawQuery("SELECT json FROM memory_batches WHERE friend_id=? AND state NOT IN('COMMITTED','ARCHIVED') ORDER BY rowid",arrayOf(friendId)).use{c->var found:MemoryWork?=null;while(found==null&&c.moveToNext()){val w=MemoryWork.from(JSONObject(c.getString(0)));if(repo.sourcesMatch(db,w.targets))found=w};found}
     suspend fun prepare(friendId:String,targets:List<SourceDialogue>,configStamp:String,existingIds:Set<String>?=null,expectedRulesVersion:Int?=null,associationIds:Set<String> = emptySet()):MemoryWork=repo.tx{db->
         rejectUnless(targets.isNotEmpty()&&targets.all{it.source.characterId==friendId})
         rejectUnless(repo.sourcesMatch(db,targets),"SOURCE_CHANGED")
@@ -57,7 +57,7 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
     }
     suspend fun beginAttempt(work:MemoryWork,session:String)=repo.tx{db->
         rejectUnless(repo.memoryRules(db).second==work.rulesVersion,"SOURCE_CHANGED")
-        val count=db.rawQuery("SELECT attempt FROM memory_batches WHERE id=? AND json=? AND state<>'COMMITTED'",arrayOf(work.id,work.json().toString())).use{rejectUnless(it.moveToFirst(),"STALE_TASK");it.getInt(0)+1}
+        val count=db.rawQuery("SELECT attempt FROM memory_batches WHERE id=? AND json=? AND state NOT IN('COMMITTED','ARCHIVED')",arrayOf(work.id,work.json().toString())).use{rejectUnless(it.moveToFirst(),"STALE_TASK");it.getInt(0)+1}
         rejectUnless(count<=3,"MANUAL_RETRY")
         db.update("memory_batches",ContentValues().apply{put("state","RUNNING");put("attempt",count);put("owner_session",session);putNull("error")},"id=?",arrayOf(work.id));count
     }
@@ -84,6 +84,7 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
         }.distinct()
     }
     suspend fun apply(work:MemoryWork,op:JSONObject,configCurrent:()->Boolean={true}):String=repo.tx{db->
+        Diagnostics.event("memory.operation.received",mapOf("character" to work.friendId,"batch" to work.id,"operation" to op.toString()))
         validate(db,work,configCurrent)
         val key=op.getString("id");rejectUnless(key.matches(Regex("[A-Za-z0-9_-]{1,64}")))
         val digest=stableDigest(canonicalJson(op))
@@ -155,6 +156,7 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
         val cursor=maxOf(repo.cursor(db,work.friendId),work.targets.last().source.turnId)
         db.insertWithOnConflict("memory_progress",null,ContentValues().apply{put("friend_id",work.friendId);put("cursor",cursor)},SQLiteDatabase.CONFLICT_REPLACE)
         db.update("memory_batches",ContentValues().apply{put("state","COMMITTED");putNull("error");put("next_retry",0)},"id=?",arrayOf(work.id))
+        Diagnostics.event("memory.batch.receipt.staged",mapOf("character" to work.friendId,"batch" to work.id,"operation_count" to declaredCount,"cursor" to cursor))
         repo.maintainCore(db,work.friendId)
         // Optional graph errors cannot roll back a valid summary or retire an incomplete one.
         db.execSQL("SAVEPOINT optional_associations")
@@ -164,6 +166,6 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
         }
         if(lease==null)finish() else lease.guard(finish)
     }
-    suspend fun fail(work:MemoryWork,code:String,retryAt:Long=0)=repo.tx{db->db.update("memory_batches",ContentValues().apply{put("state",if(retryAt>0)"WAITING" else "FAILED");put("error",code);put("next_retry",retryAt)},"id=? AND json=? AND state<>'COMMITTED'",arrayOf(work.id,work.json().toString()))}
+    suspend fun fail(work:MemoryWork,code:String,retryAt:Long=0)=repo.tx{db->db.update("memory_batches",ContentValues().apply{put("state",if(retryAt>0)"WAITING" else "FAILED");put("error",code);put("next_retry",retryAt)},"id=? AND json=? AND state NOT IN('COMMITTED','ARCHIVED')",arrayOf(work.id,work.json().toString()))}
 }
 

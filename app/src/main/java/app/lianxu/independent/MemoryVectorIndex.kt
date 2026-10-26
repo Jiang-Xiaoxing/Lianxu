@@ -18,22 +18,26 @@ import kotlin.math.sqrt
 internal interface MemoryEmbeddingClient {suspend fun embed(credential:ModelCredential,texts:List<String>,timeout:Int):List<DoubleArray>}
 /** Independent adapter using the project's HTTPS validation/auth rules; no upstream network client copied. */
 internal class HttpsMemoryEmbeddingClient(private val factory:HttpsConnectionFactory=HttpsConnectionFactory{it.openConnection() as HttpsURLConnection}):MemoryEmbeddingClient {
-    override suspend fun embed(credential:ModelCredential,texts:List<String>,timeout:Int):List<DoubleArray> = withContext(Dispatchers.IO){
+    override suspend fun embed(credential:ModelCredential,texts:List<String>,timeout:Int):List<DoubleArray> = withContext(Dispatchers.IO+Diagnostics.context("embedding")){
+        Diagnostics.registerSecret(credential.key);val start=System.nanoTime()
+        Diagnostics.event("embedding.http.request",mapOf("endpoint" to credential.config.baseUrl,"provider" to credential.config.providerId,"model" to credential.config.modelId,"input_count" to texts.size,"input_chars" to texts.map{it.length},"timeout_ms" to timeout),secrets=listOf(credential.key))
         require(ConfigRules.validate(credential.config,credential.key)==null&&texts.size in 1..16)
-        val c=factory.open(URL(credential.config.baseUrl.trimEnd('/')+"/embeddings"))
+        val c=try{factory.open(URL(credential.config.baseUrl.trimEnd('/')+"/embeddings"))}catch(e:Exception){Diagnostics.failure("embedding.http.open_failed",e,secrets=listOf(credential.key));throw e}
         try{
             c.instanceFollowRedirects=false;c.connectTimeout=timeout;c.readTimeout=timeout;c.requestMethod="POST";c.doOutput=true
             val p=ProviderPresets.get(credential.config.providerId);c.setRequestProperty(p.authHeader,if(p.authHeader=="Authorization")"Bearer ${credential.key}" else credential.key)
             c.setRequestProperty("Content-Type","application/json; charset=utf-8")
             val bytes=JSONObject().put("model",credential.config.modelId).put("input",JSONArray(texts)).toString().toByteArray(Charsets.UTF_8)
             require(bytes.size<=256*1024);c.setFixedLengthStreamingMode(bytes.size);c.outputStream.use{it.write(bytes)};bytes.fill(0)
-            require(c.responseCode in 200..299){"embedding_response"}
+            val status=c.responseCode;Diagnostics.event("embedding.http.status",mapOf("status" to status),secrets=listOf(credential.key))
+            require(status in 200..299){"embedding_response"}
             val raw=c.inputStream.use{input->val out=java.io.ByteArrayOutputStream();val buffer=ByteArray(8192);while(out.size()<=2*1024*1024){val n=input.read(buffer,0,minOf(buffer.size,2*1024*1024+1-out.size()));if(n<0)break;out.write(buffer,0,n)};out.toByteArray()};require(raw.size<=2*1024*1024)
+            Diagnostics.event("embedding.http.response",mapOf("response_bytes" to raw.size),elapsed=(System.nanoTime()-start)/1_000_000,secrets=listOf(credential.key))
             val rows=JSONObject(String(raw,Charsets.UTF_8)).getJSONArray("data");require(rows.length()==texts.size)
             val indexed=(0 until rows.length()).map{rows.getJSONObject(it)}.associateBy{it.getInt("index")};require(indexed.keys==(texts.indices).toSet())
             texts.indices.map{i->val a=indexed.getValue(i).getJSONArray("embedding");DoubleArray(a.length()){a.getDouble(it)}.also{require(MemoryVectorIndex.valid(it))}}
-                .also{require(it.map{v->v.size}.distinct().size==1)}
-        }finally{c.disconnect()}
+                .also{require(it.map{v->v.size}.distinct().size==1);Diagnostics.event("embedding.http.parsed",mapOf("vectors" to it.size,"dimensions" to it.firstOrNull()?.size))}
+        }catch(e:Exception){Diagnostics.failure("embedding.http.failed",e,secrets=listOf(credential.key));throw e}finally{c.disconnect()}
     }
 }
 
@@ -45,9 +49,10 @@ internal class MemoryVectorIndex(private val repo:ProcessingRepository,private v
     private fun rows(db:SQLiteDatabase,friend:String):JSONObject=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(key(friend))).use{if(it.moveToFirst())runCatching{JSONObject(it.getString(0))}.getOrDefault(JSONObject()) else JSONObject()}
     suspend fun index(friend:String){
         try{withTimeoutOrNull(30000){mutexes.getOrPut(friend){Mutex()}.withLock{
-            val credentials=access.credential(ModelPurpose.EMBEDDING)?:return@withLock
+            val credentials=access.credential(ModelPurpose.EMBEDDING)?:run{Diagnostics.event("embedding.index.skipped",mapOf("character" to friend,"reason" to "not_configured"));return@withLock}
             val initial=repo.read{db->repo.usableMemories(db,friend) to rows(db,friend)}
             val missing=initial.first.filter{m->val row=initial.second.optJSONObject(m.id);row==null||row.optString("model")!=credentials.stamp||row.optString("fingerprint")!=fingerprint(m)||decode(row.optJSONArray("vector"))==null}.take(32)
+            Diagnostics.event("embedding.index.batch",mapOf("character" to friend,"missing_count" to missing.size,"cached_count" to initial.second.length()))
             for(batch in missing.chunked(16)){
                 val vectors=client.embed(credentials,batch.map(::text),5000);require(vectors.size==batch.size&&vectors.all(::valid)&&vectors.map{it.size}.distinct().size==1)
                 repo.tx{db->if(access.current(ModelPurpose.EMBEDDING,credentials.stamp)){
@@ -57,22 +62,22 @@ internal class MemoryVectorIndex(private val repo:ProcessingRepository,private v
                     db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",key(friend));put("value",cache.toString())},SQLiteDatabase.CONFLICT_REPLACE)
                 }}
             }
-        }}}catch(e:CancellationException){throw e}catch(_:Exception){/* Rebuildable cache. Raw dialogue and memory transactions are unaffected. */}
+        }}.also{if(it==null)Diagnostics.event("embedding.index.timeout",mapOf("character" to friend))}}catch(e:CancellationException){Diagnostics.event("embedding.index.cancelled",mapOf("character" to friend));throw e}catch(e:Exception){Diagnostics.failure("embedding.index.fallback",e,mapOf("character" to friend))/* Rebuildable cache. Raw dialogue and memory transactions are unaffected. */}
     }
     /** Foreground: cached documents only; one query embedding at most; no fallback provider. */
     suspend fun scores(friend:String,query:String):Map<String,Double> {
         if(query.isBlank())return emptyMap()
         return try{withTimeoutOrNull(1500){
-            val credentials=access.credential(ModelPurpose.EMBEDDING)?:return@withTimeoutOrNull emptyMap()
+            val credentials=access.credential(ModelPurpose.EMBEDDING)?:run{Diagnostics.event("embedding.query.fallback",mapOf("character" to friend,"reason" to "not_configured"));return@withTimeoutOrNull emptyMap()}
             val snapshot=repo.read{db->repo.usableMemories(db,friend) to rows(db,friend)}
             val cached=snapshot.first.mapNotNull{m->val row=snapshot.second.optJSONObject(m.id)?:return@mapNotNull null
                 if(row.optString("model")!=credentials.stamp||row.optString("fingerprint")!=fingerprint(m))return@mapNotNull null
                 decode(row.optJSONArray("vector"))?.let{m to it}}
-            if(cached.isEmpty())return@withTimeoutOrNull emptyMap()
+            if(cached.isEmpty()){Diagnostics.event("embedding.query.fallback",mapOf("character" to friend,"reason" to "no_valid_cache"));return@withTimeoutOrNull emptyMap()}
             val q=client.embed(credentials,listOf(query.take(8000)),1000).single();require(valid(q))
             if(!access.current(ModelPurpose.EMBEDDING,credentials.stamp))return@withTimeoutOrNull emptyMap()
-            cached.filter{it.second.size==q.size}.associate{(m,v)->"${m.id}@${m.version}" to cosine(q,v).coerceIn(0.0,1.0)}
-        }?:emptyMap()}catch(e:CancellationException){throw e}catch(_:Exception){emptyMap()}
+            cached.filter{it.second.size==q.size}.associate{(m,v)->"${m.id}@${m.version}" to cosine(q,v).coerceIn(0.0,1.0)}.also{Diagnostics.event("embedding.query.scored",mapOf("character" to friend,"score_count" to it.size))}
+        }.also{if(it==null)Diagnostics.event("embedding.query.fallback",mapOf("character" to friend,"reason" to "timeout"))}?:emptyMap()}catch(e:CancellationException){Diagnostics.event("embedding.query.cancelled",mapOf("character" to friend));throw e}catch(e:Exception){Diagnostics.failure("embedding.query.fallback",e,mapOf("character" to friend));emptyMap()}
     }
     companion object {
         private val mutexes=ConcurrentHashMap<String,Mutex>()

@@ -17,12 +17,14 @@ class RelationshipReviewRepository(private val repo:ProcessingRepository) {
             rejectUnless(c.moveToFirst(),"RELATION_HISTORY_MISSING");RelationshipState.from(JSONObject(c.getString(0)))
         }
     suspend fun previewRollback(id:String,version:Int):RelationshipRollback=repo.read{db->
+        Diagnostics.event("relationship.rollback.preview",mapOf("character" to id,"version" to version))
         val current=relations.state(db,id)
         rejectUnless(version<current.version,"RELATION_HISTORY_MISSING")
         val old=history(db,id,version)
         RelationshipRollback(id,current.version,version,repo.characterStamp(db,id),current,old.copy(version=current.version+1,cursor=current.cursor))
     }
     suspend fun rollback(plan:RelationshipRollback,lease:ChatAttemptLease=ChatAttemptLease()):Boolean=repo.tx{db->lease.commit{
+        Diagnostics.event("relationship.rollback.confirm",mapOf("character" to plan.friendId,"expected_version" to plan.expectedVersion,"target_version" to plan.targetVersion))
         val current=relations.state(db,plan.friendId)
         rejectUnless(current.version==plan.expectedVersion&&repo.characterStamp(db,plan.friendId)==plan.characterStamp,"SOURCE_CHANGED")
         val old=history(db,plan.friendId,plan.targetVersion)
@@ -60,10 +62,12 @@ class RelationshipReviewRepository(private val repo:ProcessingRepository) {
         rejectUnless(configCurrent(),"SOURCE_CHANGED")
     }
     suspend fun preview(plan:RelationshipReassessment,response:JSONObject,configCurrent:()->Boolean):RelationshipCandidate=repo.read{db->
+        Diagnostics.event("relationship.reassessment.preview",mapOf("character" to plan.work.friendId,"expected_version" to plan.expectedVersion,"response" to response.toString()))
         validate(db,plan,configCurrent)
         RelationshipCandidate(plan,relations.propose(db,plan.work,response))
     }
     suspend fun adopt(candidate:RelationshipCandidate,configCurrent:()->Boolean,lease:ChatAttemptLease=ChatAttemptLease()):Boolean=repo.tx{db->lease.commit{
+        Diagnostics.event("relationship.reassessment.adopt",mapOf("character" to candidate.plan.work.friendId,"expected_version" to candidate.plan.expectedVersion))
         val plan=candidate.plan;validate(db,plan,configCurrent)
         val current=relations.state(db,plan.work.friendId)
         relations.save(db,plan.work.friendId,candidate.after.copy(version=current.version+1,cursor=current.cursor),plan.work.id)

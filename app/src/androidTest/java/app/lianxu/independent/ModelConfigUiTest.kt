@@ -68,6 +68,7 @@ class ModelConfigUiTest {
     private fun waitSaved(count:Int){ui.waitUntil(10000){runCatching{vault.list().size==count}.getOrDefault(false)};ui.waitUntil(10000){!state.saving}}
 
     @Test fun layeredCrudValidationKeyboardAndRecreation(){
+        ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-ui-a"))
         ui.onNodeWithTag("config-probe-ui-a",useUnmergedTree=true).assertTextEquals("未测试")
         shot("01-overview-real-app")
         ui.onNodeWithTag("config-add-top").performClick();shot("02-providers-real-app")
@@ -136,7 +137,7 @@ class ModelConfigUiTest {
         ui.waitUntil(10000){state.probe.phase==ProbePhase.REACHABLE}
         late.complete(ConfigResult.Failure(ConfigError.NETWORK))
         ui.waitForIdle();assertEquals(ProbePhase.REACHABLE,state.probe.phase);assertFalse(state.testing)
-        back();ui.onNodeWithTag("config-probe-ui-b",useUnmergedTree=true).assertTextContains("可达",substring=true)
+        back();ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-ui-b"));ui.onNodeWithTag("config-probe-ui-b",useUnmergedTree=true).assertTextContains("可达",substring=true)
         assertEquals("synthetic-chat-model",vault.list().single{it.id==a.id}.modelId)
     }
 

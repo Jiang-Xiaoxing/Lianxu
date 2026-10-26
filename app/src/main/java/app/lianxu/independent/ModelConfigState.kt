@@ -15,7 +15,9 @@ class ModelConfigState @JvmOverloads constructor(
     private val client:ModelDirectoryClient=HttpsModelClient(),
     vaultNamespace:String=AppServices.vaultNamespace
 ):AndroidViewModel(application) {
-    private val vault=ModelVault(application,vaultNamespace)
+    private val storage=Store(application,AppServices.databaseName)
+    private val vault=ModelVault(application,vaultNamespace,storage)
+    private val diagnosticClient=LoggedModelDirectoryClient(client)
     var configs by mutableStateOf(emptyList<ModelConfig>());private set
     var defaultId by mutableStateOf("");private set
     var purposes by mutableStateOf(emptyMap<ModelPurpose,String>());private set
@@ -32,6 +34,7 @@ class ModelConfigState @JvmOverloads constructor(
     private var probeStamp:String?=null
     init {viewModelScope.launch {try {reload()}catch(_:Exception){message("无法读取加密配置，请重试。",true)}}}
     private fun message(text:String,error:Boolean=false){status=text;statusError=error}
+    fun refresh(){viewModelScope.launch{runCatching{reload()}.onFailure{message("无法读取恢复后的配置，请重试。",true)}}}
     private suspend fun reload(){val value=withContext(Dispatchers.IO){Triple(vault.list(),vault.defaultId(),ModelPurpose.entries.associateWith{vault.purposeId(it)})};configs=value.first;defaultId=value.second;purposes=value.third}
     /** Invalidate UI requests on edits, back, disposal and background; keep an explicit disk commit. */
     fun clearResult(){requestVersion++;requestJob?.cancel();requestJob=null;testing=false;probe=ProbeDisplay();probeStamp=null;models=emptyList();status=""}
@@ -70,7 +73,7 @@ class ModelConfigState @JvmOverloads constructor(
             if(version!=requestVersion)return@launch
             val invalid=ConfigRules.urlError(config.baseUrl)?:if(resolved.isBlank())"请填写 API Key；地址或服务商改变后需重新输入。" else null
             if(invalid!=null){if(fetch)message(invalid,true) else probe=ProbeDisplay(ProbePhase.FAILED,invalid);return@launch}
-            val result=client.request(config,resolved,fetch)
+            val result=diagnosticClient.request(config,resolved,fetch)
             if(version!=requestVersion)return@launch
             when(result){
                 is ConfigResult.Success->if(fetch){models=result.modelIds;message(if(models.isEmpty())"目录为空，可直接填写模型 ID。" else "已取得 ${models.size} 个条目，点选填入。")} else {

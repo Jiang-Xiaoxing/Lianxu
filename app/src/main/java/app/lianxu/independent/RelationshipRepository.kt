@@ -45,6 +45,7 @@ class RelationshipRepository(private val repo:ProcessingRepository){
         val json=next.json().put("task",task).toString()
         db.insertOrThrow("relationship_history",null,ContentValues().apply{put("friend_id",friendId);put("version",next.version);put("json",json);put("boundary",next.cursor);put("created",System.currentTimeMillis())})
         db.insertWithOnConflict("relationship_state",null,ContentValues().apply{put("friend_id",friendId);put("json",json);put("version",next.version);put("cursor",next.cursor)},SQLiteDatabase.CONFLICT_REPLACE)
+        Diagnostics.event("relationship.write.staged",mapOf("character" to friendId,"task" to task,"version" to next.version,"cursor" to next.cursor,"values" to next.values.mapKeys{it.key.name}))
     }
     suspend fun begin(friendId:String,id:String,configStamp:String,session:String,manual:Boolean):RelationshipWork?=repo.tx{db->
         val (p,revision)=repo.policy(db,friendId)

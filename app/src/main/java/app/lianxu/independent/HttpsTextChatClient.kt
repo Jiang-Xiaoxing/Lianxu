@@ -36,6 +36,7 @@ class HttpsTextChatClient(
         consumer.join();result
     }
     private suspend fun awaitReply(config:ModelConfig,key:String,request:TextChatRequest,budget:Int,onChunk:((String)->Unit)?=null):TextChatResult = suspendCancellableCoroutine {continuation->
+        Diagnostics.registerSecret(key);val diagnosticTrace=Diagnostics.traceId()
         if(ConfigRules.validate(config,key)!=null){continuation.resume(TextChatResult.Failure(ChatFailure.INVALID_CONFIG));return@suspendCancellableCoroutine}
         val connection=AtomicReference<HttpsURLConnection?>(null)
         val deadline=System.nanoTime()+budget*1_000_000L
@@ -57,10 +58,13 @@ class HttpsTextChatClient(
                 if(request.tools.isNotEmpty())body.put("tools",JSONArray(request.tools)).put("tool_choice","auto")
                 body.put(if(config.providerId in setOf("openai","mimo"))"max_completion_tokens" else "max_tokens",request.outputLimit)
                 val bytes=body.toString().toByteArray(Charsets.UTF_8)
+                Diagnostics.event("http.request.body",mapOf("method" to "POST","endpoint" to config.baseUrl.trimEnd('/')+"/chat/completions","body" to body.toString()),trace=diagnosticTrace,secrets=listOf(key))
                 require(bytes.size<=2*1024*1024);active.setFixedLengthStreamingMode(bytes.size)
                 active.outputStream.use{it.write(bytes)};bytes.fill(0)
                 val status=active.responseCode
-                if(status !in 200..299)TextChatResult.Failure(if(request.tools.isNotEmpty()&&status in setOf(400,422)&&explicitToolsUnsupported(runCatching{active.errorStream?.reader()?.use{reader->val chars=CharArray(16000);var size=0;while(size<chars.size){val n=reader.read(chars,size,chars.size-size);if(n<0)break;size+=n};String(chars,0,size)}.orEmpty()}.getOrDefault("")))ChatFailure.UNSUPPORTED_TOOLS else when(status){401->ChatFailure.UNAUTHORIZED;403->ChatFailure.FORBIDDEN;429->ChatFailure.RATE_LIMIT;in 300..399->ChatFailure.REDIRECT;in 500..599->ChatFailure.SERVER;else->ChatFailure.REJECTED},status)
+                Diagnostics.event("http.response",mapOf("status" to status,"content_type" to active.contentType,"stream" to (onChunk!=null)),trace=diagnosticTrace,secrets=listOf(key))
+                val errorBody=if(status !in 200..299)diagnosticErrorBody(active,deadline,diagnosticTrace,key) else ""
+                if(status !in 200..299)TextChatResult.Failure(if(request.tools.isNotEmpty()&&status in setOf(400,422)&&explicitToolsUnsupported(errorBody))ChatFailure.UNSUPPORTED_TOOLS else when(status){401->ChatFailure.UNAUTHORIZED;403->ChatFailure.FORBIDDEN;429->ChatFailure.RATE_LIMIT;in 300..399->ChatFailure.REDIRECT;in 500..599->ChatFailure.SERVER;else->ChatFailure.REJECTED},status)
                 else if(onChunk!=null&&active.contentType.orEmpty().substringBefore(';').trim().equals("text/event-stream",true)){
                     active.inputStream.use{input->
                         val limited=object:FilterInputStream(input){var count=0
@@ -82,15 +86,24 @@ class HttpsTextChatClient(
                         };output.toByteArray()}
                     if(response.size>2*1024*1024)TextChatResult.Failure(ChatFailure.FORMAT) else parse(String(response,Charsets.UTF_8),key,request.tools.map(::toolNameOf).toSet()).also{if(it is TextChatResult.Success)onChunk?.invoke(it.text)}
                 }
-            }catch(_:SocketTimeoutException){TextChatResult.Failure(ChatFailure.TIMEOUT)}
-            catch(e:StreamRejected){TextChatResult.Failure(e.reason)}
-            catch(_:SSLException){TextChatResult.Failure(ChatFailure.TLS)}
-            catch(_:org.json.JSONException){TextChatResult.Failure(ChatFailure.FORMAT)}
-            catch(_:Exception){TextChatResult.Failure(ChatFailure.NETWORK)}
+            }catch(e:SocketTimeoutException){Diagnostics.failure("http.timeout",e,trace=diagnosticTrace,secrets=listOf(key));TextChatResult.Failure(ChatFailure.TIMEOUT)}
+            catch(e:StreamRejected){Diagnostics.failure("http.stream_failed",e,mapOf("reason" to e.reason.name),trace=diagnosticTrace,secrets=listOf(key));TextChatResult.Failure(e.reason)}
+            catch(e:SSLException){Diagnostics.failure("http.tls_failed",e,trace=diagnosticTrace,secrets=listOf(key));TextChatResult.Failure(ChatFailure.TLS)}
+            catch(e:org.json.JSONException){Diagnostics.failure("http.format_failed",e,trace=diagnosticTrace,secrets=listOf(key));TextChatResult.Failure(ChatFailure.FORMAT)}
+            catch(e:Exception){Diagnostics.failure("http.network_failed",e,trace=diagnosticTrace,secrets=listOf(key));TextChatResult.Failure(ChatFailure.NETWORK)}
             finally{connection.getAndSet(null)?.disconnect();c?.disconnect()}
             if(continuation.isActive)continuation.resume(result)
         }
         continuation.invokeOnCancellation{task.cancel(true);connection.getAndSet(null)?.let{open->Thread({open.disconnect()},"lianxu-text-close").apply{isDaemon=true}.start()}}
+    }
+    private fun diagnosticErrorBody(connection:HttpsURLConnection,deadline:Long,trace:String,key:String):String {
+        var complete=false
+        val bytes=runCatching{connection.errorStream?.use{input->
+            val out=ByteArrayOutputStream();val buffer=ByteArray(2048)
+            while(out.size()<16384){val remaining=((deadline-System.nanoTime())/1_000_000L).toInt();if(remaining<=0)break;connection.readTimeout=minOf(2000,remaining);val n=input.read(buffer,0,minOf(buffer.size,16384-out.size()));if(n<0){complete=true;break};out.write(buffer,0,n)}
+            out.toByteArray()
+        }?:ByteArray(0)}.getOrElse{Diagnostics.failure("http.error_body.unavailable",it,trace=trace,secrets=listOf(key));ByteArray(0)}
+        return String(bytes,Charsets.UTF_8).also{Diagnostics.event("http.error_body",mapOf("body" to if(!complete)"[错误响应未完整读取或达到限额，正文已省略]" else it,"limited" to !complete),trace=trace,secrets=listOf(key))}
     }
     private class StreamRejected(val reason:ChatFailure):Exception()
     /** Only choice zero content is emitted; provider reasoning and tool deltas never become facts. */

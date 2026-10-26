@@ -8,6 +8,7 @@ object ProcessingSchema {
         if("source_revision" !in columns)db.execSQL("ALTER TABLE chat_turns ADD COLUMN source_revision INTEGER NOT NULL DEFAULT 1")
         if("source_zone" !in columns)db.execSQL("ALTER TABLE chat_turns ADD COLUMN source_zone TEXT NOT NULL DEFAULT 'UTC'")
         listOf(
+            "CREATE TABLE IF NOT EXISTS role_assets(friend_id TEXT NOT NULL REFERENCES friends(id),path TEXT NOT NULL,kind TEXT NOT NULL,mime TEXT NOT NULL,data BLOB NOT NULL,PRIMARY KEY(friend_id,path))",
             "CREATE TABLE IF NOT EXISTS processing_policies(friend_id TEXT PRIMARY KEY REFERENCES friends(id),json TEXT NOT NULL,version INTEGER NOT NULL)",
             "CREATE TABLE IF NOT EXISTS message_state(message_id INTEGER PRIMARY KEY REFERENCES messages(id),revision INTEGER NOT NULL,deleted INTEGER NOT NULL DEFAULT 0)",
             "CREATE TABLE IF NOT EXISTS message_history(message_id INTEGER NOT NULL,revision INTEGER NOT NULL,body TEXT NOT NULL,deleted INTEGER NOT NULL,PRIMARY KEY(message_id,revision))",

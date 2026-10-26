@@ -10,20 +10,31 @@ import java.util.UUID
 class AppState @JvmOverloads constructor(application: Application, client:TextChatClient=AppServices.createTextClient(),vaultNamespace:String=AppServices.vaultNamespace) : AndroidViewModel(application) {
     private val store = Store(application,AppServices.databaseName)
     private val ledger=ChatLedger(store)
-    private val modelVault=ModelVault(application,vaultNamespace)
+    private val modelVault=ModelVault(application,vaultNamespace,store)
+    private val diagnosticClient=LoggedTextChatClient(client)
+    internal val backup=BackupRepository(store,modelVault)
     internal val modelAccess=ModelAccess(modelVault)
     internal val processing=ProcessingRepository(store)
     internal val roleArchive=RoleArchiveRepository(store)
-    internal suspend fun importRoleArchive(preview:RoleArchiveRepository.Preview,confirmed:Boolean):String {
-        val id=roleArchive.commit(preview,confirmed);reload();return id
+    internal suspend fun importRoleArchive(preview:RoleArchiveRepository.Preview,confirmed:Boolean,lease:ChatAttemptLease=ChatAttemptLease()):String {
+        return withContext(NonCancellable){val id=Diagnostics.span("backup.legacy.import"){roleArchive.commit(preview,confirmed,lease)};reload();id}
     }
+    internal suspend fun exportBackup(id:String?,includeKeys:Boolean)=Diagnostics.span("backup.export",mapOf("scope" to if(id==null)"all" else "role","include_keys" to includeKeys)) {backup.export(id,includeKeys)}
+    internal suspend fun importBackup(plan:BackupRepository.Preview,confirmed:Boolean,lease:ChatAttemptLease):List<String> = withContext(NonCancellable){Diagnostics.span("backup.import",mapOf("mode" to plan.mode,"scope" to if(plan.pack.all)"all" else "role")) {
+        val ids=backup.commit(plan,confirmed,lease)
+        if(plan.mode=="REPLACE"){
+            val replaced=if(plan.pack.all)friends.map{it.id}else listOf(requireNotNull(plan.target))
+            replaced.forEach{runner.cancel(it);memory.cancel(it);relationship.cancel(it);examplesJobs[it]?.cancel()}
+        }
+        reload();compact=store.preference("compact","false").toBoolean();nickname=store.preference("nickname","旅人");ids
+    }}
     internal val examples=RoleExamplesRepository(store)
-    private val examplesEngine=RoleExamplesEngine(examples,modelAccess,client)
+    private val examplesEngine=RoleExamplesEngine(examples,modelAccess,diagnosticClient)
     private val examplesJobs=mutableMapOf<String,Job>()
-    internal val memory=MemoryEngine(viewModelScope,processing,modelAccess,client,{reload()})
-    internal val relationship=RelationshipEngine(viewModelScope,processing,modelAccess,client,{reload()})
+    internal val memory=MemoryEngine(viewModelScope,processing,modelAccess,diagnosticClient,{reload()})
+    internal val relationship=RelationshipEngine(viewModelScope,processing,modelAccess,diagnosticClient,{reload()})
     private val manualMemoryJobs=mutableSetOf<String>()
-    private val runner=ConversationRunner(viewModelScope,store,modelVault,client,processing,memory,relationship,{reload()},{error=it})
+    private val runner=ConversationRunner(viewModelScope,store,modelVault,diagnosticClient,processing,memory,relationship,{reload()},{error=it})
     var processingRevision by mutableIntStateOf(0);private set
     var turns by mutableStateOf(emptyList<ChatTurn>());private set
     val chatSending get()=activeId in runner.sending
@@ -47,7 +58,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     var compact by mutableStateOf(false); private set
     var nickname by mutableStateOf("旅人"); private set
     var ready by mutableStateOf(false); private set
-    init { viewModelScope.launch { runCatching { ledger.recoverInterrupted();examples.recover();reload(); compact=store.preference("compact","false").toBoolean(); nickname=store.preference("nickname","旅人"); ready=true;recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
+    init { viewModelScope.launch { runCatching { withContext(Dispatchers.IO){Diagnostics.configure(java.io.File(application.filesDir,"diagnostics/$vaultNamespace"),application.packageManager.getPackageInfo(application.packageName,0).versionName.orEmpty())};ledger.recoverInterrupted();examples.recover();reload(); compact=store.preference("compact","false").toBoolean(); nickname=store.preference("nickname","旅人"); ready=true;recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
     private var reloadSerial=0L
     private suspend fun reload() {val id=++reloadSerial;val f=store.friends();val m=store.messages();val t=ledger.all();if(id==reloadSerial){friends=f;messages=m;turns=t;processingRevision++}}
     internal suspend fun refreshProcessing(){reload()}

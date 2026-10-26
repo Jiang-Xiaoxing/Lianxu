@@ -15,7 +15,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
     private data class Auth(val config:ModelConfig,val key:String,val epoch:Long)
     private suspend fun auth():Auth?=withContext(Dispatchers.IO){AppMutationGate.read{
         val id=vault.purposeId(ModelPurpose.CHAT)
-        vault.list().find{it.id==id}?.let{Auth(it,vault.secret(id),AppMutationGate.epoch())}
+        vault.list().find{it.id==id}?.let{config->val key=vault.secret(id);if(key.isBlank())null else Auth(config,key,AppMutationGate.epoch())}
     }}
     fun send(friendId:String,input:String,onPersisted:()->Unit):Boolean {
         if(input.isBlank()||input.length>2000||friendId in sending)return false
@@ -30,13 +30,14 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
     fun cancelAll(){leases.keys.toList().forEach{cancel(it)}}
     private fun launch(friendId:String,input:String?,retryId:String?,onPersisted:()->Unit){
         val lease=ChatAttemptLease();leases[friendId]=lease;sending=sending+friendId
-        jobs[friendId]=scope.launch(start=CoroutineStart.UNDISPATCHED) task@{
+        jobs[friendId]=scope.launch(Diagnostics.context("chat"),start=CoroutineStart.UNDISPATCHED) task@{
             var turn:ChatTurn?=null
             try {
                 val selected=withContext(Dispatchers.IO){vault.purposeId(ModelPurpose.CHAT)}
                 withContext(NonCancellable){
                     turn=if(retryId==null)ledger.begin(friendId,input!!,selected,UUID.randomUUID().toString()) else ledger.retry(retryId,selected)
                     turn?.let{t->
+                        Diagnostics.event("chat.persisted",mapOf("character" to friendId,"turn" to t.id,"attempt" to t.attempt,"input" to input,"retry" to (retryId!=null)))
                         if(leases[friendId]===lease)activeTurns[friendId]=t else ledger.cancel(t.id,t.attempt)
                         onPersisted()
                     }
@@ -56,6 +57,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                 var refs=processing.references(friendId,context.input,current.userMessageId,vectors.scores(friendId,context.input))
                 fun build()=CompanionPrompt.build(context.friend,prompts,context.recent,context.input,refs.valid,refs.pending,capacity=credentials.config.contextTokens,outputLimit=credentials.config.outputTokens,recentLimit=rules.recentRounds,relatedLimit=rules.relatedCount)
                 var built=build()
+                Diagnostics.event("prompt.assembled",mapOf("character" to friendId,"turn" to current.id,"recent_rounds" to context.recent.size,"reference_count" to refs.valid.size,"pending_count" to refs.pending.size,"result" to built.javaClass.simpleName))
                 val fixedOnly=CompanionPrompt.build(context.friend,prompts,emptyList(),context.input,refs.valid.filter{it.mandatory},capacity=credentials.config.contextTokens,outputLimit=credentials.config.outputTokens)
                 if(fixedOnly is PromptBuild.Blocked&&processing.coreBudget(friendId).overGoal){ledger.fail(current.id,current.attempt,ChatFailure.CORE_CAPACITY);changed();return@task}
                 if(built is PromptBuild.Blocked&&built.reason==ChatFailure.CONTEXT_NEEDS_MEMORY&&context.recent.isNotEmpty()){
@@ -75,13 +77,16 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                         }
                         if(!saved)ledger.fail(current.id,current.attempt,ChatFailure.SOURCE_CHANGED)
                         else {memory.afterChat(friendId);relationship.afterChat(friendId)}
+                        Diagnostics.event("chat.result",mapOf("character" to friendId,"turn" to current.id,"saved" to saved))
                     }
                     is TextChatResult.Failure->ledger.fail(current.id,current.attempt,result.reason)
                 }
                 changed()
             }catch(e:CancellationException){
+                Diagnostics.event("chat.cancelled",mapOf("character" to friendId,"turn" to turn?.id))
                 withContext(NonCancellable){turn?.let{ledger.cancel(it.id,it.attempt)};changed()};throw e
-            }catch(_:Exception){
+            }catch(e:Exception){
+                Diagnostics.failure("chat.failed",e,mapOf("character" to friendId,"turn" to turn?.id))
                 withContext(NonCancellable){turn?.let{ledger.fail(it.id,it.attempt,ChatFailure.NETWORK)};changed()}
                 if(leases[friendId]===lease)notice("本次会话未完成，原消息已保留；可检查配置后手动重试。")
             }finally{

@@ -15,9 +15,14 @@ class ProcessingRepository(val store:Store) {
         if(old.first!=value||old.second==0)db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",MemoryRules.KEY);put("value",value.json().put("version",old.second+1).toString())},SQLiteDatabase.CONFLICT_REPLACE)
     }
     internal suspend fun <T> read(block:(SQLiteDatabase)->T):T=withContext(Dispatchers.IO){AppMutationGate.read{block(store.readableDatabase)}}
-    internal suspend fun <T> tx(block:(SQLiteDatabase)->T):T=withContext(Dispatchers.IO){AppMutationGate.read{
-        val db=store.writableDatabase;db.beginTransaction();try{val value=block(db);db.setTransactionSuccessful();value}finally{db.endTransaction()}
-    }}
+    internal suspend fun <T> tx(block:(SQLiteDatabase)->T):T=Diagnostics.span("db.transaction"){withContext(Dispatchers.IO){AppMutationGate.read{
+        val db=store.writableDatabase;val start=System.nanoTime();var success=false;Diagnostics.event("db.transaction.begin");db.beginTransaction()
+        try{val value=block(db);db.setTransactionSuccessful();success=true;value}
+        catch(e:Exception){Diagnostics.failure("db.transaction.failed",e);throw e}finally{
+            try{db.endTransaction();Diagnostics.event(if(success)"db.transaction.commit" else "db.transaction.rollback",elapsed=(System.nanoTime()-start)/1_000_000)}
+            catch(e:Exception){Diagnostics.failure("db.transaction.end_failed",e);throw e}
+        }
+    }}}
     internal fun policy(db:SQLiteDatabase,friendId:String):Pair<ProcessingPolicy,Int> = db.rawQuery("SELECT json,version FROM processing_policies WHERE friend_id=?",arrayOf(friendId)).use{if(it.moveToFirst())ProcessingPolicy.from(JSONObject(it.getString(0))) to it.getInt(1) else ProcessingPolicy() to 0}
     suspend fun policy(friendId:String)=read{policy(it,friendId)}
     internal fun savePolicy(db:SQLiteDatabase,friendId:String,p:ProcessingPolicy){
@@ -57,6 +62,7 @@ class ProcessingRepository(val store:Store) {
         val old=memory(db,m.friendId,m.id);require(m.version==(old?.version?:0)+1)
         db.insertOrThrow("memory_history",null,ContentValues().apply{put("memory_id",m.id);put("version",m.version);put("json",m.json().toString())})
         db.insertWithOnConflict("memory_current",null,ContentValues().apply{put("id",m.id);put("friend_id",m.friendId);put("json",m.json().toString());put("version",m.version);put("valid",if(m.valid)1 else 0)},SQLiteDatabase.CONFLICT_REPLACE)
+        Diagnostics.event("memory.write.staged",mapOf("character" to m.friendId,"memory" to m.id,"version" to m.version,"text" to m.text,"valid" to m.valid,"manual" to m.manual,"locked" to m.locked))
     }
     suspend fun manualSave(friendId:String,id:String?,text:String,category:MemoryCategory,core:Boolean,locked:Boolean,about:MemoryAbout?=null,tags:List<String> = emptyList(),dueDate:String?=null,life:MemoryLife?=null,birthday:String?=null)=tx{db->
         require(text.isNotBlank()&&text.length<=8000);val old=id?.let{memory(db,friendId,it)?:error("Unknown memory")}
@@ -81,6 +87,7 @@ class ProcessingRepository(val store:Store) {
         val current=targetId?.let{memory(db,friendId,it)}
         val data=JSONObject().put("proposed",proposed.json()).put("reason",reason).put("sourceValid",proposed.valid&&proposed.evidence.all{it.source.characterId==friendId&&sourceValid(db,it.source)}).put("targetVersion",current?.version?:JSONObject.NULL).toString()
         db.insertWithOnConflict("memory_candidates",null,ContentValues().apply{put("id",id);put("friend_id",friendId);if(targetId==null)putNull("target_id") else put("target_id",targetId);put("json",data);put("created",System.currentTimeMillis())},SQLiteDatabase.CONFLICT_IGNORE)
+        Diagnostics.event("memory.candidate.staged",mapOf("character" to friendId,"candidate" to id,"target" to targetId,"reason" to reason,"proposed" to proposed.text))
     }
     data class Candidate(val id:String,val targetId:String?,val proposed:StoredMemory,val reason:String,val valid:Boolean=true,val targetVersion:Int?=null)
     internal fun candidates(db:SQLiteDatabase,friendId:String)=db.rawQuery("SELECT id,target_id,json FROM memory_candidates WHERE friend_id=? AND resolved=0 ORDER BY created,id",arrayOf(friendId)).use{c->buildList{while(c.moveToNext()){
@@ -108,6 +115,7 @@ class ProcessingRepository(val store:Store) {
         References(memory.first+listOfNotNull(relation),memory.second,stamp)
     }
     suspend fun resolveCandidate(friendId:String,id:String,accept:Boolean,expectedTargetVersion:Int?=null)=tx{db->
+        Diagnostics.event("memory.candidate.resolve",mapOf("character" to friendId,"candidate" to id,"accept" to accept,"expected_version" to expectedTargetVersion))
         val value=candidates(db,friendId).firstOrNull{it.id==id}?:error("Unknown candidate")
         if(accept){
             rejectUnless(value.valid&&value.proposed.evidence.all{it.source.characterId==friendId&&sourceValid(db,it.source)},"CANDIDATE_SOURCE_INVALID")

@@ -118,7 +118,7 @@ internal object MemoryRecall {
         }
         val protected=strong.map{it.memory.id}.toSet()
         val rest=hits.values.filter{it.memory.id !in protected}.sortedWith(compareByDescending<Hit>{it.score}.thenByDescending{it.direct}.thenBy{it.memory.id})
-        return (strong+rest).distinctBy{it.memory.id}.take(limit)
+        return (strong+rest).distinctBy{it.memory.id}.take(limit).also{selected->Diagnostics.event("memory.recall.ranked",mapOf("character" to friendId,"query" to query,"candidate_count" to valid.size,"edge_count" to edges.size,"limit" to limit,"selected" to diagnostics(selected)))}
     }
 }
 
