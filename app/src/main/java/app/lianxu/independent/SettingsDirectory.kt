@@ -43,6 +43,8 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
             DirectoryRow("storage","记忆与关系","分角色查看原话、记忆与六维关系","settings-processing"){vm.open("processing")}
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
+            DirectoryRow("storage","角色导入与导出","先预览范围，再新增或确认覆盖","settings-role-archive"){vm.open("role-archive")}
+            HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
             DirectoryRow("list","显示与列表","调整聊天和通讯录的行间距","settings-display"){vm.open("settings-display")}
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
             DirectoryRow("info","数据与版本","本地数据、演示能力与版本信息","settings-info"){vm.open("settings-info")}

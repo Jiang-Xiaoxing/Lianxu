@@ -19,3 +19,9 @@
 维护者已选择GNU GPL version 3 only（GPL-3.0-only），全文见根LICENSE。来源补核不代替完整法律审计，也不因未检出复制而证明全球范围原创性；未逐片段复审的适配不被自动归为已确认第三方GPL复制。原版权/署名继续保留，不为字体、微软测试资料、Gradle或其他第三方内容换授权。
 
 字体与Gradle wrapper独立保留原许可，见THIRD_PARTY_NOTICES.md；字体OFL与数据MIT不替代项目级代码许可证。
+
+## 角色包导入导出（本轮草稿）
+
+用户明确要求优先复用其星伴导入导出实现。核对来源：Jiang-Xiaoxing/Nekobot-Android 的 `71257279d79018e89c6dbdf9722213597bde504d`，其中 `app/src/main/kotlin/com/nekobot/app/data/local/PortableArchiveValidator.kt` 由 `ccf224dc336ce6acfeac33b642564e93e5c8b696` 新增（106行、0删除）；Git作者 Jiang-XX，关联账号 Jiang-Xiaoxing。该文件到指定提交的路径历史只包含此新增提交，并非凭最后修改者推断整个上游项目归属。
+
+`RoleArchive.kt` 的 `entryName` 直接适配该独立贡献的路径规则；版本整数校验、清单/哈希与有界读取沿用同一设计，针对只含两个文件的恋叙格式收紧限制。原 `PortableImportPlan` 的差异预览、保留现有资料与确认后原子提交作为交互/事务参考；没有搬入它依赖的星伴数据库、账号、插件、凭据恢复或迁移代码。仓库现有GPL-3.0-only及第三方声明不变。本次适配不是星伴/爱语旧包兼容承诺，也不执行历史资料迁移。

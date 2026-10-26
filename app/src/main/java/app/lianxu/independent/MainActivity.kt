@@ -48,6 +48,7 @@ class MainActivity:ComponentActivity(){
             "detail"->Detail(vm)
             "role-prompts"->RolePromptsScreen(vm)
             "create"->Create(vm)
+            "role-archive"->RoleArchiveScreen(vm)
             "search"->Search(vm)
             "models"->ModelConfigScreen({vm.back()})
             "processing"->ProcessingDirectory(vm)

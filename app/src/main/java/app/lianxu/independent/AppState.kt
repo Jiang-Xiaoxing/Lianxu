@@ -13,6 +13,10 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     private val modelVault=ModelVault(application,vaultNamespace)
     internal val modelAccess=ModelAccess(modelVault)
     internal val processing=ProcessingRepository(store)
+    internal val roleArchive=RoleArchiveRepository(store)
+    internal suspend fun importRoleArchive(preview:RoleArchiveRepository.Preview,confirmed:Boolean):String {
+        val id=roleArchive.commit(preview,confirmed);reload();return id
+    }
     internal val examples=RoleExamplesRepository(store)
     private val examplesEngine=RoleExamplesEngine(examples,modelAccess,client)
     private val examplesJobs=mutableMapOf<String,Job>()
