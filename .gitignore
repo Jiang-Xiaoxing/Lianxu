@@ -1,0 +1,40 @@
+# Android / IDE / local build state
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.iml
+.idea/
+.DS_Store
+Thumbs.db
+
+# Credentials, private keys, local data and binary deliverables
+.env
+.env.*
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+*.enc
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.apk
+*.aab
+*.log
+
+# Private handoffs, machine baselines, internal acceptance reports
+_handoff/
+evidence*/
+delivery*/
+references*/
+artwork/
+brand-font-source/
+docs/*
+!docs/ARCHITECTURE.md
+!docs/UI-DESIGN.md
+!docs/BRAND-FONT.md
+!docs/REUSE-PROVENANCE.md
