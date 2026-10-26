@@ -63,14 +63,14 @@ class ModelConfigUiTest {
         val bitmap=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
         File(dir,"$name.png").outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}
     }
-    private fun edit(id:String="ui-a"){ui.onNodeWithTag("config-edit-$id").performScrollTo().performClick()}
+    private fun edit(id:String="ui-a"){ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-$id"));ui.onNodeWithTag("config-edit-$id").performClick()}
     private fun back(){hideKeyboard();ui.onNodeWithTag("config-back").performClick()}
     private fun waitSaved(count:Int){ui.waitUntil(10000){runCatching{vault.list().size==count}.getOrDefault(false)};ui.waitUntil(10000){!state.saving}}
 
     @Test fun layeredCrudValidationKeyboardAndRecreation(){
         ui.onNodeWithTag("config-probe-ui-a",useUnmergedTree=true).assertTextEquals("未测试")
         shot("01-overview-real-app")
-        ui.onNodeWithTag("config-add").performScrollTo().performClick();shot("02-providers-real-app")
+        ui.onNodeWithTag("config-add-top").performClick();shot("02-providers-real-app")
         ui.onNodeWithTag("provider-search").performTextInput("xiaomi")
         ui.onNodeWithTag("provider-mimo").assertIsDisplayed()
         ui.onNodeWithTag("provider-deepseek").assertDoesNotExist()
@@ -93,6 +93,7 @@ class ModelConfigUiTest {
         ui.onNodeWithTag("config-save").performTouchInput{doubleClick()}
         waitSaved(3);assertEquals(0,client.calls.get())
         val saved=vault.list().single{it.name=="旅行随记"}
+        ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-${saved.id}"))
         ui.onNodeWithTag("config-probe-${saved.id}",useUnmergedTree=true).assertTextEquals("未测试")
         edit(saved.id)
         ui.onNodeWithTag("config-default-${saved.id}").performScrollTo().performClick()
@@ -102,7 +103,7 @@ class ModelConfigUiTest {
         assertEquals("旅行随记·编辑",vault.list().single{it.id==saved.id}.name)
         ui.activityRule.scenario.recreate()
         ui.waitUntil(10000){ui.onAllNodesWithTag("config-overview").fetchSemanticsNodes().isNotEmpty()}
-        ui.onNodeWithText("旅行随记·编辑").assertExists()
+        ui.onNodeWithTag("config-overview").performScrollToNode(hasText("旅行随记·编辑"));ui.onNodeWithText("旅行随记·编辑").assertExists()
         assertEquals("synthetic-key-only",vault.secret(saved.id));assertEquals(saved.id,vault.defaultId())
         edit(saved.id);ui.onNodeWithTag("config-delete-${saved.id}").performScrollTo().performClick()
         ui.onNodeWithText("取消").performClick();assertTrue(vault.hasKey(saved.id))
@@ -142,7 +143,7 @@ class ModelConfigUiTest {
     @Test fun cancelUnsupportedProviderAndBackgroundClearSecrets(){
         ui.onNodeWithTag("config-add-top").performClick();back()
         ui.onNodeWithTag("config-overview").assertIsDisplayed()
-        ui.onNodeWithTag("config-add").performScrollTo().performClick()
+        ui.onNodeWithTag("config-add-top").performClick()
         ui.onNodeWithTag("provider-search").performTextInput("mimo")
         ui.onNodeWithTag("provider-mimo").performClick()
         ui.onNodeWithTag("config-fetch").assertDoesNotExist();ui.onNodeWithTag("config-test").assertDoesNotExist()

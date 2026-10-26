@@ -28,10 +28,12 @@ class LiveChatUiTest {
         ui.waitUntil(15000){ui.onAllNodesWithTag("tab-2").fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithTag("tab-2").performClick();ui.onNodeWithTag("settings-models").performClick()
         for(p in ModelPurpose.entries){
+            ui.waitUntil(30000){ui.onAllNodes(hasTestTag("purpose-select-${p.key}") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
             ui.onNodeWithTag("purpose-select-${p.key}").performScrollTo().performClick()
+            ui.waitUntil(30000){ui.onAllNodesWithTag("purpose-option-${p.key}-fixture").fetchSemanticsNodes().isNotEmpty()}
             ui.onNodeWithTag("purpose-option-${p.key}-fixture").performClick();ui.waitUntil(10000){vault.purposeId(p)=="fixture"}
         }
-        assertEquals(0,server.calls.get());assertEquals(4,ModelPurpose.entries.size)
+        assertEquals(0,server.calls.get());assertEquals(setOf("embedding","chat","memory","aux-vision","relationship"),ModelPurpose.entries.map{it.key}.toSet())
         ui.onNodeWithTag("purpose-select-chat").performScrollTo();shot("01-global-purposes-mock-only")
         ui.onNodeWithTag("config-back").performClick();ui.onNodeWithTag("tab-0").performClick()
         ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("添加AI").performClick()
