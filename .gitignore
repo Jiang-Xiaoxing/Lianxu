@@ -41,3 +41,4 @@ docs/*
 
 !docs/ROLE-ARCHIVE.md
 !docs/RELATIONSHIP-REVIEW.md
+!docs/BACKUP-DIAGNOSTICS.md
