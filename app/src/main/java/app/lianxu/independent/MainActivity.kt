@@ -69,20 +69,20 @@ class MainActivity:ComponentActivity(){
                 if(vm.tab==0)Text("Lianxu",style=MaterialTheme.typography.labelSmall,letterSpacing=2.sp,color=Muted)
             }
             if(vm.tab<=1)Box{
-                IconButton(onClick={menu=true},modifier=Modifier.size(UiSpace.action).testTag("add-menu").semantics{contentDescription="添加朋友"}){ControlIcon("add")}
+                IconButton(onClick={menu=true},modifier=Modifier.size(UiSpace.action).testTag("add-menu").semantics{contentDescription="添加AI"}){ControlIcon("add")}
                 DropdownMenu(menu,{menu=false}){
-                    DropdownMenuItem(text={Text("搜索朋友")},leadingIcon={ControlIcon("search")},onClick={menu=false;vm.startSearch()})
-                    DropdownMenuItem(text={Text("添加朋友")},leadingIcon={ControlIcon("add")},onClick={menu=false;vm.open("create")})
+                    DropdownMenuItem(text={Text("搜索AI")},leadingIcon={ControlIcon("search")},onClick={menu=false;vm.startSearch()})
+                    DropdownMenuItem(text={Text("添加AI")},leadingIcon={ControlIcon("add")},onClick={menu=false;vm.open("create")})
                 }
             }
         }
         Box(Modifier.weight(1f)){when(vm.tab){
             0->LazyColumn(Modifier.fillMaxSize().testTag("chat-list")){
-                item{Text("每位朋友拥有独立会话",Modifier.padding(horizontal=UiSpace.page,vertical=8.dp),style=MaterialTheme.typography.bodySmall,color=Muted)}
+                item{Text("每位AI拥有独立会话",Modifier.padding(horizontal=UiSpace.page,vertical=8.dp),style=MaterialTheme.typography.bodySmall,color=Muted)}
                 items(vm.friends,key={it.id}){friend->val message=vm.messages.lastOrNull{it.friendId==friend.id};FriendRow(friend,message?.text?:"开始聊天",vm.compact,message?.let{time.format(Date(it.created))}.orEmpty()){vm.open("chat",friend.id)}}
             }
             1->LazyColumn(Modifier.fillMaxSize().testTag("contacts-list")){
-                item{Text("${vm.friends.size} 位朋友",Modifier.padding(horizontal=UiSpace.page,vertical=8.dp),style=MaterialTheme.typography.bodySmall,color=Muted)}
+                item{Text("${vm.friends.size} 位AI",Modifier.padding(horizontal=UiSpace.page,vertical=8.dp),style=MaterialTheme.typography.bodySmall,color=Muted)}
                 items(vm.friends,key={it.id}){friend->FriendRow(friend,friend.bio,vm.compact,""){vm.open("detail",friend.id)}}
             }
             2->SettingsDirectory(vm)
@@ -107,7 +107,7 @@ class MainActivity:ComponentActivity(){
 @Composable private fun Detail(vm:AppState){
     val friend=vm.friends.find{it.id==vm.activeId}?:return
     Column(Modifier.fillMaxSize().background(Chrome)){
-        Header("朋友详情",{vm.back()})
+        Header("AI详情",{vm.back()})
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(20.dp)){
             Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){Avatar(friend,56);Column{Text(friend.name,style=MaterialTheme.typography.titleLarge);Text("AI 角色 · 本地创建",style=MaterialTheme.typography.bodySmall,color=Muted)}}
             Text(friend.bio,style=MaterialTheme.typography.bodyLarge)
@@ -124,7 +124,7 @@ class MainActivity:ComponentActivity(){
 @Composable private fun Create(vm:AppState){
     var name by rememberSaveable{mutableStateOf("")};var bio by rememberSaveable{mutableStateOf("")};var prompt by rememberSaveable{mutableStateOf("")}
     Column(Modifier.fillMaxSize().background(Chrome)){
-        Header("添加朋友",{vm.back()})
+        Header("添加AI",{vm.back()})
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(UiSpace.group)){
             Text("从一个名字开始",style=MaterialTheme.typography.titleLarge)
             Text("手动创建 AI 角色，只保存在本机。",style=MaterialTheme.typography.bodySmall,color=Muted)
@@ -132,22 +132,22 @@ class MainActivity:ComponentActivity(){
             AppField(bio,{bio=it.take(500)},"角色介绍（必填）","friend-bio",minLines=3)
             AppField(prompt,{prompt=it.take(4000)},"自定义提示词（可选）","friend-prompt",minLines=3)
             Text("自定义内容用于本角色提示段，模型统一在设置中选择。未配置聊天模型时不会生成演示回复。",style=MaterialTheme.typography.bodySmall,color=Muted)
-            PrimaryAction("创建朋友",enabled=!vm.busy,modifier=Modifier.align(Alignment.End).testTag("create-friend")){vm.create(name,bio,prompt)}
+            PrimaryAction("创建AI",enabled=!vm.busy,modifier=Modifier.align(Alignment.End).testTag("create-friend")){vm.create(name,bio,prompt)}
         }
     }
 }
 @Composable private fun Search(vm:AppState){
     Column(Modifier.fillMaxSize().background(Chrome)){
-        Header("搜索朋友",{vm.back()})
+        Header("搜索AI",{vm.back()})
         if(vm.searching){
             Column(Modifier.weight(1f).fillMaxWidth(),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
-                Radar();Text("正在寻找 3 位 AI 朋友",Modifier.padding(top=16.dp),style=MaterialTheme.typography.titleLarge)
+                Radar();Text("正在寻找 3 位 AI",Modifier.padding(top=16.dp),style=MaterialTheme.typography.titleLarge)
                 Text("演示生成器 · 无需定位",Modifier.padding(top=8.dp),style=MaterialTheme.typography.bodySmall,color=Muted)
             }
             TextButton(onClick={vm.home()},modifier=Modifier.align(Alignment.CenterHorizontally).padding(bottom=16.dp).heightIn(min=UiSpace.action).testTag("search-cancel")){Text("取消")}
         }else if(vm.candidates.isNotEmpty()){
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(12.dp)){
-                Text("认识新朋友",style=MaterialTheme.typography.titleLarge)
+                Text("认识新AI",style=MaterialTheme.typography.titleLarge)
                 Text("演示候选 · 可选择一位或多位",style=MaterialTheme.typography.bodySmall,color=Muted)
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){TextButton(onClick={vm.all()},modifier=Modifier.heightIn(min=UiSpace.action)){Text("全选 3 位")};TextButton(onClick={vm.none()},modifier=Modifier.heightIn(min=UiSpace.action)){Text("不选")}}
                 vm.candidates.forEach{friend->val selected=friend.id in vm.selected
@@ -167,7 +167,7 @@ class MainActivity:ComponentActivity(){
             }
         }else Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
             Text("寻找已停止",style=MaterialTheme.typography.titleLarge)
-            Text("可以重新开始认识新朋友。",Modifier.padding(vertical=16.dp),style=MaterialTheme.typography.bodyMedium,color=Muted)
+            Text("可以重新开始认识新AI。",Modifier.padding(vertical=16.dp),style=MaterialTheme.typography.bodyMedium,color=Muted)
             PrimaryAction("重新寻找"){vm.findAgain()}
         }
     }
@@ -179,7 +179,7 @@ class MainActivity:ComponentActivity(){
         AppField(name,{name=it.take(30)},"我的昵称","nickname",singleLine=true)
         PrimaryAction("保存昵称",enabled=!vm.busy,modifier=Modifier.align(Alignment.End)){vm.saveProfile(name)}
         HorizontalDivider(color=Line)
-        Text("${vm.friends.size} 位朋友，累计 ${vm.messages.count{it.mine}} 条已发送消息",style=MaterialTheme.typography.bodyMedium,color=Muted)
+        Text("${vm.friends.size} 位AI，累计 ${vm.messages.count{it.mine}} 条已发送消息",style=MaterialTheme.typography.bodyMedium,color=Muted)
         Text("演示账号 · 无需注册",style=MaterialTheme.typography.bodySmall,color=Muted)
     }
 }

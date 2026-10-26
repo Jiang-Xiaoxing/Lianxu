@@ -31,22 +31,37 @@ data class MemoryEvidence(val source:SourceRef,val side:String,val quote:String,
     fun json()=JSONObject().put("character",source.characterId).put("turn",source.turnId).put("version",source.version).put("side",side).put("quote",quote).put("snapshot",snapshot).put("at",sourceAt).put("zone",zone)
     companion object{fun from(j:JSONObject)=MemoryEvidence(SourceRef(j.getString("character"),j.getLong("turn"),j.getLong("version")),j.getString("side"),j.getString("quote"),j.getString("snapshot"),j.getLong("at"),j.getString("zone"))}
 }
-data class StoredMemory(val id:String,val friendId:String,val category:MemoryCategory,val text:String,val life:MemoryLife=MemoryLife.ACTIVE,val core:Boolean=false,val locked:Boolean=false,val manual:Boolean=false,val version:Int=1,val valid:Boolean=true,val dateExpression:String?=null,val eventDate:String?=null,val evidence:List<MemoryEvidence> = emptyList(),val about:MemoryAbout?=null,val tags:List<String> = emptyList(),val dueExpression:String?=null,val dueDate:String?=null,val expiresAt:Long?=null) {
+data class StoredMemory(val id:String,val friendId:String,val category:MemoryCategory,val text:String,val life:MemoryLife=MemoryLife.ACTIVE,val core:Boolean=false,val locked:Boolean=false,val manual:Boolean=false,val version:Int=1,val valid:Boolean=true,val dateExpression:String?=null,val eventDate:String?=null,val evidence:List<MemoryEvidence> = emptyList(),val about:MemoryAbout?=null,val tags:List<String> = emptyList(),val dueExpression:String?=null,val dueDate:String?=null,val expiresAt:Long?=null,val dateType:String?=null,val annualMonthDay:String?=null) {
     // The current app has one fixed conversation per character; BOTH never widens this scope.
     val conversationId get()=friendId
-    fun json()=JSONObject().put("id",id).put("character",friendId).put("category",category.name).put("text",text).put("life",life.name).put("core",core).put("locked",locked).put("manual",manual).put("version",version).put("valid",valid).put("dateExpression",dateExpression?:JSONObject.NULL).put("eventDate",eventDate?:JSONObject.NULL).put("expiresAt",expiresAt?:JSONObject.NULL).put("evidence",JSONArray().apply{evidence.forEach{put(it.json())}}).apply{
+    fun json()=JSONObject().put("id",id).put("character",friendId).put("category",category.name).put("text",text).put("life",life.name).put("core",core).put("locked",locked).put("manual",manual).put("version",version).put("valid",valid).put("dateExpression",dateExpression?:JSONObject.NULL).put("eventDate",eventDate?:JSONObject.NULL).put("dateType",dateType?:JSONObject.NULL).put("annualMonthDay",annualMonthDay?:JSONObject.NULL).put("expiresAt",expiresAt?:JSONObject.NULL).put("evidence",JSONArray().apply{evidence.forEach{put(it.json())}}).apply{
         if(category.modern){put("schema",2);put("conversation",conversationId);put("about",about?.name?:JSONObject.NULL);put("tags",JSONArray(tags));put("dueExpression",dueExpression?:JSONObject.NULL);put("dueDate",dueDate?:JSONObject.NULL)}
     }
     companion object{fun from(j:JSONObject):StoredMemory {
         val a=j.optJSONArray("evidence")?:JSONArray()
         val category=MemoryCategory.valueOf(j.getString("category"));val tags=j.optJSONArray("tags")?:JSONArray()
         if(category.modern)require(j.optInt("schema",2)==2&&j.optString("conversation",j.getString("character"))==j.getString("character"))
-        return StoredMemory(j.getString("id"),j.getString("character"),category,j.getString("text"),MemoryLife.valueOf(j.optString("life","ACTIVE")),j.optBoolean("core"),j.optBoolean("locked"),j.optBoolean("manual"),j.getInt("version"),j.optBoolean("valid",true),if(j.isNull("dateExpression"))null else j.getString("dateExpression"),if(j.isNull("eventDate"))null else j.getString("eventDate"),(0 until a.length()).map{MemoryEvidence.from(a.getJSONObject(it))},if(category.modern)MemoryAbout.valueOf(j.getString("about")) else null,if(category.modern)(0 until tags.length()).map{tags.getString(it)} else emptyList(),if(category.modern&&!j.isNull("dueExpression"))j.getString("dueExpression") else null,if(category.modern&&!j.isNull("dueDate"))j.getString("dueDate") else null,if(j.has("expiresAt")&&!j.isNull("expiresAt"))j.getLong("expiresAt") else null)
+        return StoredMemory(j.getString("id"),j.getString("character"),category,j.getString("text"),MemoryLife.valueOf(j.optString("life","ACTIVE")),j.optBoolean("core"),j.optBoolean("locked"),j.optBoolean("manual"),j.getInt("version"),j.optBoolean("valid",true),if(j.isNull("dateExpression"))null else j.getString("dateExpression"),if(j.isNull("eventDate"))null else j.getString("eventDate"),(0 until a.length()).map{MemoryEvidence.from(a.getJSONObject(it))},if(category.modern)MemoryAbout.valueOf(j.getString("about")) else null,if(category.modern)(0 until tags.length()).map{tags.getString(it)} else emptyList(),if(category.modern&&!j.isNull("dueExpression"))j.getString("dueExpression") else null,if(category.modern&&!j.isNull("dueDate"))j.getString("dueDate") else null,if(j.has("expiresAt")&&!j.isNull("expiresAt"))j.getLong("expiresAt") else null,if(j.isNull("dateType"))null else j.getString("dateType"),if(j.isNull("annualMonthDay"))null else MemoryDates.monthDay(j.getString("annualMonthDay")))
     }}
 }
 internal fun stableDigest(text:String)=MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString(""){"%02x".format(it)}
 /** Program-resolved single days only; ambiguous expressions never fall back to invented model dates. */
 object MemoryDates {
+    fun monthDay(value:String):String {
+        require(value.matches(Regex("[0-9]{2}-[0-9]{2}")))
+        java.time.MonthDay.parse("--"+value)
+        return value
+    }
+    /** Birthday is opt-in metadata. A missing birth year never uses the source year. */
+    fun birthday(expression:String?):Pair<String?,String?> {
+        if(expression.isNullOrBlank())return null to null
+        val full=Regex("(?<![0-9])([0-9]{4})[年/-]([0-9]{1,2})[月/-]([0-9]{1,2})(?:日|号)?(?![0-9])").find(expression)
+        if(full!=null){val (y,m,d)=full.destructured;val date=runCatching{LocalDate.of(y.toInt(),m.toInt(),d.toInt())}.getOrNull()?:return null to null;return date.toString() to date.toString().takeLast(5)}
+        val match=Regex("(?<![0-9])([0-9]{1,2})[月/-]([0-9]{1,2})(?:日|号)?(?![0-9])").find(expression)?:return null to null
+        val value="%02d-%02d".format(java.util.Locale.ROOT,match.groupValues[1].toInt(),match.groupValues[2].toInt())
+        return null to runCatching{monthDay(value)}.getOrNull()
+    }
+
     fun resolve(expression:String?,sourceAt:Long,zone:String):String? {
         if(expression.isNullOrBlank())return null
         return runCatching {

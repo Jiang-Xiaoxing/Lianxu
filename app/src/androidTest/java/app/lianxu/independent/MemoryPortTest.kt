@@ -16,6 +16,7 @@ class MemoryPortTest {
     private val config=ModelConfig("chat","Synthetic","custom","https://example.invalid/v1","mock",64000,2048)
     @Before fun setup()=runBlocking{
         dbName="port-${System.nanoTime()}.db";store=Store(c,dbName);repo=ProcessingRepository(store)
+        repo.saveMemoryRules(MemoryRules(proactiveRecall=true,immediateWrite=true))
         store.add(listOf(Friend("a","A","Synthetic"),Friend("b","B","Synthetic")),false)
         vault=ModelVault(c,"port-${System.nanoTime()}");vault.save(config,"synthetic-only");vault.setPurpose(ModelPurpose.CHAT,config.id)
         scope=CoroutineScope(SupervisorJob()+Dispatchers.Main)
@@ -42,6 +43,112 @@ class MemoryPortTest {
         val source=completed("garden preference")
         val m=StoredMemory("auto","a",MemoryCategory.PREFERENCE_BOUNDARY,"garden preference",about=MemoryAbout.USER,evidence=listOf(MemoryEvidence(source.source,"user",source.user.text,source.user.text,source.user.created,source.zone)))
         repo.tx{repo.saveMemory(it,m)};return m
+    }
+    @Test fun finalReplyTransactionChecksReferenceBeforeAddingReply()=runBlocking {
+        val t=ChatLedger(store).begin("a","garden",config.id)
+        val refs=repo.references("a","garden",t.userMessageId)
+        val tools=MemoryTools(repo,t,"garden",refs){repo.referenceCurrent("a",refs.stamp)}
+        assertTrue(write(tools,t,args()) is TextChatResult.Success)
+        assertTrue(ChatLedger(store).finishWithMemory(t.id,t.attempt,"final",onCompleted={tools.commit(it)},configUnchanged={repo.referenceCurrent("a",refs.stamp)}))
+        assertEquals(1,repo.memories("a").size)
+    }
+    @Test fun unsupportedClassificationIsNarrowAndToolTextSurvives() {
+        val http=HttpsTextChatClient()
+        fun error(param:String,code:String,message:String="")=JSONObject().put("error",JSONObject().put("param",param).put("code",code).put("message",message)).toString()
+        assertTrue(http.explicitToolsUnsupported(error("tools","unsupported_parameter")))
+        assertFalse(http.explicitToolsUnsupported(error("tools","unsupported_value")))
+        assertFalse(http.explicitToolsUnsupported(error("tool_choice","unsupported_parameter")))
+        assertFalse(http.explicitToolsUnsupported(error("tools","invalid_schema","Model tool schema unsupported")))
+        assertTrue(http.explicitToolsUnsupported(error("","","This model does not support tools")))
+        val raw=JSONObject().put("choices",JSONArray().put(JSONObject().put("finish_reason","tool_calls").put("message",JSONObject().put("content","visible response").put("tool_calls",JSONArray().put(JSONObject().put("id","one").put("type","function").put("function",JSONObject().put("name","agent_memory_update").put("arguments","{}"))))))).toString()
+        assertEquals("visible response",(http.parse(raw,"synthetic-only",setOf("agent_memory_update")) as TextChatResult.Success).text)
+    }
+    @Test fun birthdayBatchUsesMonthDayWithoutSourceYear()=runBlocking {
+        completed("生日是2月29日")
+        val engine=MemoryEngine(scope,repo,ModelAccess(vault),client{r->
+            val d=JSONObject(r.messages.last().content)
+            receipt(d,JSONArray().put(summaryOp(text="生日是2月29日").put("date_type","birthday").put("date_expression","2月29日")))
+        },{})
+        assertTrue(engine.ensureRoom("a",forceOne=true).success)
+        val m=repo.memories("a").single();assertEquals("02-29",m.annualMonthDay);assertNull(m.eventDate)
+        val edited=repo.manualSave("a",m.id,"人工补充正文",m.category,m.core,m.locked,m.about,m.tags)
+        assertEquals(m.annualMonthDay,edited.annualMonthDay)
+    }
+    @Test fun independentToolsAndStrictFallback()=runBlocking {
+        for(recall in listOf(false,true)) for(write in listOf(false,true)) {
+            repo.saveMemoryRules(MemoryRules(proactiveRecall=recall,immediateWrite=write))
+            val t=ChatLedger(store).begin("a","flags",config.id)
+            runtime(t).run(config,"synthetic-only",request("flags"),client{r->
+                val names=r.tools.map(::toolNameOf)
+                assertEquals(write,"agent_memory_update" in names)
+                assertEquals(recall,"agent_recall_search" in names)
+                TextChatResult.Success("final")
+            })
+            ChatLedger(store).finish(t.id,t.attempt,"final")
+        }
+        repo.saveMemoryRules(MemoryRules(proactiveRecall=true))
+        for(reason in listOf(ChatFailure.UNSUPPORTED_TOOLS,ChatFailure.UNAUTHORIZED,ChatFailure.RATE_LIMIT,ChatFailure.NETWORK,ChatFailure.TOOLS_UNAVAILABLE)) {
+            val t=ChatLedger(store).begin("a","fallback",config.id);var calls=0
+            runtime(t).run(config,"synthetic-only",request("fallback"),client{r->
+                calls++;if(calls==1)TextChatResult.Failure(reason) else {assertTrue(r.tools.isEmpty());TextChatResult.Success("final")}
+            })
+            assertEquals(if(reason==ChatFailure.UNSUPPORTED_TOOLS)2 else 1,calls)
+            ChatLedger(store).finish(t.id,t.attempt,"final")
+        }
+    }
+    @Test fun disabledToolCallsAreRejectedByBackend()=runBlocking {
+        for(recall in listOf(false,true)) {
+            repo.saveMemoryRules(MemoryRules(proactiveRecall=recall))
+            val t=ChatLedger(store).begin("a","garden",config.id)
+            val result=runtime(t).run(config,"synthetic-only",request("garden"),client{TextChatResult.Success("",listOf(ChatToolCall("bad","agent_memory_update",args().toString())))})
+            assertEquals(ChatFailure.TOOLS_UNAVAILABLE,(result as TextChatResult.Failure).reason)
+            assertTrue(repo.memories("a").isEmpty());ChatLedger(store).finish(t.id,t.attempt,"final")
+        }
+    }
+    @Test fun readThenUnsupportedNeverRetriesAndFallbackCannotRequestDisabledTools()=runBlocking {
+        val t=ChatLedger(store).begin("a","garden",config.id);var calls=0
+        val result=runtime(t).run(config,"synthetic-only",request("garden"),client{
+            if(calls++==0)TextChatResult.Success("",listOf(ChatToolCall("read","agent_recall_search","{\"query\":\"garden\"}"))) else TextChatResult.Failure(ChatFailure.UNSUPPORTED_TOOLS)
+        })
+        assertEquals(2,calls);assertEquals(ChatFailure.UNSUPPORTED_TOOLS,(result as TextChatResult.Failure).reason)
+        ChatLedger(store).finish(t.id,t.attempt,"final")
+        val other=ChatLedger(store).begin("a","fallback",config.id);calls=0
+        val rejected=runtime(other).run(config,"synthetic-only",request("fallback"),client{
+            if(calls++==0)TextChatResult.Failure(ChatFailure.UNSUPPORTED_TOOLS) else TextChatResult.Success("",listOf(ChatToolCall("bad","agent_memory_update",args().toString())))
+        })
+        assertEquals(2,calls);assertEquals(ChatFailure.TOOLS_UNAVAILABLE,(rejected as TextChatResult.Failure).reason)
+    }
+    @Test fun toolSideEffectPreventsFallbackAndRulesChangeRejectsCommit()=runBlocking {
+        val t=ChatLedger(store).begin("a","garden",config.id);val tools=runtime(t);var calls=0
+        val result=tools.run(config,"synthetic-only",request("garden"),client{
+            if(calls++==0)TextChatResult.Success("visible",listOf(ChatToolCall("one","agent_memory_update",args().toString()))) else TextChatResult.Failure(ChatFailure.UNSUPPORTED_TOOLS)
+        })
+        assertEquals(2,calls);assertEquals(ChatFailure.UNSUPPORTED_TOOLS,(result as TextChatResult.Failure).reason)
+        repo.saveMemoryRules(MemoryRules())
+        assertTrue(runCatching{commit(t,tools)}.isFailure)
+        assertTrue(repo.memories("a").isEmpty())
+    }
+    @Test fun birthdayToolAndSerializationAreExplicit()=runBlocking {
+        val t=ChatLedger(store).begin("a","生日是2月29日",config.id);val tools=runtime(t)
+        write(tools,t,args(text="生日是2月29日").put("time_text","2月29日").put("date_type","birthday"));assertTrue(commit(t,tools))
+        val m=repo.memories("a").single();assertNull(m.eventDate);assertEquals("02-29",m.annualMonthDay);assertEquals(m,StoredMemory.from(m.json()))
+        val legacy=m.json().apply{remove("dateType");remove("annualMonthDay")};assertNull(StoredMemory.from(legacy).annualMonthDay)
+    }
+    @Test fun wholeSourceChoiceNeverRestoresEvidence()=runBlocking {
+        for(choice in SourceMemoryChoice.entries) {
+            val source=completed("source $choice")
+            val m=StoredMemory("source-$choice","a",MemoryCategory.STATE_FACT,"source $choice",about=MemoryAbout.USER,evidence=listOf(MemoryEvidence(source.source,"user",source.user.text,source.user.text,source.user.created,source.zone)))
+            val protected=m.copy(id="protected-$choice",locked=true,manual=true)
+            repo.tx{repo.saveMemory(it,m);repo.saveMemory(it,protected)}
+            val impact=SourceChanges(repo).preview("a",source.source.turnId,"assistant","edited",false)
+            assertTrue(impact.memories.any{it.id==m.id})
+            SourceChanges(repo).confirm(impact.copy(choice=choice))
+            val saved=repo.memories("a").first{it.id==m.id};assertFalse(saved.valid);assertEquals(m.text,saved.text)
+            assertEquals(if(choice==SourceMemoryChoice.INVALIDATE)MemoryLife.RETRACTED else MemoryLife.ACTIVE,saved.life)
+            assertFalse(repo.read{db->repo.usableMemories(db,"a").any{it.id==m.id}})
+            val kept=repo.memories("a").first{it.id==protected.id};assertEquals(MemoryLife.ACTIVE,kept.life);assertTrue(kept.locked);assertFalse(kept.valid)
+            assertTrue(repo.candidates("a").any{it.targetId==protected.id&&!it.valid})
+        }
     }
     @Test fun summaryFallbackShortEvidenceAuxiliaryAndFortyTwentyAreConnected()=runBlocking{
         val old=repo.manualSave("a",null,"garden plan",MemoryCategory.STATE_FACT,false,true,MemoryAbout.USER)

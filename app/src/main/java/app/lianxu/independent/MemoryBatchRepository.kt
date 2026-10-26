@@ -106,23 +106,26 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
         val text=op.optString("text").ifBlank{old?.text.orEmpty()};rejectUnless(text.isNotBlank()&&text.length<=4000)
         val proof=evidence(work,op)
         if(about==MemoryAbout.USER)rejectUnless(proof.any{it.side=="user"},"USER_EVIDENCE")
+        val dateType=if(op.has("date_type"))op.getString("date_type").also{rejectUnless(it in setOf("day","habit","birthday"))} else old?.dateType
         val expression=if(op.optString("date_type")=="habit")null else if(!op.has("date_expression"))old?.dateExpression else if(op.isNull("date_expression"))null else op.optString("date_expression").takeIf{it.isNotBlank()}
         if(expression!=null&&op.has("date_expression"))rejectUnless(proof.any{expression in it.quote&&(about!=MemoryAbout.USER||it.side=="user")},"DATE_EVIDENCE")
         val dates=proof.filter{expression!=null&&expression in it.quote}.map{MemoryDates.resolve(expression,it.sourceAt,it.zone)}.toSet()
-        val date=if(op.optString("date_type")=="habit")null else if(!op.has("date_expression"))old?.eventDate else if(dates.size==1)dates.first() else null
+        val birthday=if(dateType=="birthday")MemoryDates.birthday(expression) else null
+        val annual=if(birthday!=null)birthday.second else if(!op.has("date_type")&&!op.has("date_expression"))old?.annualMonthDay else null
+        val date=if(birthday!=null)birthday.first else if(op.optString("date_type")=="habit")null else if(!op.has("date_expression"))old?.eventDate else if(dates.size==1)dates.first() else null
         rejectUnless(!op.has("due_date"),"DATE_EVIDENCE")
         val dueExpression=if(!op.has("due_expression"))old?.dueExpression else if(op.isNull("due_expression"))null else op.getString("due_expression").takeIf{it.isNotBlank()}
         if(dueExpression!=null&&op.has("due_expression"))rejectUnless(proof.any{dueExpression in it.quote&&(about!=MemoryAbout.USER||it.side=="user")},"DATE_EVIDENCE")
         val dueDates=proof.filter{dueExpression!=null&&dueExpression in it.quote}.map{MemoryDates.resolve(dueExpression,it.sourceAt,it.zone)}.toSet()
         val dueDate=if(!op.has("due_expression"))old?.dueDate else if(dueDates.size==1)dueDates.first() else null
         val life=when(kind){"CANCEL"->MemoryLife.CANCELLED;"COMPLETE"->MemoryLife.COMPLETED;"RETRACT"->MemoryLife.RETRACTED;else->old?.life?:MemoryLife.ACTIVE}
-        if(kind=="ADD")old=repo.memories(db,work.friendId).firstOrNull{it.valid&&it.category==category&&it.about==about&&it.tags==tags&&it.text==text&&it.eventDate==date&&it.dueDate==dueDate&&it.life==life}
+        if(kind=="ADD")old=repo.memories(db,work.friendId).firstOrNull{it.valid&&it.category==category&&it.about==about&&it.tags==tags&&it.text==text&&it.eventDate==date&&it.dateType==dateType&&it.annualMonthDay==annual&&it.dueDate==dueDate&&it.life==life}
         val actualId=old?.id?:id
-        val proposed=StoredMemory(actualId,work.friendId,category,text,life,if(op.has("core"))op.getBoolean("core") else old?.core?:false,false,false,(old?.version?:0)+1,true,expression,date,((old?.evidence?:emptyList())+proof).distinct(),about,tags,dueExpression,dueDate,old?.expiresAt)
+        val proposed=StoredMemory(actualId,work.friendId,category,text,life,if(op.has("core"))op.getBoolean("core") else old?.core?:false,false,false,(old?.version?:0)+1,true,expression,date,((old?.evidence?:emptyList())+proof).distinct(),about,tags,dueExpression,dueDate,old?.expiresAt,dateType,annual)
         val lastOwnVersion=db.rawQuery("SELECT MAX(result_version) FROM memory_operations WHERE batch_id=? AND result_id=?",arrayOf(work.id,actualId)).use{if(it.moveToFirst()&&!it.isNull(0))it.getInt(0) else null}
         val expectedVersion=lastOwnVersion?:work.existingVersions[actualId]
         val protected=old!=null&&(old.locked||old.manual||old.version!=expectedVersion)
-        val unchanged=old!=null&&old.text==proposed.text&&old.category==proposed.category&&old.about==about&&old.tags==tags&&old.dueDate==dueDate&&old.life==proposed.life&&old.eventDate==proposed.eventDate&&old.core==proposed.core
+        val unchanged=old!=null&&old.text==proposed.text&&old.category==proposed.category&&old.about==about&&old.tags==tags&&old.dueDate==dueDate&&old.life==proposed.life&&old.eventDate==proposed.eventDate&&old.dateType==proposed.dateType&&old.annualMonthDay==proposed.annualMonthDay&&old.core==proposed.core
         var savedVersion=old?.version?:1
         val doubt=op.optString("doubt").takeIf{it.isNotBlank()&&it!="null"}
         if(doubt!=null){

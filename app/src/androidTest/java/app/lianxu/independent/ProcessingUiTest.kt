@@ -41,7 +41,7 @@ class ProcessingUiTest {
         ui.waitUntil(15000){vm().ready}
         val vault=ModelVault(context,mock.namespace)
         for(p in listOf(ModelPurpose.MEMORY,ModelPurpose.RELATIONSHIP)){val c=ModelConfig(p.key,p.title,"custom","https://example.invalid/v1",p.key,contextTokens=32000);vault.save(c,"synthetic-key-only");vault.setPurpose(p,c.id)}
-        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("添加朋友").performClick();ui.onNodeWithTag("friend-name").performTextInput("合成·运行验收");ui.onNodeWithTag("friend-bio").performTextInput("喜欢植物与日常聊天，本机合成测试。")
+        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("添加AI").performClick();ui.onNodeWithTag("friend-name").performTextInput("合成·运行验收");ui.onNodeWithTag("friend-bio").performTextInput("喜欢植物与日常聊天，本机合成测试。")
         ui.onNodeWithTag("create-friend").performScrollTo().performClick();ui.waitUntil(10000){vm().page=="chat"};val id=vm().activeId
         ui.onNodeWithTag("message-input").performTextInput("我喜欢安静的花园，也喜欢散步。");ui.onNodeWithTag("send-message").performClick();ui.waitUntil(10000){vm().turns.any{it.friendId==id&&it.state==TurnState.COMPLETED}}
         shot("05-real-chat-mock-only")

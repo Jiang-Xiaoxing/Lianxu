@@ -51,10 +51,10 @@ class UnifiedUiTest {
         ui.onNodeWithText("资料").performClick();shot("04-friend-detail");ui.onNodeWithTag("back").performClick()
         ui.onNodeWithTag("message-input").assertTextContains("好，想再和你聊一会儿。",substring=true)
         ui.onNodeWithTag("back").performClick();ui.onNodeWithTag("tab-0").performClick()
-        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("添加朋友").performClick()
+        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("添加AI").performClick()
         ui.onNodeWithTag("friend-name").performTextInput("合成新朋友");ui.onNodeWithTag("friend-bio").performTextInput("喜欢分享生活里的小事。")
         shot("05-add-friend");ui.onNodeWithTag("back").performClick()
-        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("搜索朋友").performClick();shot("06-radar")
+        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("搜索AI").performClick();shot("06-radar")
         ui.waitUntil(10000){app().candidates.size==3}
         val ids=app().candidates.map{it.id};ui.onNodeWithTag("candidate-${ids[0]}").performClick();ui.onNodeWithTag("candidate-${ids[1]}").performClick()
         assertEquals(2,app().selected.size);shot("07-candidates");ui.onNodeWithTag("back").performClick()
