@@ -10,11 +10,34 @@ import java.util.concurrent.ConcurrentHashMap
 class RelationshipEngine(private val scope:CoroutineScope,private val repo:ProcessingRepository,private val access:ModelAccess,private val client:TextChatClient,private val changed:suspend()->Unit){
     companion object{private val session=UUID.randomUUID().toString()}
     val repository=RelationshipRepository(repo)
+    val review=RelationshipReviewRepository(repo)
     private class Active(val lease:ChatAttemptLease,var job:Job?=null,var work:RelationshipWork?=null)
     private val active=ConcurrentHashMap<String,Active>()
     fun afterChat(friendId:String){evaluate(friendId,false)}
     fun cancel(friendId:String){active.remove(friendId)?.let{a->a.lease.cancel();a.job?.cancel();a.work?.let{w->scope.launch(NonCancellable){repository.fail(w,"CANCELLED");changed()}}}}
     suspend fun recover(){repository.recoverAbandoned(session);repo.store.friends().forEach{evaluate(it.id,false,true)}}
+    suspend fun reassess(friendId:String):RelationshipCandidate {
+        val task=Active(ChatAttemptLease(),currentCoroutineContext()[Job])
+        rejectUnless(active.putIfAbsent(friendId,task)==null,"BUSY")
+        try {
+            val credentials=access.credential(ModelPurpose.RELATIONSHIP)?:throw ProcessingRejected("NO_RELATIONSHIP_MODEL")
+            val plan=review.prepare(friendId,credentials.stamp)
+            val friend=repo.read{repo.friend(it,friendId)}
+            val prompts=RolePromptStore.decode(repo.store.preference(RolePromptStore.key(friendId),""))
+            val request=makeRequest(plan.work,friend,prompts,credentials.config.outputTokens)
+            rejectUnless(request.messages.sumOf{ConservativeTokens.tokens(it.content)}+request.outputLimit<=credentials.config.contextTokens,"CAPACITY")
+            val result=client.complete(credentials.config,credentials.key,request)
+            currentCoroutineContext().ensureActive()
+            rejectUnless(task.lease.isActive(),"CANCELLED")
+            return when(result){
+                is TextChatResult.Failure->throw ProcessingRejected("MODEL_${result.reason.name}")
+                is TextChatResult.Success->review.preview(plan,JSONObject(result.text)){access.current(ModelPurpose.RELATIONSHIP,credentials.stamp)}
+            }
+        } finally {
+            task.lease.cancel();active.remove(friendId,task)
+        }
+    }
+    suspend fun adopt(candidate:RelationshipCandidate)=review.adopt(candidate,{access.current(ModelPurpose.RELATIONSHIP,candidate.plan.work.configStamp)})
     fun evaluate(friendId:String,manual:Boolean=true,recovery:Boolean=false):Job? {
         val task=Active(ChatAttemptLease());if(active.putIfAbsent(friendId,task)!=null)return null
         val job=scope.launch{
