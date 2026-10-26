@@ -8,7 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** Own app-private database. Primary key on friend is also the unique conversation key. */
-class Store(context: Context, name: String = AppServices.databaseName) : SQLiteOpenHelper(context, name, null, 4) {
+class Store(context: Context, name: String = AppServices.databaseName) : SQLiteOpenHelper(context, name, null, 5) {
     override fun onConfigure(db: SQLiteDatabase) { db.setForeignKeyConstraintsEnabled(true) }
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE friends(id TEXT PRIMARY KEY, name TEXT NOT NULL, bio TEXT NOT NULL, prompt TEXT NOT NULL, tone INTEGER NOT NULL)")
@@ -22,7 +22,7 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
         insertMessage(db, "seed-lin", "【演示开场】今天过得怎么样？这里的故事可以慢慢开始。", false)
         insertMessage(db, "seed-an", "【演示开场】最近有哪首歌，让你想多听一遍？", false)
     }
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) { if(oldVersion<2)ChatLedger.createSchema(db);if(oldVersion<4)ProcessingSchema.create(db) }
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) { if(oldVersion<2)ChatLedger.createSchema(db);if(oldVersion<5)ProcessingSchema.create(db) }
     private fun insertFriend(db: SQLiteDatabase, f: Friend): Boolean = db.insertWithOnConflict("friends", null, ContentValues().apply {
         put("id", f.id); put("name", f.name.trim()); put("bio", f.bio.trim()); put("prompt", f.prompt); put("tone", f.tone)
     }, SQLiteDatabase.CONFLICT_IGNORE) != -1L

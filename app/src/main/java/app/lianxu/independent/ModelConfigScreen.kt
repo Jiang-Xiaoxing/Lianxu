@@ -42,6 +42,7 @@ internal fun providerMatches(p:ProviderPreset,query:String):Boolean {
 }
 
 @Composable fun ModelConfigScreen(onBack:()->Unit,state:ModelConfigState=viewModel()) {
+    LaunchedEffect(Unit){state.refresh()}
     var screen by remember {mutableStateOf("overview")}
     var providerReturn by remember {mutableStateOf("overview")}
     var original by remember {mutableStateOf<ModelConfig?>(null)}
