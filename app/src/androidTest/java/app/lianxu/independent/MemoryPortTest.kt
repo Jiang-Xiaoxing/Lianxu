@@ -310,4 +310,47 @@ class MemoryPortTest {
         assertEquals("2025年12月25日：散步",MemoryDates.display("散步","2025-12-25",today))
         assertEquals("散步",MemoryDates.display("散步",null,today))
     }
+    private fun assembled(thinking:Boolean=false)=(CompanionPrompt.build(Friend("a","A","Synthetic"),
+        RolePrompts(internalPrompt="original-thinking",internalEnabled=thinking,thinkingNone=!thinking),emptyList(),"garden") as PromptBuild.Ready).request
+    @Test fun actualClientCapabilitiesFollowAllFourToolSwitches()=runBlocking {
+        for(recall in listOf(false,true))for(write in listOf(false,true)) {
+            repo.saveMemoryRules(MemoryRules(proactiveRecall=recall,immediateWrite=write))
+            val t=ChatLedger(store).begin("a","garden",config.id)
+            val expected=when {recall&&write->"本次提供记忆回查与写入工具";recall->"本次仅提供记忆回查工具";write->"本次仅提供记忆写入工具";else->CompanionPrompt.NO_MEMORY_TOOLS}
+            val result=runtime(t).run(config,"synthetic-only",assembled(),client{r->
+                assertTrue(r.messages.first().content.contains(expected))
+                assertEquals(recall,r.tools.any{toolNameOf(it)=="agent_history_search"})
+                assertEquals(write,r.tools.any{toolNameOf(it)=="agent_memory_update"})
+                assertTrue(r.messages.last().turnContext);assertFalse(r.messages.last().content.contains("内部判断提示"))
+                TextChatResult.Success("final")
+            })
+            assertTrue(result is TextChatResult.Success);assertTrue(ChatLedger(store).finish(t.id,t.attempt,"final"))
+        }
+    }
+    @Test fun actualToolRoundsMoveOnlyOriginalTailAndRespectExhaustion()=runBlocking {
+        for(thinking in listOf(false,true)) {
+            repo.saveMemoryRules(MemoryRules(proactiveRecall=true,recallRounds=2))
+            val t=ChatLedger(store).begin("a","garden",config.id);val original=assembled(thinking);var calls=0
+            val result=runtime(t).run(config,"synthetic-only",original,client{r->
+                assertEquals(original.messages.last(),r.messages.last());assertEquals(1,r.messages.count{it.turnContext})
+                assertEquals(thinking,r.messages.last().content.contains("original-thinking"))
+                val pairs=r.messages.filter{it.role=="assistant"||it.role=="tool"}
+                assertEquals(calls*2,pairs.size)
+                pairs.chunked(2).forEach{pair->assertEquals(pair[0].toolCalls.single().id,pair[1].toolCallId)}
+                calls++
+                if(calls<=2) TextChatResult.Success("",listOf(ChatToolCall("round-$calls","agent_history_search","{\"query\":\"garden\"}")))
+                else {assertTrue(r.tools.isEmpty());assertTrue(r.messages.first().content.contains(CompanionPrompt.NO_MEMORY_TOOLS));TextChatResult.Success("final")}
+            })
+            assertTrue(result is TextChatResult.Success);assertEquals(3,calls);assertTrue(ChatLedger(store).finish(t.id,t.attempt,"final"))
+        }
+    }
+    @Test fun actualUnsupportedFallbackRemovesCapabilityClaimAndKeepsTail()=runBlocking {
+        val t=ChatLedger(store).begin("a","garden",config.id);val original=assembled(true);var calls=0
+        val result=runtime(t).run(config,"synthetic-only",original,client{r->
+            calls++;assertEquals(original.messages.last(),r.messages.last())
+            if(calls==1){assertTrue(r.messages.first().content.contains("本次提供记忆回查与写入工具"));TextChatResult.Failure(ChatFailure.UNSUPPORTED_TOOLS)}
+            else {assertTrue(r.tools.isEmpty());assertEquals(original.messages,r.messages);TextChatResult.Success("final")}
+        })
+        assertTrue(result is TextChatResult.Success);assertEquals(2,calls)
+    }
 }

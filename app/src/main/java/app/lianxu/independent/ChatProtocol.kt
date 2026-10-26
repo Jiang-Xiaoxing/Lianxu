@@ -2,7 +2,7 @@ package app.lianxu.independent
 
 /** Wire order is supplied by the confirmed prompt assembler, never inferred by the HTTP client. */
 data class ChatToolCall(val id:String,val name:String,val arguments:String)
-data class WireMessage(val role:String,val content:String,val toolCalls:List<ChatToolCall> = emptyList(),val toolCallId:String="",val name:String="",val memoryIds:List<String> = emptyList(),val sourceMessageId:String="") {
+data class WireMessage(val role:String,val content:String,val toolCalls:List<ChatToolCall> = emptyList(),val toolCallId:String="",val name:String="",val memoryIds:List<String> = emptyList(),val sourceMessageId:String="",val capabilityRange:IntRange?=null,val turnContext:Boolean=false) {
     init {require(role in setOf("system","user","assistant","tool"));require(content.isNotBlank()||(role=="assistant"&&toolCalls.isNotEmpty()));require(role!="tool"||toolCallId.isNotBlank())}
 }
 data class TextChatRequest(val messages:List<WireMessage>,val outputLimit:Int=2048,val timeoutMillis:Int=45000,val tools:List<Map<String,Any>> = emptyList()) {

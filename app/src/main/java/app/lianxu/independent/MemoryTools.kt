@@ -59,7 +59,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
     suspend fun run(config:ModelConfig,key:String,request:TextChatRequest,client:TextChatClient):TextChatResult {
         if(!rules.proactiveRecall&&!rules.immediateWrite){
             if(!active())return TextChatResult.Failure(ChatFailure.SOURCE_CHANGED)
-            val result=client.complete(config,key,request.copy(tools=emptyList()))
+            val result=client.complete(config,key,CompanionPrompt.forSend(request,emptyList()))
             return if(result is TextChatResult.Success&&result.toolCalls.isNotEmpty())TextChatResult.Failure(ChatFailure.TOOLS_UNAVAILABLE) else result
         }
         repo.read{db->
@@ -73,14 +73,17 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
         repeat(8){step->
             currentCoroutineContext().ensureActive();if(!active()||repo.memoryRules(repo.store.readableDatabase)!=rulesState)return TextChatResult.Failure(ChatFailure.SOURCE_CHANGED)
             val actor="${turn.id}:${turn.attempt}:$step"
-            val maps=messages.map{m->buildMap<String,Any>{put("role",m.role);put("content",m.content);if(m.name.isNotEmpty())put("name",m.name);if(m.toolCalls.isNotEmpty())put("tool_calls",m.toolCalls.map{mapOf("id" to it.id,"type" to "function","function" to mapOf("name" to it.name,"arguments" to it.arguments))});if(m.sourceMessageId.isNotEmpty())put(CompanionRecallBudget.SOURCE_META,mapOf("id" to m.sourceMessageId,"revision" to stableDigest(m.content)));if(m.memoryIds.isNotEmpty())put("_companion_memory_ids",m.memoryIds)}}
+            val preparedMessages=CompanionPrompt.forSend(request.copy(messages=messages.toList()),definitions).messages
+            val maps=preparedMessages.map{m->buildMap<String,Any>{put("role",m.role);put("content",m.content);if(m.name.isNotEmpty())put("name",m.name);if(m.toolCalls.isNotEmpty())put("tool_calls",m.toolCalls.map{mapOf("id" to it.id,"type" to "function","function" to mapOf("name" to it.name,"arguments" to it.arguments))});if(m.sourceMessageId.isNotEmpty())put(CompanionRecallBudget.SOURCE_META,mapOf("id" to m.sourceMessageId,"revision" to stableDigest(m.content)));if(m.memoryIds.isNotEmpty())put("_companion_memory_ids",m.memoryIds)}}
             val prepared=budget.prepare(actor,maps,definitions,config.contextTokens,request.outputLimit)
             val offered=if(step==7)emptyList() else prepared.tools
-            if(estimateLocalMessagesTokens(maps)+ConservativeTokens.tokens(gson.toJson(offered))+request.outputLimit>config.contextTokens)return TextChatResult.Failure(ChatFailure.CONTEXT_CAPACITY)
-            val result=client.complete(config,key,request.copy(messages=messages.toList(),tools=offered))
+            val outgoing=CompanionPrompt.forSend(request.copy(messages=messages.toList()),offered)
+            val outgoingMaps=maps.mapIndexed{i,m->m+("content" to outgoing.messages[i].content)}
+            if(estimateLocalMessagesTokens(outgoingMaps)+ConservativeTokens.tokens(gson.toJson(offered))+request.outputLimit>config.contextTokens)return TextChatResult.Failure(ChatFailure.CONTEXT_CAPACITY)
+            val result=client.complete(config,key,outgoing)
             if(step==0&&offered.isNotEmpty()&&result is TextChatResult.Failure&&result.reason==ChatFailure.UNSUPPORTED_TOOLS){
                 if(!active()||repo.memoryRules(repo.store.readableDatabase)!=rulesState)return TextChatResult.Failure(ChatFailure.SOURCE_CHANGED)
-                val fallback=client.complete(config,key,request.copy(tools=emptyList()))
+                val fallback=client.complete(config,key,CompanionPrompt.forSend(request,emptyList()))
                 return if(fallback is TextChatResult.Success&&fallback.toolCalls.isNotEmpty())TextChatResult.Failure(ChatFailure.TOOLS_UNAVAILABLE) else fallback
             }
             if(result !is TextChatResult.Success||result.toolCalls.isEmpty())return result
