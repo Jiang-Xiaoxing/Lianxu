@@ -52,7 +52,7 @@ class ChatLedger(private val store:Store,private val session:String=processSessi
         if(!configUnchanged())return@atomic false
         require(text.isNotBlank())
         val message=db.insertOrThrow("messages",null,ContentValues().apply{put("friend_id",current.friendId);put("body",text);put("mine",0);put("created",System.currentTimeMillis())})
-        db.update("chat_turns",ContentValues().apply{put("state",TurnState.COMPLETED.name);put("assistant_message_id",message);putNull("error_code")},"id=?",arrayOf(id));onCompleted(db);true
+        db.update("chat_turns",ContentValues().apply{put("state",TurnState.COMPLETED.name);put("assistant_message_id",message);putNull("error_code")},"id=?",arrayOf(id));onCompleted(db);RoleExamplesRepository.maintain(db,current.friendId);true
     }}
         if(lease==null)write() else lease.commit(write)
     }
@@ -62,6 +62,7 @@ class ChatLedger(private val store:Store,private val session:String=processSessi
     data class Context(val friend:Friend,val recent:List<Message>,val input:String,val rawPrompts:String,val stamp:String)
     private fun snapshot(db:SQLiteDatabase,id:String):Context {
         val t=turn(db,id)?:error("Missing turn")
+        RoleExamplesRepository.maintain(db,t.friendId)
         val friend=db.rawQuery("SELECT id,name,bio,prompt,tone FROM friends WHERE id=?",arrayOf(t.friendId)).use{c->check(c.moveToFirst());Friend(c.getString(0),c.getString(1),c.getString(2),c.getString(3),c.getInt(4))}
         val recent=completed(db,t.friendId)
         val input=db.rawQuery("SELECT body FROM messages WHERE id=?",arrayOf(t.userMessageId.toString())).use{c->check(c.moveToFirst());c.getString(0)}

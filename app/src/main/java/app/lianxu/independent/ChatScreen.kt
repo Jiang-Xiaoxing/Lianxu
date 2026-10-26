@@ -52,6 +52,7 @@ import java.util.Locale
             }
             TextButton(onClick={vm.open("detail",friend.id)},modifier=Modifier.heightIn(min=UiSpace.action)){Text("资料")}
         }
+        RoleExamplesInvitation(vm,friend.id)
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()){
             val width=minOf(292.dp,maxWidth*.76f)
             LazyColumn(Modifier.fillMaxSize().testTag("chat-history"),state=list,contentPadding=PaddingValues(horizontal=UiSpace.page,vertical=20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){

@@ -38,7 +38,7 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
     suspend fun add(friends: List<Friend>, demoGreeting:Boolean=true) = withContext(Dispatchers.IO) {
         require(friends.all { it.id.isNotBlank() && it.name.isNotBlank() && it.bio.isNotBlank() })
         val db = writableDatabase; db.beginTransaction()
-        try { friends.forEach { if (insertFriend(db,it) && demoGreeting) insertMessage(db,it.id,"【演示开场】你好，我是${it.name}。很高兴认识你。",false) }; db.setTransactionSuccessful() } finally { db.endTransaction() }
+        try { friends.forEach { if (insertFriend(db,it)) { RoleExamplesRepository.initialize(db,it.id); if(demoGreeting) insertMessage(db,it.id,"【演示开场】你好，我是${it.name}。很高兴认识你。",false) } }; db.setTransactionSuccessful() } finally { db.endTransaction() }
     }
     suspend fun exchange(friend: Friend, input: String, reply: String) = withContext(Dispatchers.IO) {
         val db=writableDatabase; db.beginTransaction()
@@ -47,6 +47,15 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
     suspend fun preference(key: String, default: String): String = withContext(Dispatchers.IO) {
         readableDatabase.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(key)).use { if(it.moveToFirst()) it.getString(0) else default }
     }
+    internal suspend fun updateRolePrompts(id:String,change:(RolePrompts)->RolePrompts)=withContext(Dispatchers.IO){AppMutationGate.read{
+        val db=writableDatabase;db.beginTransaction()
+        try{
+            val key=RolePromptStore.key(id)
+            val old=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(key)).use{if(it.moveToFirst())RolePromptStore.decode(it.getString(0)) else RolePrompts()}
+            db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",key);put("value",RolePromptStore.encode(change(old)))},SQLiteDatabase.CONFLICT_REPLACE)
+            db.setTransactionSuccessful()
+        }finally{db.endTransaction()}
+    }}
     suspend fun setPreference(key: String, value: String) = withContext(Dispatchers.IO) {
         writableDatabase.insertWithOnConflict("preferences",null,ContentValues().apply { put("key",key); put("value",value) },SQLiteDatabase.CONFLICT_REPLACE)
     }
