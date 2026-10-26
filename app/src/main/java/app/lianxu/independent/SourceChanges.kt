@@ -32,7 +32,9 @@ class SourceChanges(private val repo:ProcessingRepository){
         db.execSQL("UPDATE chat_turns SET source_revision=source_revision+1 WHERE id=?",arrayOf(old.requestId))
         impact.candidates.forEach{repo.invalidateCandidate(db,old.source.characterId,it.id)}
         impact.memories.forEach{m->
-            if(m.valid)repo.saveMemory(db,m.copy(version=m.version+1,valid=false,life=if(impact.choice==SourceMemoryChoice.INVALIDATE&&!m.manual&&!m.locked)MemoryLife.RETRACTED else m.life))
+            val life=if(impact.choice==SourceMemoryChoice.INVALIDATE&&!m.manual&&!m.locked)MemoryLife.RETRACTED else m.life
+            // Evidence may already be invalid after KEEP; lifecycle changes still need a version.
+            if(m.valid||life!=m.life)repo.saveMemory(db,m.copy(version=m.version+1,valid=false,life=life))
             if(m.locked||m.manual)repo.candidate(db,m.friendId,m.id,m,"来源已修改或撤回，请人工核对；保留原话快照。","source-${message.id}-$revision-${m.id}")
         }
     }
