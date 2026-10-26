@@ -1,31 +1,100 @@
 # 恋叙 · Lianxu
 
-开发中的原生 Android AI 伴侣项目，当前版本标识为 `0.14-memory-counts-test`。这是源码开发基线，不是成熟正式版，也不包含 Release 或 APK。
+一个正在开发的原生 Android AI 伴侣应用，让你创建自己的角色，在持续的对话中保留各自的记忆与关系。
 
-界面使用 Kotlin、Jetpack Compose / Material3；聊天、角色、记忆与关系按角色隔离保存。文字聊天调用用户自行配置的 HTTPS OpenAI 兼容接口，配置保存在本机。搜索 AI 仍为本地演示；视觉附件和主动聊天未开放。没有真实服务商或真实手机验收结论。
+你决定角色是谁、怎样表达，也可以查看和修正它记住的内容。恋叙使用你自行配置的模型服务，界面采用简约的白灰绿配色，支持深色模式。
 
-记忆保留近期40个完整轮次，超过后整理最早20轮；相关记忆默认去重后最多15条，核心独立。已接入有证据的最多2跳关联，评分后保留8入口，评分采用百分制。向量缓存可选，向量用途未配置时不发送嵌入请求。来源、版本、人工/锁定、失败重试及最终回复/工具记忆事务保护必须保留。
+**Android 8.0+ · 自备模型 API · 开发测试阶段 · GPL-3.0-only**
 
-记忆模块支持：
+## 现在可以做什么
 
-1. 主动回查与当场写记忆各自默认关闭；仅明确不支持工具的首次请求可受限重试一次，不自动改开关。
-2. 来源变更按受影响集合整体保留文字或逻辑作废，旧证据始终失效，人工与锁定项保留复核。
-3. 显式生日年度元数据支持未知年份与2月29日，不批量重解释旧记录、不新增提醒。
-4. 回查额度默认3轮/总4000 Token/单次1500，可在全局设置调整并验证边界；自动召回默认15条不变。
+- **创建角色，分别聊天。** 设置名字、介绍与角色提示词；每位角色拥有独立的会话、记忆和关系记录。文字发送支持取消，失败后可手动重试。
+- **管理角色的记忆。** 查看原话、整理后的记忆与待确认内容，编辑或锁定重要条目。来源发生变化时，需要确认如何处理受影响的记忆。
+- **让旧话题有机会被想起。** 聊天会参考核心记忆和相关记忆；默认保留近期 40 个完整回合，每批整理 20 回合，相关记忆最多 15 条。整理不会删除原始聊天记录。
+- **调整表达与关系。** 按角色设置自定义表达、附加提示和初始关系背景，查看六维关系状态。关系自动评估和内部判断提示默认关闭，可按需配置。
+- **从聊过的话里挑选语气参考。** 新建角色聊满 20 个完整回合后，会邀请你使用聊天模型挑选 2–3 轮原话；确认后才调用。示例只参考语气，近期原话窗口满后停用并保留记录。升级前已有角色不会自动加入这个流程。
+- **自行选择模型和记忆工具。** 统一管理模型配置，并按聊天、记忆整理等用途选择模型。记忆回查和当场写记忆可以分别开启，默认均关闭，调用额度可调整。
 
-2026-10-26验证记录：550项单元测试通过（0失败、0错误、0跳过），assembleDebug、lintDebug及compileDebugAndroidTestKotlin通过；lint为0错误、2项既有提示（Gson可更新、v26资源目录冗余）。9项相关合成设备集成测试及UI默认值断言已编译，设备测试与UI截图未运行。未验证真实API、真实设备及完整UI状态。
+## 怎样开始使用
 
-## 本地构建
+### 安装
 
-需要兼容的JDK和Android SDK。当前工具链使用JDK21完整开发包（需含javac）、Gradle9.8.0、AGP9.3.2、Kotlin2.4.20、compile/target SDK37、minSdk26，Java目标17。
+目前**没有对应最新 main 的公开可下载安装包**。想体验当前源码，需要按下方说明自行构建 APK，再安装到 Android 8.0 及以上的设备。
 
-自行设置 `ANDROID_HOME` 或在本机创建被Git忽略的 `local.properties`，不要提交个人路径或凭据。Linux/macOS解包后先 `chmod +x gradlew`。
+此前提供的测试 APK 不包含最新合并的提示词修复和旧聊天语气参考功能，也不是正式稳定版。请区分安装包与当前源码的功能范围。
+
+### 配置并开始聊天
+
+1. 打开 **设置 → 大模型配置 → 添加服务商**，填写自己的 API Key 和模型 ID；使用自定义服务时，在高级设置中填写 HTTPS 服务地址。文字聊天使用 OpenAI 兼容接口。
+2. 保存后，在用途选择中指定 **聊天** 模型。可另选 **记忆整理** 模型；未单独指定时，记忆整理沿用聊天模型。
+3. 在 **聊天** 或 **通讯录** 页点击右上角 **＋ → 添加AI**，填写名字、角色介绍和提示词，再点 **创建AI** 进入聊天。
+4. 想调整记忆或关系时，进入 **设置 → 记忆与关系**；想调整角色说话方式时，从角色资料进入 **表达与提示词**。
+
+保存模型配置不会发起请求；测试连接、获取模型、发送消息，以及运行已启用的处理任务时才会调用相应服务。模型服务可能收费，请按自己的账户额度使用。
+
+### 数据保存在哪里
+
+角色、聊天与记忆保存在应用的本机数据库中，API Key 使用 Android Keystore 保护。**本机保存不等于离线推理**：调用模型时，会把该请求需要的角色设定、对话或记忆内容发送给你配置的服务商。旧聊天示例的挑选会另行说明发送范围，并征求你的同意。
+
+## 当前开发阶段
+
+恋叙仍在迭代，已有合成数据、模拟接口与 Android 模拟器验证；尚未完成真实模型服务、真实手机和完整设备适配验收，不保证所有兼容接口都能正常工作。
+
+目前的边界：
+
+- **搜索 AI 仍是本地演示**，不是联网寻找或生成角色。
+- 图片与附件理解、主动聊天、世界书尚未接入；视觉模型配置入口不代表视觉功能已经可用。
+- 旧数据迁移暂停。现阶段请使用测试数据体验，不要把它作为重要资料的唯一保存位置。
+
+问题与建议可以提交到 [Issues](https://github.com/Jiang-Xiaoxing/Lianxu/issues)。请说明复现步骤、设备与应用版本，并移除密钥、聊天隐私和其他个人信息。
+
+## 开发与构建
+
+项目使用 Kotlin、Jetpack Compose / Material3 和本机 SQLite。开发规范见 [AGENTS.md](AGENTS.md)，实现说明见 [架构](docs/ARCHITECTURE.md)、[记忆模块](docs/MEMORY-PORT.md) 与 [界面基线](docs/UI-DESIGN.md)。代码变更通过分支与 PR 评审，测试结果按实际执行情况记录。
+
+<details>
+<summary>从源码构建 APK</summary>
+
+需要 Git、完整 JDK 21（含 `javac`）和 Android SDK 37。仓库使用 Gradle wrapper 9.8.0、AGP 9.3.2、Kotlin Compose 插件 2.4.20，Java 编译目标为 17。
 
 ```sh
-./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:compileDebugAndroidTestKotlin
+git clone https://github.com/Jiang-Xiaoxing/Lianxu.git
+cd Lianxu
 ```
 
-设备测试只在无真实数据的专用模拟器运行。仓库不包含任何私钥，TLS测试需要先生成仅供本机mock的合成证书；以下密码是测试源码公开常量，不是真实凭据：
+设置 `ANDROID_HOME`，或在项目根目录创建本机专用的 `local.properties`，填写 `sdk.dir`。不要提交个人路径或凭据。
+
+Linux / macOS：
+
+```sh
+chmod +x gradlew
+./gradlew :app:assembleDebug
+```
+
+Windows PowerShell：
+
+```powershell
+.\gradlew.bat :app:assembleDebug
+```
+
+产物位于 `app/build/outputs/apk/debug/app-debug.apk`，为 debug 签名的测试安装包。可将 APK 传到测试设备安装，或使用 Android SDK 的 `adb`：
+
+```sh
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+覆盖安装要求签名一致；请勿为了安装而贸然卸载存有重要数据的旧版本。
+
+</details>
+
+<details>
+<summary>运行开发检查与设备测试</summary>
+
+```sh
+./gradlew :app:testDebugUnitTest :app:lintDebug :app:compileDebugAndroidTestKotlin
+```
+
+设备测试仅在无真实数据的专用模拟器运行。TLS 模拟测试需要先生成本机合成证书；以下密码是测试源码公开常量，不是真实凭据：
 
 ```sh
 mkdir -p app/src/androidTest/assets
@@ -33,22 +102,18 @@ keytool -J-Dkeystore.pkcs12.legacy -genkeypair -alias localhost -keyalg RSA -key
 ./gradlew :app:connectedDebugAndroidTest
 ```
 
-`keystore.pkcs12.legacy` 仅用于兼容较旧 Android 的合成测试证书容器，避免 JDK21 默认 PKCS12 加密格式在 API30 上无法读取；它不修改应用 TLS 校验或网络安全配置。合成证书被Git忽略，不得上传真实证书、API Key、登录凭据、数据库、聊天数据或模型配置。
+`keystore.pkcs12.legacy` 仅用于让合成测试证书兼容较旧 Android，不修改应用的 TLS 校验。已有该证书时无需重复生成。证书与生成报告均不纳入源码；不得提交真实密钥、证书、数据库、聊天数据或模型配置。
 
-## 开发与贡献
+</details>
 
-开发规范见 [AGENTS.md](AGENTS.md)，实现说明见 [架构](docs/ARCHITECTURE.md) 和 [记忆模块](docs/MEMORY-PORT.md)。贡献使用独立分支和PR评审，不直接合并；报告实际运行的检查及其限制。
+## 项目创作与协作
 
-旧数据迁移暂停。不得提交数据库、聊天数据、模型配置、凭据或个人路径。单元报告生成于 `app/build/test-results/testDebugUnitTest`，lint报告生成于 `app/build/reports/lint-results-debug.html`；生成报告不纳入源码。
+**创作者：Jiang-Xiaoxing**
 
-## 项目创作与致谢
-
-创作者：Jiang-Xiaoxing
-
-AI 协作：饭团（OpenAI AI 助手），协助设计、开发与测试。
+**AI 协作：饭团（OpenAI AI 助手）**，协助设计、开发与测试。
 
 ## 来源与许可
 
 除另有明确声明的第三方材料外，本项目代码按 **GNU General Public License version 3 only（SPDX: GPL-3.0-only）** 分发；完整条款见 [LICENSE](LICENSE)，不包含“或任何后续版本”的额外授权。该选择由项目维护者作出，不以来源仓库整体许可证代替逐项来源判断。已核实的日期引擎原提交、修正及其他复用范围见 [复用记录](docs/REUSE-PROVENANCE.md)。
 
-第三方字体、测试数据和Gradle wrapper各自保留原许可证与署名，见 [第三方记录](THIRD_PARTY_NOTICES.md)。不为不拥有的代码改变许可证，不声称完成法律审计或商标清查。
+第三方字体、测试数据和 Gradle wrapper 各自保留原许可证与署名，见 [第三方记录](THIRD_PARTY_NOTICES.md)。不为不拥有的代码改变许可证，不声称完成法律审计或商标清查。
