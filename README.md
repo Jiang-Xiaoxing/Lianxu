@@ -29,11 +29,11 @@
 
 ```sh
 mkdir -p app/src/androidTest/assets
-keytool -genkeypair -alias localhost -keyalg RSA -keysize 2048 -validity 3650 -dname CN=localhost -ext SAN=dns:localhost,ip:127.0.0.1 -storetype PKCS12 -keystore app/src/androidTest/assets/localhost-test.p12 -storepass synthetic-test-only -keypass synthetic-test-only -noprompt
+keytool -J-Dkeystore.pkcs12.legacy -genkeypair -alias localhost -keyalg RSA -keysize 2048 -validity 3650 -dname CN=localhost -ext SAN=dns:localhost,ip:127.0.0.1 -storetype PKCS12 -keystore app/src/androidTest/assets/localhost-test.p12 -storepass synthetic-test-only -keypass synthetic-test-only -noprompt
 ./gradlew :app:connectedDebugAndroidTest
 ```
 
-合成证书被Git忽略，不得上传真实证书、API Key、登录凭据、数据库、聊天数据或模型配置。
+`keystore.pkcs12.legacy` 仅用于兼容较旧 Android 的合成测试证书容器，避免 JDK21 默认 PKCS12 加密格式在 API30 上无法读取；它不修改应用 TLS 校验或网络安全配置。合成证书被Git忽略，不得上传真实证书、API Key、登录凭据、数据库、聊天数据或模型配置。
 
 ## 开发与贡献
 

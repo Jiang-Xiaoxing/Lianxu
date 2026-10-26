@@ -100,9 +100,12 @@ class ProcessingRepository(val store:Store) {
     internal fun referenceCurrent(friendId:String,stamp:String)=referenceStamp(store.readableDatabase,friendId)==stamp
     data class References(val valid:List<PromptReference>,val pending:List<String>,val stamp:String)
     suspend fun references(friendId:String,input:String,userMessageId:Long,vectors:Map<String,Double> = emptyMap()):References=tx{db->
+        // Expiry can advance while ranking references. Capture the guard first so a
+        // reference that expires during assembly cannot inherit an already-expired stamp.
+        val stamp=referenceStamp(db,friendId)
         val memory=reference(db,friendId,input,userMessageId,vectors)
         val relation=RelationshipRepository(this).reference(db,friendId)
-        References(memory.first+listOfNotNull(relation),memory.second,referenceStamp(db,friendId))
+        References(memory.first+listOfNotNull(relation),memory.second,stamp)
     }
     suspend fun resolveCandidate(friendId:String,id:String,accept:Boolean,expectedTargetVersion:Int?=null)=tx{db->
         val value=candidates(db,friendId).firstOrNull{it.id==id}?:error("Unknown candidate")

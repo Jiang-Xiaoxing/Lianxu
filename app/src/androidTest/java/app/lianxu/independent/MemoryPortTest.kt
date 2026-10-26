@@ -251,9 +251,34 @@ class MemoryPortTest {
     }
     @Test fun expiredReferenceChangesGuardAndIsNeverInjected()=runBlocking{
         val m=repo.manualSave("a",null,"garden",MemoryCategory.STATE_FACT,false,true,MemoryAbout.USER)
-        repo.tx{repo.saveMemory(it,m.copy(version=2,expiresAt=System.currentTimeMillis()+250))}
-        val refs=repo.references("a","garden",99);assertTrue(refs.valid.isNotEmpty());delay(350)
+        val expiry=System.currentTimeMillis()+5000
+        repo.tx{repo.saveMemory(it,m.copy(version=2,expiresAt=expiry))}
+        val refs=repo.references("a","garden",99);assertTrue(refs.valid.isNotEmpty())
+        delay((expiry-System.currentTimeMillis()+50).coerceAtLeast(0))
         assertFalse(repo.referenceCurrent("a",refs.stamp));assertTrue(repo.references("a","garden",100).valid.isEmpty())
+    }
+    @Test fun expirationDuringRankingCannotProduceCurrentGuard()=runBlocking{
+        val m=repo.manualSave("a",null,"garden",MemoryCategory.STATE_FACT,false,true,MemoryAbout.USER)
+        val turn=ChatLedger(store).begin("a","garden",config.id)
+        val expiry=System.currentTimeMillis()+5000
+        repo.tx{repo.saveMemory(it,m.copy(version=2,expiresAt=expiry))}
+        var ranked=false
+        val slowScores=object:AbstractMap<String,Double>(){
+            override val entries:Set<Map.Entry<String,Double>> = emptySet()
+            override fun get(key:String):Double?{
+                ranked=true
+                Thread.sleep((expiry-System.currentTimeMillis()+50).coerceAtLeast(0))
+                return null
+            }
+        }
+        val refs=repo.references("a","garden",turn.userMessageId,slowScores)
+        assertTrue(ranked);assertTrue(refs.valid.any{it.memoryId==m.id})
+        assertFalse(repo.referenceCurrent("a",refs.stamp))
+        var calls=0
+        val tools=MemoryTools(repo,turn,"garden",refs){repo.referenceCurrent("a",refs.stamp)}
+        val result=tools.run(config,"synthetic-only",request("garden"),client{calls++;TextChatResult.Success("must not run")})
+        assertEquals(ChatFailure.SOURCE_CHANGED,(result as TextChatResult.Failure).reason);assertEquals(0,calls)
+        assertTrue(repo.references("a","garden",100).valid.isEmpty())
     }
     @Test fun nativeToolHttpEncodingAndResponseValidationUseOnlyExplicitlyOfferedTools()=runBlocking{
         val response="""{"choices":[{"finish_reason":"tool_calls","message":{"tool_calls":[{"id":"call-1","type":"function","function":{"name":"agent_history_search","arguments":"{\"query\":\"garden\"}"}}]}}]}"""
