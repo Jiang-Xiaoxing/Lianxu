@@ -41,7 +41,7 @@ class RelationshipRepository(private val repo:ProcessingRepository){
         if(value&&choice=="FROM_NOW"&&pending.isNotEmpty())save(db,friendId,saved.copy(version=saved.version+1,cursor=pending.last().source.turnId),"auto-history-choice")
         repo.savePolicy(db,friendId,p.copy(relationshipAutomatic=value,historyChoice=choice?:p.historyChoice))
     }
-    private fun save(db:SQLiteDatabase,friendId:String,next:RelationshipState,task:String){
+    internal fun save(db:SQLiteDatabase,friendId:String,next:RelationshipState,task:String){
         val json=next.json().put("task",task).toString()
         db.insertOrThrow("relationship_history",null,ContentValues().apply{put("friend_id",friendId);put("version",next.version);put("json",json);put("boundary",next.cursor);put("created",System.currentTimeMillis())})
         db.insertWithOnConflict("relationship_state",null,ContentValues().apply{put("friend_id",friendId);put("json",json);put("version",next.version);put("cursor",next.cursor)},SQLiteDatabase.CONFLICT_REPLACE)
@@ -72,6 +72,11 @@ class RelationshipRepository(private val repo:ProcessingRepository){
         rejectUnless(currentJob,"STALE_TASK")
         rejectUnless(repo.policy(db,work.friendId).second==work.policyVersion&&repo.policy(db,work.friendId).first.relationshipEnabled&&repo.characterStamp(db,work.friendId)==work.characterStamp,"SOURCE_CHANGED")
         rejectUnless(configCurrent()&&repo.sourcesMatch(db,work.targets)&&state(db,work.friendId).version==work.previous.version,"SOURCE_CHANGED")
+        val next=propose(db,work,response)
+        save(db,work.friendId,next,work.id)
+        db.update("relationship_jobs",ContentValues().apply{put("state","COMPLETED");putNull("error")},"friend_id=? AND id=?",arrayOf(work.friendId,work.id));true
+    }}
+    internal fun propose(db:SQLiteDatabase,work:RelationshipWork,response:JSONObject):RelationshipState {
         rejectUnless(response.opt("complete")==true&&response.getString("task_id")==work.id&&response.getString("character_id")==work.friendId)
         val obj=response.getJSONObject("dimensions");rejectUnless(obj.keys().asSequence().all{k->RelationshipDimension.entries.any{it.name==k}})
         val proposal=RelationshipDimension.entries.associateWith{d->
@@ -91,10 +96,8 @@ class RelationshipRepository(private val repo:ProcessingRepository){
             val mood=optional("mood");val intensity=optional("intensity");val energy=optional("energy")
             if(mood!=null||intensity!=null||energy!=null){val last=work.targets.last();feeling=ObservedFeeling(mood,intensity,energy,last.assistant.created,last.source)}
         }
-        val next=RelationshipState(values,feeling,work.previous.version+1,work.targets.last().source.turnId)
-        save(db,work.friendId,next,work.id)
-        db.update("relationship_jobs",ContentValues().apply{put("state","COMPLETED");putNull("error")},"friend_id=? AND id=?",arrayOf(work.friendId,work.id));true
-    }}
+        return RelationshipState(values,feeling,work.previous.version+1,work.targets.last().source.turnId)
+    }
     suspend fun fail(work:RelationshipWork,code:String)=repo.tx{db->db.update("relationship_jobs",ContentValues().apply{put("state","FAILED");put("error",code)},"friend_id=? AND id=? AND state='RUNNING'",arrayOf(work.friendId,work.id))}
     suspend fun recoverAbandoned(session:String)=repo.tx{db->db.update("relationship_jobs",ContentValues().apply{put("state","FAILED");put("error","INTERRUPTED")},"state='RUNNING' AND (owner_session IS NULL OR owner_session<>?)",arrayOf(session))}
     suspend fun reference(friendId:String):PromptReference?=repo.read{db->reference(db,friendId)}
