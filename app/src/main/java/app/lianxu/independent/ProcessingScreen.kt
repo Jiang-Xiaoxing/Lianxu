@@ -21,6 +21,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 internal fun processingMessage(code:String)=when(code){
+    "RELATION_REVIEW_UNAVAILABLE"->"仅支持有完整来源快照的最近一次评估；回滚、导入或缺失快照的历史暂不能重评。"
+    "RELATION_HISTORY_MISSING"->"这版关系历史已不可用，请刷新后重新选择。"
+    "DISABLED"->"请先启用关系评估。"
     "BATCH_REVIEW_REQUIRED"->"本批已保存的条目发生变化，请先核对并保留当前版本，再重试补齐回执。"
     "CANDIDATE_SOURCE_INVALID"->"候选来源已失效，不能采用；可查看保留的来源快照。"
     ""->"尚未运行";"NO_MEMORY_MODEL"->"请先在大模型配置选择记忆模型。";"NO_RELATIONSHIP_MODEL"->"请先选择关系评估模型。"
@@ -73,7 +76,8 @@ private data class RelationView(val policy:ProcessingPolicy,val relation:Relatio
                 Row{TextButton({vm.relationship.evaluate(friend.id)},enabled=v.policy.relationshipEnabled&&!busy,modifier=Modifier.testTag("relationship-evaluate")){Text("评估待处理")};TextButton({vm.cancelProcessing(friend.id)}){Text("停止任务")}}
                 v.relation.values.forEach{(dim,value)->Column(verticalArrangement=Arrangement.spacedBy(4.dp)){Text("${dim.label}  ${value.score} / 100",style=MaterialTheme.typography.titleSmall);Text(value.statement,style=MaterialTheme.typography.bodyMedium,color=Muted)}}
                 v.relation.feeling?.let{f->Text("历史观察 ${Instant.ofEpochMilli(f.observedAt)}：${f.mood.orEmpty()} · ${f.intensity.orEmpty()} · ${f.energy.orEmpty()}。不是对当前情绪的判断。",style=MaterialTheme.typography.bodySmall,color=Muted)}
-                Text("本次读取启动边界内全部待评完整轮次，单次最长 300 秒；失败保留旧状态和游标，不在完成回调中无限重试。没有逐维人工锁分或回滚接口。",style=MaterialTheme.typography.bodySmall,color=Muted)
+                RelationshipReviewControls(vm,friend.id,v.relation,busy)
+                Text("本次读取启动边界内全部待评完整轮次，单次最长 300 秒；失败保留旧状态和游标。回滚只恢复关系值并保留处理进度；重评只支持最近一次有完整快照的评估，确认采用才保存。",style=MaterialTheme.typography.bodySmall,color=Muted)
             }
         }
     }
