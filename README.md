@@ -41,6 +41,12 @@ keytool -J-Dkeystore.pkcs12.legacy -genkeypair -alias localhost -keyalg RSA -key
 
 旧数据迁移暂停。不得提交数据库、聊天数据、模型配置、凭据或个人路径。单元报告生成于 `app/build/test-results/testDebugUnitTest`，lint报告生成于 `app/build/reports/lint-results-debug.html`；生成报告不纳入源码。
 
+## 项目创作与致谢
+
+创作者：Jiang-Xiaoxing
+
+AI 协作：饭团（OpenAI AI 助手），协助设计、开发与测试。
+
 ## 来源与许可
 
 除另有明确声明的第三方材料外，本项目代码按 **GNU General Public License version 3 only（SPDX: GPL-3.0-only）** 分发；完整条款见 [LICENSE](LICENSE)，不包含“或任何后续版本”的额外授权。该选择由项目维护者作出，不以来源仓库整体许可证代替逐项来源判断。已核实的日期引擎原提交、修正及其他复用范围见 [复用记录](docs/REUSE-PROVENANCE.md)。
