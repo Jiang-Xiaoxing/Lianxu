@@ -50,7 +50,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                 var context=ledger.context(current.id);var prompts=RolePromptStore.decode(context.rawPrompts)
                 var rules=processing.memoryRules().first
                 if(MemoryRules.completeRounds(context.recent)>=rules.recentRounds&&!prompts.examplesClosed){
-                    store.setPreference(RolePromptStore.key(friendId),RolePromptStore.encode(prompts.copy(examplesClosed=true)))
+                    store.updateRolePrompts(friendId){it.copy(examplesClosed=true)}
                     context=ledger.context(current.id);prompts=RolePromptStore.decode(context.rawPrompts)
                 }
                 var refs=processing.references(friendId,context.input,current.userMessageId,vectors.scores(friendId,context.input))

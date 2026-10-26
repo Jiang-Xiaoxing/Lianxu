@@ -156,7 +156,7 @@ core_maintenance 是核心维护目标，不是摘要长度。优先保留精简
 记忆正文用角色第一人称、日记口吻，以“我”自称，写清实际参与者；忠于原话，不把独自经历写成共同经历。
 优先使用短编号协议：evidence=["S1",...]，只允许 target_sources 中的 S 编号；程序保留完整原话快照，不必让模型复制 quote。R 辅助资料不能作新证据。
 旧记忆 target 用提供的 M 编号，新建 target 用 N1、N2…；每条仍必须给稳定 id，重试沿用原 id 和 N 编号。五操作、整批完成回执格式不变。
-date_type 可为 day/habit；habit 不设置事件日期。date_expression 保留原话中的时间词；未知留空，model_date 不能覆盖程序计算或填补未知日期。
+date_type 可为 day/habit/birthday；habit 不设置事件日期。生日必须显式使用birthday，date_expression仅取原话生日表达；未知出生年份不得猜测，程序仅保存年度月日，2月29日有效且不自动平移。不新增提醒。date_expression 保留原话中的时间词；未知留空，model_date 不能覆盖程序计算或填补未知日期。
 """
         val data=JSONObject().put("memory_schema",2).put("batch_id",id).put("character_id",friendId).put("target_dialogue",JSONArray().apply{targets.forEach{put(it.json())}}).put("auxiliary_dialogue",JSONArray().apply{auxiliary.forEachIndexed{i,s->put(s.json().put("ref","R${i+1}").put("evidence_allowed",false))}}).put("existing_memories",JSONArray().apply{existing.forEach{put(it.json().put("ref",numbered.memoryRef(it.id)))}}).put("already_saved_operations",JSONArray().apply{applied.forEach{put(it)}})
             .put("core_maintenance",JSONObject().put("goal_tokens",core.goal).put("current_tokens",core.used).put("protected_tokens",core.protected).put("protected_ids",JSONArray().apply{core.entries.filter{it.manual||it.locked}.forEach{put(it.id)}}).put("strategy","demote_automatic_unlocked_to_regular; preserve_text_evidence_history; protected_overage_requires_user"))

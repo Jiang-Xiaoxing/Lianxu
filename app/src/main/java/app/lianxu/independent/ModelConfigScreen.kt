@@ -107,7 +107,7 @@ internal fun providerMatches(p:ProviderPreset,query:String):Boolean {
                     }
                 }}
                 item{Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper).clickable{add()}.testTag("config-add").padding(18.dp),verticalAlignment=Alignment.CenterVertically){ControlIcon("add");Spacer(Modifier.width(14.dp));Text("添加服务商",Modifier.weight(1f),style=MaterialTheme.typography.titleSmall);ControlIcon("chevron")}}
-                item{Text("保存与用途选择不发起请求。文字聊天按发送时调用，搜索朋友仍为演示。",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)}
+                item{Text("保存与用途选择不发起请求。文字聊天按发送时调用，搜索AI仍为演示。",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)}
             }
         }else if(screen=="providers"){
             OutlinedTextField(query,{query=it.take(80)},placeholder={Text("搜索服务商")},singleLine=true,leadingIcon={ControlIcon("search")},modifier=Modifier.fillMaxWidth().padding(horizontal=UiSpace.page,vertical=12.dp).testTag("provider-search"),shape=RoundedCornerShape(16.dp),colors=OutlinedTextFieldDefaults.colors(unfocusedContainerColor=Paper,focusedContainerColor=Paper,unfocusedBorderColor=Color.Transparent))

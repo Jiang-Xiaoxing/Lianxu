@@ -19,7 +19,7 @@ import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLException
 import kotlin.coroutines.resume
 
-/** No redirects, automatic retries, logging, tools, reasoning display or shared trust-store changes. */
+/** Transport never retries or redirects; optional tool definitions are supplied by the caller. */
 class HttpsTextChatClient(
     private val factory:HttpsConnectionFactory=HttpsConnectionFactory{it.openConnection() as HttpsURLConnection},
     private val timeoutMillis:Int?=null,
@@ -60,7 +60,7 @@ class HttpsTextChatClient(
                 require(bytes.size<=2*1024*1024);active.setFixedLengthStreamingMode(bytes.size)
                 active.outputStream.use{it.write(bytes)};bytes.fill(0)
                 val status=active.responseCode
-                if(status !in 200..299)TextChatResult.Failure(when(status){401->ChatFailure.UNAUTHORIZED;403->ChatFailure.FORBIDDEN;429->ChatFailure.RATE_LIMIT;in 300..399->ChatFailure.REDIRECT;in 500..599->ChatFailure.SERVER;else->ChatFailure.REJECTED},status)
+                if(status !in 200..299)TextChatResult.Failure(if(request.tools.isNotEmpty()&&status in setOf(400,422)&&explicitToolsUnsupported(runCatching{active.errorStream?.reader()?.use{reader->val chars=CharArray(16000);var size=0;while(size<chars.size){val n=reader.read(chars,size,chars.size-size);if(n<0)break;size+=n};String(chars,0,size)}.orEmpty()}.getOrDefault("")))ChatFailure.UNSUPPORTED_TOOLS else when(status){401->ChatFailure.UNAUTHORIZED;403->ChatFailure.FORBIDDEN;429->ChatFailure.RATE_LIMIT;in 300..399->ChatFailure.REDIRECT;in 500..599->ChatFailure.SERVER;else->ChatFailure.REJECTED},status)
                 else if(onChunk!=null&&active.contentType.orEmpty().substringBefore(';').trim().equals("text/event-stream",true)){
                     active.inputStream.use{input->
                         val limited=object:FilterInputStream(input){var count=0
@@ -114,6 +114,14 @@ class HttpsTextChatClient(
         }
         event();return if(done&&finished)TextChatResult.Success("stream-complete") else TextChatResult.Failure(ChatFailure.TRUNCATED)
     }
+    internal fun explicitToolsUnsupported(raw:String):Boolean = runCatching {
+        val error=JSONObject(raw).optJSONObject("error")?:return false
+        val parameter=error.optString("param").lowercase()
+        val code=error.optString("code").lowercase()
+        val message=error.optString("message").lowercase()
+        (parameter=="tools"&&code in setOf("unsupported_parameter")) ||
+            (Regex("model.{0,100}(?:does not support|doesn’t support|cannot support) (?:the )?(?:tools?|function calling)\\b|(?:tools?|function calling) (?:is|are) not supported (?:by|for|with) (?:this |the )?model").containsMatchIn(message))
+    }.getOrDefault(false)
     internal fun parse(raw:String,key:String,allowedTools:Set<String> = emptySet()):TextChatResult {
         val choice=JSONObject(raw).optJSONArray("choices")?.optJSONObject(0)?:return TextChatResult.Failure(ChatFailure.FORMAT)
         val message=choice.optJSONObject("message")?:return TextChatResult.Failure(ChatFailure.FORMAT)
@@ -128,7 +136,9 @@ class HttpsTextChatClient(
                 JSONObject(args);ChatToolCall(id,name,args)
             }
             if(parsed.map{it.id}.distinct().size!=parsed.size)return TextChatResult.Failure(ChatFailure.FORMAT)
-            return TextChatResult.Success("",parsed)
+            val content=(message.opt("content") as? String).orEmpty().replace(Regex("(?is)<think>.*?</think>"),"").trim()
+            if(content.contains(key)||content.contains("<think>",true)||content.length>100000)return TextChatResult.Failure(ChatFailure.FORMAT)
+            return TextChatResult.Success(content,parsed)
         }
         val reason=choice.optString("finish_reason")
         if(reason=="length")return TextChatResult.Failure(ChatFailure.TRUNCATED)

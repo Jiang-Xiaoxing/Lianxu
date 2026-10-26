@@ -58,11 +58,12 @@ class ProcessingRepository(val store:Store) {
         db.insertOrThrow("memory_history",null,ContentValues().apply{put("memory_id",m.id);put("version",m.version);put("json",m.json().toString())})
         db.insertWithOnConflict("memory_current",null,ContentValues().apply{put("id",m.id);put("friend_id",m.friendId);put("json",m.json().toString());put("version",m.version);put("valid",if(m.valid)1 else 0)},SQLiteDatabase.CONFLICT_REPLACE)
     }
-    suspend fun manualSave(friendId:String,id:String?,text:String,category:MemoryCategory,core:Boolean,locked:Boolean,about:MemoryAbout?=null,tags:List<String> = emptyList(),dueDate:String?=null,life:MemoryLife?=null)=tx{db->
+    suspend fun manualSave(friendId:String,id:String?,text:String,category:MemoryCategory,core:Boolean,locked:Boolean,about:MemoryAbout?=null,tags:List<String> = emptyList(),dueDate:String?=null,life:MemoryLife?=null,birthday:String?=null)=tx{db->
         require(text.isNotBlank()&&text.length<=8000);val old=id?.let{memory(db,friendId,it)?:error("Unknown memory")}
         require(!category.modern||about!=null);require(old==null||old.category.modern==category.modern){"旧记录本轮不重分类"}
         val due=if(category.modern)MemoryFacets.dueDate(dueDate.orEmpty()) else null
-        val value=StoredMemory(id?:"manual-${UUID.randomUUID()}",friendId,category,text,life?:old?.life?:MemoryLife.ACTIVE,core,locked,true,(old?.version?:0)+1,about=about,tags=if(category.modern)MemoryFacets.tags(tags) else emptyList(),dueExpression=due,dueDate=due)
+        val annual=birthday?.trim()?.takeIf{it.isNotEmpty()}?.let{MemoryDates.monthDay(it)}
+        val value=StoredMemory(id?:"manual-${UUID.randomUUID()}",friendId,category,text,life?:old?.life?:MemoryLife.ACTIVE,core,locked,true,(old?.version?:0)+1,about=about,tags=if(category.modern)MemoryFacets.tags(tags) else emptyList(),dueExpression=due,dueDate=due,dateType=if(birthday==null)old?.dateType else if(annual!=null)"birthday" else null,annualMonthDay=if(birthday==null)old?.annualMonthDay else annual,eventDate=if(birthday==null)old?.eventDate else null,dateExpression=if(birthday==null)old?.dateExpression else annual)
         saveMemory(db,value);value
     }
     suspend fun setLock(friendId:String,id:String,locked:Boolean)=tx{db->val old=memory(db,friendId,id)?:error("Unknown memory");saveMemory(db,old.copy(locked=locked,version=old.version+1))}
@@ -99,9 +100,12 @@ class ProcessingRepository(val store:Store) {
     internal fun referenceCurrent(friendId:String,stamp:String)=referenceStamp(store.readableDatabase,friendId)==stamp
     data class References(val valid:List<PromptReference>,val pending:List<String>,val stamp:String)
     suspend fun references(friendId:String,input:String,userMessageId:Long,vectors:Map<String,Double> = emptyMap()):References=tx{db->
+        // Expiry can advance while ranking references. Capture the guard first so a
+        // reference that expires during assembly cannot inherit an already-expired stamp.
+        val stamp=referenceStamp(db,friendId)
         val memory=reference(db,friendId,input,userMessageId,vectors)
         val relation=RelationshipRepository(this).reference(db,friendId)
-        References(memory.first+listOfNotNull(relation),memory.second,referenceStamp(db,friendId))
+        References(memory.first+listOfNotNull(relation),memory.second,stamp)
     }
     suspend fun resolveCandidate(friendId:String,id:String,accept:Boolean,expectedTargetVersion:Int?=null)=tx{db->
         val value=candidates(db,friendId).firstOrNull{it.id==id}?:error("Unknown candidate")
@@ -138,7 +142,7 @@ class ProcessingRepository(val store:Store) {
         selected.forEach{c->db.insertWithOnConflict("candidate_injections",null,ContentValues().apply{put("candidate_id",c.id);put("user_message_id",userMessageId);put("friend_id",friendId)},SQLiteDatabase.CONFLICT_IGNORE)}
         return (core+recalled+retained) to selected.map{"候选 ${it.id}（${it.reason}）：${describe(it.proposed)}"}
     }
-    internal fun describe(m:StoredMemory)=buildString{append("${m.category.label}"+(m.about?.let{" · 关于${it.label}"}?:" · 兼容记录，未猜测分类")+"：${MemoryDates.display(m.text,m.eventDate)}");if(m.tags.isNotEmpty())append("\n主题："+m.tags.joinToString("、"));m.dueDate?.let{append("\n到期提醒：$it；到期不等于已完成，当前状态${m.life}。")} ;m.eventDate?.let{append("\n明确事件日期：$it")};if(m.eventDate==null&&m.dateExpression!=null)append("\n事件日期未明确，原表达：${m.dateExpression}");if(m.manual)append("\n用户手动确认。") else append("\n来源："+m.evidence.joinToString{ "${it.source.turnId}@${it.source.version}(${it.side})" })}
+    internal fun describe(m:StoredMemory)=buildString{append("${m.category.label}"+(m.about?.let{" · 关于${it.label}"}?:" · 兼容记录，未猜测分类")+"：${MemoryDates.display(m.text,m.eventDate)}");m.annualMonthDay?.let{append("\n年度生日：$it（不推测出生年份）")};if(m.tags.isNotEmpty())append("\n主题："+m.tags.joinToString("、"));m.dueDate?.let{append("\n到期提醒：$it；到期不等于已完成，当前状态${m.life}。")} ;m.eventDate?.let{append("\n明确事件日期：$it")};if(m.eventDate==null&&m.dateExpression!=null)append("\n事件日期未明确，原表达：${m.dateExpression}");if(m.manual)append("\n用户手动确认。") else append("\n来源："+m.evidence.joinToString{ "${it.source.turnId}@${it.source.version}(${it.side})" })}
     companion object {
         fun keywordScore(query:String,text:String):Int {
             val q=query.lowercase();val t=text.lowercase();val tokens=Regex("[a-z0-9]{2,}|[\\p{IsHan}]{2,}").findAll(q).flatMap{m->if(m.value.first().code>127)m.value.windowed(2).asSequence() else sequenceOf(m.value)}.toSet()

@@ -2,7 +2,7 @@ package app.lianxu.independent
 
 /** Wire order is supplied by the confirmed prompt assembler, never inferred by the HTTP client. */
 data class ChatToolCall(val id:String,val name:String,val arguments:String)
-data class WireMessage(val role:String,val content:String,val toolCalls:List<ChatToolCall> = emptyList(),val toolCallId:String="",val name:String="",val memoryIds:List<String> = emptyList(),val sourceMessageId:String="") {
+data class WireMessage(val role:String,val content:String,val toolCalls:List<ChatToolCall> = emptyList(),val toolCallId:String="",val name:String="",val memoryIds:List<String> = emptyList(),val sourceMessageId:String="",val capabilityRange:IntRange?=null,val turnContext:Boolean=false) {
     init {require(role in setOf("system","user","assistant","tool"));require(content.isNotBlank()||(role=="assistant"&&toolCalls.isNotEmpty()));require(role!="tool"||toolCallId.isNotBlank())}
 }
 data class TextChatRequest(val messages:List<WireMessage>,val outputLimit:Int=2048,val timeoutMillis:Int=45000,val tools:List<Map<String,Any>> = emptyList()) {
@@ -19,6 +19,7 @@ enum class ChatFailure(val display:String) {
     NETWORK("网络连接失败，可手动重试。"),SERVER("服务暂时不可用，可稍后重试。"),
     REJECTED("服务未接受请求，请检查模型 ID 和兼容接口。"),
     FORMAT("服务没有返回可用的文本回复。"),TRUNCATED("回复未完整生成，原消息已保留。请检查输出预留或模型后重试。"),
+    UNSUPPORTED_TOOLS("模型明确不支持工具调用。"),
     TOOLS_UNAVAILABLE("服务请求了尚未启用的工具，本次没有执行任何工具。"),
     INTERRUPTED("上次请求因应用退出而中断，没有自动重发。"),
     SOURCE_CHANGED("对话来源已变化，本次回复没有写入。"),

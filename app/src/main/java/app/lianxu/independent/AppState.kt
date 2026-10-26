@@ -13,6 +13,9 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     private val modelVault=ModelVault(application,vaultNamespace)
     internal val modelAccess=ModelAccess(modelVault)
     internal val processing=ProcessingRepository(store)
+    internal val examples=RoleExamplesRepository(store)
+    private val examplesEngine=RoleExamplesEngine(examples,modelAccess,client)
+    private val examplesJobs=mutableMapOf<String,Job>()
     internal val memory=MemoryEngine(viewModelScope,processing,modelAccess,client,{reload()})
     internal val relationship=RelationshipEngine(viewModelScope,processing,modelAccess,client,{reload()})
     private val manualMemoryJobs=mutableSetOf<String>()
@@ -40,7 +43,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     var compact by mutableStateOf(false); private set
     var nickname by mutableStateOf("旅人"); private set
     var ready by mutableStateOf(false); private set
-    init { viewModelScope.launch { runCatching { ledger.recoverInterrupted();reload(); compact=store.preference("compact","false").toBoolean(); nickname=store.preference("nickname","旅人"); ready=true;recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
+    init { viewModelScope.launch { runCatching { ledger.recoverInterrupted();examples.recover();reload(); compact=store.preference("compact","false").toBoolean(); nickname=store.preference("nickname","旅人"); ready=true;recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
     private var reloadSerial=0L
     private suspend fun reload() {val id=++reloadSerial;val f=store.friends();val m=store.messages();val t=ledger.all();if(id==reloadSerial){friends=f;messages=m;turns=t;processingRevision++}}
     internal suspend fun refreshProcessing(){reload()}
@@ -79,9 +82,16 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     fun cancelProcessing(id:String){memory.cancel(id);relationship.cancel(id)}
     fun retryMemory(id:String){if(!manualMemoryJobs.add(id))return;error="";viewModelScope.launch{try{val result=memory.ensureRoom(id,forceOne=true,manualRetry=true);if(!result.success)error=processingMessage(result.code);reload()}finally{manualMemoryJobs.remove(id)}}}
     fun retryChat(turn:ChatTurn){runner.retry(turn)}
+    internal suspend fun examplesConsent()=examplesEngine.consent()
+    internal fun selectExamples(id:String,consent:ExamplesConsent){
+        if(examplesJobs[id]?.isActive==true)return
+        examplesJobs[id]=viewModelScope.launch{try{examplesEngine.select(id,consent){reload()};reload()}catch(e:CancellationException){throw e}catch(_:Exception){error="示例挑选未完成，请检查配置后重试。"}}
+    }
+    internal fun cancelExamples(id:String){examplesJobs.remove(id)?.cancel()}
+    internal fun stopExamples(id:String){cancelExamples(id);viewModelScope.launch{examples.stop(id);reload()}}
     suspend fun rolePrompts(id:String)=RolePromptStore.decode(store.preference(RolePromptStore.key(id),""))
     fun saveRolePrompts(id:String,expression:String,extra:String,internal:String,enabled:Boolean,initialRelationship:String=""){
-        save{val old=rolePrompts(id);store.setPreference(RolePromptStore.key(id),RolePromptStore.encode(old.copy(expression=expression,extra=extra,internalPrompt=internal,internalEnabled=enabled,thinkingNone=!enabled,initialRelationship=initialRelationship)));back()}
+        save{store.updateRolePrompts(id){old->old.copy(expression=expression,extra=extra,internalPrompt=internal,internalEnabled=enabled,thinkingNone=!enabled,initialRelationship=initialRelationship)};back()}
     }
     fun saveProfile(name: String) { if(name.isBlank()) {error="昵称不能为空。"; return}; save { store.setPreference("nickname",name.trim()); nickname=name.trim() } }
     fun updateCompact(value: Boolean) { save { store.setPreference("compact",value.toString()); compact=value } }

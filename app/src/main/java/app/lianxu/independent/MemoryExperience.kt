@@ -42,6 +42,7 @@ import kotlinx.coroutines.launch
                 Text(if(detail.category.modern)detail.category.label+" · 关于${detail.about!!.label}" else "旧版兼容记录 · 未自动归类",style=MaterialTheme.typography.labelLarge,color=GreenText)
                 Text(detail.text,style=MaterialTheme.typography.bodyLarge)
                 if(detail.tags.isNotEmpty())Text(detail.tags.joinToString("  "){"#$it"},style=MaterialTheme.typography.bodyMedium,color=Muted)
+                detail.annualMonthDay?.let{Text("年度生日 $it"+(detail.eventDate?.let{date->" · 已知日期 $date"}?:" · 出生年份未知"),style=MaterialTheme.typography.bodySmall,color=Muted)}
                 detail.dueDate?.let{Text("到期提醒 $it · 到期不会自动完成",style=MaterialTheme.typography.bodySmall,color=Muted)}
                 Text("${lifeLabel(detail.life)} · "+(if(detail.valid)"来源有效" else "来源已失效"),style=MaterialTheme.typography.bodySmall,color=Muted)
                 Row{TextButton({editing=true},enabled=detail.category.modern,modifier=Modifier.testTag("memory-edit")){Text("编辑")};TextButton({action{repo.setLock(friend.id,detail.id,!detail.locked)}},modifier=Modifier.testTag("memory-lock-toggle")){Text(if(detail.locked)"解锁" else "锁定")};if(detail.core)TextButton({demote=detail},modifier=Modifier.testTag("core-demote-${detail.id}")){Text("改为普通记忆")}}
@@ -102,7 +103,7 @@ import kotlinx.coroutines.launch
             }
         }
     }
-    if(editing)MemoryV2Editor(detail,{editing=false}){text,c,a,t,d,l,core,lock->action{repo.manualSave(friend.id,detail?.id,text,c,core,lock,a,t,d,l);editing=false}}
+    if(editing)MemoryV2Editor(detail,{editing=false}){text,c,a,t,d,l,core,lock,birthday->action{repo.manualSave(friend.id,detail?.id,text,c,core,lock,a,t,d,l,birthday);editing=false}}
     demote?.let{m->AlertDialog({demote=null},title={Text("改为普通记忆？")},text={Text("只取消核心标记，正文、来源、锁定和历史保留。")},confirmButton={TextButton({action{repo.chooseCore(friend.id,m.id,m.version,false);demote=null}},modifier=Modifier.testTag("core-demote-confirm")){Text("确认改为普通")}},dismissButton={TextButton({demote=null}){Text("取消")}})}
     evidence?.let{m->AlertDialog({evidence=null},title={Text("来源快照")},text={Column(Modifier.verticalScroll(rememberScrollState())){if(m.evidence.isEmpty())Text("人工记录，没有模型原话证据。");m.evidence.forEach{e->Text("${e.source.turnId}@${e.source.version} · ${e.side}\n${e.snapshot}\n")};Text("已编辑或撤回的来源仅作历史快照。")}},confirmButton={TextButton({evidence=null}){Text("关闭")}})}
     versions?.let{rows->AlertDialog({versions=null},title={Text("版本历史")},text={Column(Modifier.verticalScroll(rememberScrollState())){rows.forEach{m->Text("v${m.version} · ${m.text}");TextButton({action{repo.restore(friend.id,m.id,m.version);versions=null}}){Text("恢复为新版本")}}}},confirmButton={TextButton({versions=null}){Text("关闭")}})}
@@ -111,21 +112,23 @@ import kotlinx.coroutines.launch
 }
 
 internal fun lifeLabel(life:MemoryLife)=when(life){MemoryLife.ACTIVE->"进行中";MemoryLife.COMPLETED->"已完成";MemoryLife.CANCELLED->"已取消";MemoryLife.RETRACTED->"已撤回"}
-@Composable private fun MemoryV2Editor(old:StoredMemory?,dismiss:()->Unit,save:(String,MemoryCategory,MemoryAbout,List<String>,String,MemoryLife,Boolean,Boolean)->Unit){
+@Composable private fun MemoryV2Editor(old:StoredMemory?,dismiss:()->Unit,save:(String,MemoryCategory,MemoryAbout,List<String>,String,MemoryLife,Boolean,Boolean,String?)->Unit){
     var text by rememberSaveable{mutableStateOf(old?.text.orEmpty())};var category by rememberSaveable{mutableStateOf(old?.category?:MemoryCategory.STATE_FACT)};var about by rememberSaveable{mutableStateOf(old?.about?:MemoryAbout.USER)}
     var tags by rememberSaveable{mutableStateOf(old?.tags?.joinToString("，").orEmpty())};var due by rememberSaveable{mutableStateOf(old?.dueDate.orEmpty())};var life by rememberSaveable{mutableStateOf(old?.life?:MemoryLife.ACTIVE)}
+    var birthday by rememberSaveable{mutableStateOf(old?.annualMonthDay.orEmpty())}
     var core by rememberSaveable{mutableStateOf(old?.core?:false)};var lock by rememberSaveable{mutableStateOf(old?.locked?:true)};var menu by remember{mutableStateOf(false)};var lifeMenu by remember{mutableStateOf(false)};var error by remember{mutableStateOf("")}
     AlertDialog(dismiss,title={Text(if(old==null)"记下一件小事" else "编辑记忆")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
         AppField(text,{text=it.take(8000)},"记忆内容","memory-text",minLines=3)
         Box{TextButton({menu=true},modifier=Modifier.testTag("memory-category-picker")){Text(category.label)};DropdownMenu(menu,{menu=false}){MemoryCategory.entries.filter{it.modern}.forEach{c->DropdownMenuItem({Text(c.label)},{category=c;menu=false},modifier=Modifier.testTag("category-option-${c.name}"))}}}
         Text("关于谁",style=MaterialTheme.typography.labelLarge);Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){MemoryAbout.entries.forEach{a->MemoryChoice(about==a,{about=a},{Text(a.label)},modifier=Modifier.testTag("about-${a.name}").heightIn(min=48.dp))}}
         AppField(tags,{tags=it.take(400)},"主题标签（逗号分隔）","memory-tags",true)
+        AppField(birthday,{birthday=it.take(5)},"年度生日 MM-DD（可空，不猜年份）","memory-birthday",true)
         AppField(due,{due=it.take(10)},"到期提醒 YYYY-MM-DD（可空）","memory-due",true)
-        Text("到期只提醒，不会自动完成。双方也只属于当前朋友。",style=MaterialTheme.typography.bodySmall,color=Muted)
+        Text("到期只提醒，不会自动完成。双方也只属于当前AI。",style=MaterialTheme.typography.bodySmall,color=Muted)
         Box{TextButton({lifeMenu=true}){Text("状态："+lifeLabel(life))};DropdownMenu(lifeMenu,{lifeMenu=false}){MemoryLife.entries.forEach{l->DropdownMenuItem({Text(lifeLabel(l))},{life=l;lifeMenu=false},modifier=Modifier.testTag("life-${l.name}"))}}}
         Row(verticalAlignment=Alignment.CenterVertically){Text("核心",Modifier.weight(1f));Switch(core,{core=it},Modifier.testTag("memory-core"));Spacer(Modifier.width(12.dp));Text("锁定");Switch(lock,{lock=it},Modifier.testTag("memory-lock"))}
         if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
-    }},modifier=Modifier.imePadding(),confirmButton={TextButton({try{val parsed=MemoryFacets.parseTags(tags);MemoryFacets.dueDate(due);save(text,category,about,parsed,due,life,core,lock)}catch(_:Exception){error="请检查标签数量、长度和日期格式。"}},enabled=text.isNotBlank(),modifier=Modifier.testTag("memory-save")){Text("保存")}},dismissButton={TextButton(dismiss){Text("取消")}})
+    }},modifier=Modifier.imePadding(),confirmButton={TextButton({try{val parsed=MemoryFacets.parseTags(tags);MemoryFacets.dueDate(due);if(birthday.isNotBlank())MemoryDates.monthDay(birthday);save(text,category,about,parsed,due,life,core,lock,birthday.takeUnless{it==old?.annualMonthDay.orEmpty()})}catch(_:Exception){error="请检查标签数量、长度和日期格式。"}},enabled=text.isNotBlank(),modifier=Modifier.testTag("memory-save")){Text("保存")}},dismissButton={TextButton(dismiss){Text("取消")}})
 }
 
 @Composable private fun MemoryChoice(selected:Boolean,onClick:()->Unit,label:@Composable ()->Unit,modifier:Modifier=Modifier){

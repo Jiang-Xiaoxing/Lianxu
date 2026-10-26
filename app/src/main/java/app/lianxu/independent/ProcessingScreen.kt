@@ -38,7 +38,7 @@ internal fun taskDescription(s:ProcessingRepository.TaskStatus)=when(s.state){
         AppTopBar("记忆与关系",{vm.back()})
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
             TextButton({vm.open("settings-memory")},modifier=Modifier.testTag("settings-memory-rules")){Text("记忆规则 · 轮数与条数")}
-            Text("每位朋友分别保存原话、记忆和关系。模型统一在大模型配置中选择。",style=MaterialTheme.typography.bodySmall,color=Muted)
+            Text("每位AI分别保存原话、记忆和关系。模型统一在大模型配置中选择。",style=MaterialTheme.typography.bodySmall,color=Muted)
             vm.friends.forEach{friend->Row(Modifier.fillMaxWidth().clickable{vm.open("processing-role",friend.id)}.padding(vertical=14.dp).testTag("processing-friend-${friend.id}"),verticalAlignment=Alignment.CenterVertically){Avatar(friend);Spacer(Modifier.width(14.dp));Text(friend.name,Modifier.weight(1f),style=MaterialTheme.typography.titleSmall);ControlIcon("chevron")}}
         }
     }

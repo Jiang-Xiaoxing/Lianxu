@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
     Column(Modifier.fillMaxSize()){
         AppTopBar("${friend.name} · 表达与提示词",{vm.back()},extra={CompactSaveAction(loaded&&!vm.busy){vm.saveRolePrompts(friend.id,expression,extra,internal,enabled,initialRelationship)}})
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
+            RoleExamplesSection(vm,friend.id)
             Text("只修改本角色的对应提示段；模型统一在设置中选择。",style=MaterialTheme.typography.bodySmall,color=Muted)
             AppField(expression,{expression=it.take(8000)},"自定义表达（留空跟随默认）","role-expression",minLines=4)
             AppField(extra,{extra=it.take(8000)},"附加提示","role-extra",minLines=3)

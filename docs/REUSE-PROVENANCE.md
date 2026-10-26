@@ -10,6 +10,7 @@
 |RelationshipPolicy.clamp|eba14deb21e16b1662781688407274ffa1cad34f最小适配|提交作者账号Jiang-Xiaoxing；使用枚举替代原字符串，保留限幅与高分正增减半。|
 |MemoryNumberedReferences、MemoryTools、MemoryReferenceHistory、MemoryDates显示片段及相关总结/候选行为|现有记录16047cbc、e5f84f44、3a05a8a2、c933c63b、15b9563b、e5f84f44等用户贡献链|恋叙适配自己的仓储、证据快照与事务。旧链部分交叉核验不完整，公开授权前须按来源处理，不能将整个旧项目视为自有。|
 |MemoryVectorIndex缓存策略|现有记录bb1e9fff中的用户包装策略|目标HTTPS客户端、缓存存储与余弦独立适配；没有复制上游LocalKnowledgeSearch文件。不将其他作者底层文件归为用户新增。|
+|RoleExamplesPolicy、旧聊天示例流程|用户确认自行编写；参考 Nekobot-Android 固定 71257279d79018e89c6dbdf9722213597bde504d|核对 ae95627e586e7c78f45e6843b5037460e85cf8ef 相对父 66ef1fedf8135a8fd82248848d604b8708f40f41 新增 CompanionExamplesPolicy/Store/Ui/Entity；后续 05316fa59390e66b4c9eb862986befa4a9393c9b、eb37559e83348b386681fb8009bafc44ed71c3e0 修订。复用筛选正则、场景均衡和只选编号规则，适配本项目真实回合账本、preferences 事务、模型接口与原生 UI；不复制 Room/ServiceContainer 或其他上游会话实现。来源 GPL v3 与本项目 GPL-3.0-only 保留，Git 新增记录和用户声明不被扩大为整个上游文件体系的原创性结论。|
 |聊天客户端、账本、配置、现有存储/UI|恋叙独立实现，旧记录中列有行为规格参考|保留现有实现，不为公开准备重新移植旧代码。|
 |日期测试中292条上游选题|Microsoft Recognizers-Text，固定da7edcff59f669b2a460ab9d400e36298f0d658e|MIT许可及微软版权在测试resources/licenses内，逐题来源和选择元数据保留；运行引擎不是微软引擎。|
 
