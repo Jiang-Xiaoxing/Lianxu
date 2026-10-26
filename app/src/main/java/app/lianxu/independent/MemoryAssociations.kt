@@ -52,5 +52,6 @@ internal class MemoryAssociations(private val repo:ProcessingRepository) {
         if(added==0)return
         val value=JSONArray().apply{saved.forEach{put(json(it))}}.toString()
         db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",key(work.friendId));put("value",value)},SQLiteDatabase.CONFLICT_REPLACE)
+        Diagnostics.event("memory.associations.staged",mapOf("character" to work.friendId,"batch" to work.id,"added" to added,"edges" to saved.map{mapOf("source" to it.sourceId,"target" to it.targetId,"kind" to it.kind,"reason" to it.reason)}))
     }
 }

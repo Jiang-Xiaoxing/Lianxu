@@ -90,6 +90,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
             if(result.toolCalls.size>8||result.toolCalls.any{c->c.name !in offered.map(::toolNameOf)})return TextChatResult.Failure(ChatFailure.TOOLS_UNAVAILABLE)
             messages+=WireMessage("assistant",result.text,result.toolCalls)
             for(call in result.toolCalls){
+                Diagnostics.event("tool.call",mapOf("character" to turn.friendId,"turn" to turn.id,"step" to step,"call_id" to call.id,"name" to call.name,"arguments" to call.arguments))
                 if(!active()||repo.memoryRules(repo.store.readableDatabase)!=rulesState)return TextChatResult.Failure(ChatFailure.SOURCE_CHANGED)
                 val output=try {
                     val args=JSONObject(call.arguments)
@@ -108,6 +109,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
                     }}
                 }catch(e:kotlinx.coroutines.CancellationException){throw e}catch(e:Exception){mapOf("success" to false,"error" to ((e as? ProcessingRejected)?.code?:"invalid_arguments"))}
                 messages+=WireMessage("tool",gson.toJson(output),toolCallId=call.id,name=call.name)
+                Diagnostics.event("tool.result",mapOf("character" to turn.friendId,"turn" to turn.id,"call_id" to call.id,"name" to call.name,"output" to output))
             }
         }
         return TextChatResult.Failure(ChatFailure.FORMAT)
@@ -136,6 +138,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
     private fun pending(db:SQLiteDatabase)=db.rawQuery("SELECT 1 FROM chat_turns t JOIN messages m ON m.id=t.user_message_id WHERE t.id=? AND t.friend_id=? AND t.attempt=? AND t.state='PENDING' AND m.body=?",arrayOf(turn.id,turn.friendId,turn.attempt.toString(),input)).use{it.moveToFirst()}
     /** Invoked inside ChatLedger's final reply transaction, after its ownership/context/config guards. */
     fun commit(db:SQLiteDatabase){
+        Diagnostics.event("tool.commit.staged",mapOf("character" to turn.friendId,"turn" to turn.id,"attempt" to turn.attempt))
         val raw=pref(stageKey)?:return;rejectUnless(repo.memoryRules(db)==rulesState&&rules.immediateWrite,"SOURCE_CHANGED");val stages=JSONArray(raw)
         val source=repo.sources(db,turn.friendId).firstOrNull{it.requestId==turn.id}?:throw ProcessingRejected("SOURCE_CHANGED")
         rejectUnless(source.user.text==input,"SOURCE_CHANGED")
