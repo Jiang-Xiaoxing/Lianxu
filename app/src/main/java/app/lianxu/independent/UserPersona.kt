@@ -20,7 +20,9 @@ data class UserPersona(val name:String="",val address:String="",val introduction
     companion object {
         const val KEY="user-persona-v1"
         fun decode(raw:String,legacyName:String=""):UserPersona {
-            if(raw.isBlank())return UserPersona(name=legacyName.trim()).also{require(it.valid())}
+            // Previously saved nicknames had no control-character validation. Reading them
+            // must stay tolerant; validation applies when explicitly saving a new profile.
+            if(raw.isBlank())return UserPersona(name=legacyName.trim())
             val j=RoleArchive.parse(raw.toByteArray());require(j.keySet()==setOf("version","name","address","introduction")&&RoleArchive.integer(j["version"])==1L)
             fun field(key:String):String{val value=j[key];require(value.isJsonPrimitive&&value.asJsonPrimitive.isString);return value.asString}
             return UserPersona(field("name"),field("address"),field("introduction")).also{require(it.valid())}

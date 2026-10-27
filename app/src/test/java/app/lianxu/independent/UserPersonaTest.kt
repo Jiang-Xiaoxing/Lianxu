@@ -47,4 +47,10 @@ class UserPersonaTest {
         assertEquals("原介绍\n原自写要求",RolePrompts().definition(friend))
         val full="完整角色资料".repeat(1000);assertEquals(full,RolePrompts(characterDefinition=full).definition(friend))
     }
+    @Test fun legacyControlCharactersStayReadableButNewProfilesStillRequireValidation(){
+        val old="旧\n昵称\t保留";val decoded=UserPersona.decode("",old)
+        assertEquals(old,decoded.name);assertTrue(old in decoded.prompt());assertFalse(decoded.valid())
+        assertTrue(runCatching{decoded.normalized()}.isFailure)
+        assertTrue(runCatching{UserPersona.decode(decoded.encode())}.isFailure)
+    }
 }

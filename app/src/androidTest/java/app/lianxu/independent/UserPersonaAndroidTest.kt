@@ -139,4 +139,13 @@ class UserPersonaAndroidTest {
             assertFalse("原自写要求" in data.getString("background"))
         }finally{scope.cancel()}
     }
+    @Test fun legacyMultilineNicknameSurvivesReadAndOldBackupRestoreWithoutRewriting()=runBlocking {
+        val old="旧\n昵称\t原文";f.store.setPreference("nickname",old);add()
+        assertEquals(old,f.store.persona().name);assertEquals(old,f.store.preference("nickname",""))
+        assertTrue(runCatching{f.store.savePersona(f.store.persona())}.isFailure)
+        val other=fixture();val oldPack=pack(f.backup.export());other.backup.commit(other.backup.preview(oldPack,"REPLACE"),true)
+        assertEquals(old,other.store.persona().name);assertEquals(old,other.store.preference("nickname",""))
+        val l=ChatLedger(other.store);val t=l.begin(other.store.friends().single().id,"合成输入","synthetic")
+        assertEquals(old,l.context(t.id).persona.name);assertEquals("",other.store.preference(UserPersona.KEY,""))
+    }
 }
