@@ -41,6 +41,7 @@ class BackupDocumentsUiTest {
             namespace = "backup-documents-${System.nanoTime()}"
             AppServices.databaseName = "$namespace.db"
             AppServices.vaultNamespace = namespace
+            seedLegacyTestRoles(instrument.targetContext,"$namespace.db")
             val info = automation.serviceInfo
             oldAccessibilityFlags = info.flags
             info.flags = info.flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS

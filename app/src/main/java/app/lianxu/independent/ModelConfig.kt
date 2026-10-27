@@ -20,7 +20,10 @@ object ProviderPresets {
     )
     fun get(id:String)=all.firstOrNull {it.id==id} ?: all.last()
 }
-data class ModelConfig(val id:String,val name:String,val providerId:String,val baseUrl:String,val modelId:String,val contextTokens:Int=16384,val outputTokens:Int=2048)
+data class ModelConfig(val id:String,val name:String,val providerId:String,val baseUrl:String,val modelId:String,val contextTokens:Int=16384,val outputTokens:Int=2048,val memoryOutputTokens:Int=0) {
+    /** Missing/zero is the legacy contract: keep that saved configuration's original output. */
+    fun memoryOutputLimit()=if(memoryOutputTokens==0)outputTokens else memoryOutputTokens
+}
 object ConfigRules {
     fun urlError(value:String):String? = try {
         val u=URI(value)
@@ -33,7 +36,7 @@ object ConfigRules {
         }
     } catch(_:Exception) {"请输入有效的 HTTPS 地址。"}
     fun validate(config:ModelConfig,key:String):String? = validate(config.name,config.baseUrl,config.modelId,key)
-        ?: if(config.contextTokens !in 4096..2000000 || config.outputTokens !in 1..8192 || config.outputTokens>=config.contextTokens) "请检查上下文容量和输出预留。" else null
+        ?: ModelTokenPolicy.error(config)
     fun validate(name:String,base:String,model:String,key:String):String? = when {
         name.isBlank() -> "请填写服务配置名称。"
         urlError(base)!=null -> urlError(base)

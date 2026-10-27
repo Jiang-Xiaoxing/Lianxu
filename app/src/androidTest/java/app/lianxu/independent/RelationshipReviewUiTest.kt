@@ -32,7 +32,7 @@ class RelationshipReviewUiTest {
         return TextChatResult.Success(JSONObject().put("task_id",j.getString("task_id")).put("character_id",j.getString("character_id")).put("complete",true).put("dimensions",JSONObject().put("TRUST",JSONObject().put("score",49).put("statement","重新核对本批合成原话"))).toString())
     }}
     @get:Rule(order=0)val fixture=object:ExternalResource(){
-        override fun before(){oldName=AppServices.databaseName;oldNamespace=AppServices.vaultNamespace;oldClient=AppServices.createTextClient;name="review-ui-${System.nanoTime()}";AppServices.databaseName="$name.db";AppServices.vaultNamespace=name;AppServices.createTextClient={client}}
+        override fun before(){oldName=AppServices.databaseName;oldNamespace=AppServices.vaultNamespace;oldClient=AppServices.createTextClient;name="review-ui-${System.nanoTime()}";AppServices.databaseName="$name.db";AppServices.vaultNamespace=name;AppServices.createTextClient={client};seedLegacyTestRoles(instrument.targetContext,"$name.db")}
         override fun after(){if(::vault.isInitialized)vault.delete("r");AppServices.databaseName=oldName;AppServices.vaultNamespace=oldNamespace;AppServices.createTextClient=oldClient;instrument.targetContext.deleteDatabase("$name.db")}
     }
     @get:Rule(order=1)val ui=createAndroidComposeRule<ComponentActivity>()

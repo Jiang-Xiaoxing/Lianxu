@@ -33,7 +33,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     private val examplesJobs=mutableMapOf<String,Job>()
     internal val memory=MemoryEngine(viewModelScope,processing,modelAccess,diagnosticClient,{reload()})
     internal val relationship=RelationshipEngine(viewModelScope,processing,modelAccess,diagnosticClient,{reload()})
-    private val manualMemoryJobs=mutableSetOf<String>()
+    private val manualMemoryJobs=mutableMapOf<String,Job>()
     private val runner=ConversationRunner(viewModelScope,store,modelVault,diagnosticClient,processing,memory,relationship,{reload()},{error=it})
     var processingRevision by mutableIntStateOf(0);private set
     var turns by mutableStateOf(emptyList<ChatTurn>());private set
@@ -95,7 +95,23 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     fun cancelChat(friendId:String){runner.cancel(friendId)}
     fun cancelChats(){runner.cancelAll()}
     fun cancelProcessing(id:String){memory.cancel(id);relationship.cancel(id)}
-    fun retryMemory(id:String){if(!manualMemoryJobs.add(id))return;error="";viewModelScope.launch{try{val result=memory.ensureRoom(id,forceOne=true,manualRetry=true);if(!result.success)error=processingMessage(result.code);reload()}finally{manualMemoryJobs.remove(id)}}}
+    fun retryMemory(id:String){
+        if(id in manualMemoryJobs||friends.none{it.id==id})return
+        error=""
+        val job=viewModelScope.launch(start=CoroutineStart.LAZY){try{val result=memory.ensureRoom(id,forceOne=true,manualRetry=true);if(!result.success)error=processingMessage(result.code);reload()}finally{manualMemoryJobs.remove(id)}}
+        manualMemoryJobs[id]=job;job.start()
+    }
+    internal suspend fun previewRoleDeletion(id:String)=backup.previewRoleDeletion(id)
+    internal suspend fun deleteRole(plan:BackupRepository.RoleDeletion,confirmed:Boolean){
+        require(confirmed){"删除角色需要再次确认"}
+        withContext(NonCancellable){
+            val id=plan.friendId
+            runner.cancel(id);memory.cancel(id);relationship.cancel(id);cancelExamples(id);manualMemoryJobs[id]?.cancel()
+            backup.deleteRole(plan,true)
+            if(activeId==id){activeId="";page="home"}
+            reload()
+        }
+    }
     fun retryChat(turn:ChatTurn){runner.retry(turn)}
     internal suspend fun examplesConsent()=examplesEngine.consent()
     internal fun selectExamples(id:String,consent:ExamplesConsent){

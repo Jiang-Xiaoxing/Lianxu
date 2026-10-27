@@ -12,6 +12,7 @@ import java.util.UUID
 internal class BackupRepository(private val store:Store,private val vault:ModelVault){
     data class Export(val root:JsonObject,val files:Map<String,ByteArray>){override fun toString()="BackupExport(redacted)"}
     data class Preview(val pack:BackupArchive.Package,val mode:String,val target:String?,val fingerprint:String,val contentDigest:String,val impact:String){override fun toString()="BackupPreview(redacted)"}
+    data class RoleDeletion(val friendId:String,val name:String,val characterStamp:String)
     private val base=RoleArchive.tables.keys.toList()
     private val extra=listOf("processing_policies","memory_batches","memory_operations","memory_batch_reviews","candidate_injections","relationship_jobs")
     private val order=base+extra
@@ -70,7 +71,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
         Export(JsonObject().apply{addProperty("scope",if(id==null)"all" else "role");add("roles",roles);add("preferences",settings);add("models",models);add("selections",selections);addProperty("includesKeys",includeKeys)},files).also{validate(db,it.root,it.files)}
     }
     private fun modelJson(row:BackupModel,includeKeys:Boolean)=JsonObject().apply{add("config",Gson().toJsonTree(row.config));if(includeKeys)addProperty("key",row.secret.orEmpty())}
-    private fun models(root:JsonObject)=root["models"].asJsonArray.map{v->val j=v.asJsonObject;require(j.keySet()==if(root["includesKeys"].asBoolean)setOf("config","key")else setOf("config"));require(j["config"].asJsonObject.keySet()==setOf("id","name","providerId","baseUrl","modelId","contextTokens","outputTokens"));val config=Gson().fromJson(j["config"],ModelConfig::class.java)
+    private fun models(root:JsonObject)=root["models"].asJsonArray.map{v->val j=v.asJsonObject;require(j.keySet()==if(root["includesKeys"].asBoolean)setOf("config","key")else setOf("config"));val fields=j["config"].asJsonObject.keySet();val old=setOf("id","name","providerId","baseUrl","modelId","contextTokens","outputTokens");require(fields==old||fields==old+"memoryOutputTokens");val config=Gson().fromJson(j["config"],ModelConfig::class.java)
         require(config.id.matches(Regex("[a-zA-Z0-9-]{1,80}"))&&config.name.length<=200&&config.modelId.length<=200&&config.baseUrl.length<=2000&&ConfigRules.validate(config,"validation-placeholder")==null){"模型配置无效"}
         val key=if(j.has("key"))j["key"].asString else null;require(key==null||key.length<=4096&&key.none{it.isWhitespace()||it.code<32}){"密钥字段格式无效"};BackupModel(config,key)
     }
@@ -147,6 +148,23 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
             }
         }
     };if(plan.mode=="REPLACE"&&plan.pack.all)AppMutationGate.write(action)else AppMutationGate.read(action)}
+    suspend fun previewRoleDeletion(id:String):RoleDeletion=read{db->
+        val name=db.rawQuery("SELECT name FROM friends WHERE id=?",arrayOf(id)).use{require(it.moveToFirst()){"角色已不存在，请返回列表。"};it.getString(0)}
+        RoleDeletion(id,name,repo.characterStamp(db,id))
+    }
+    suspend fun deleteRole(plan:RoleDeletion,confirmed:Boolean,lease:ChatAttemptLease=ChatAttemptLease(),checkpoint:()->Unit={})=withContext(Dispatchers.IO){
+        require(confirmed){"删除角色需要再次确认"}
+        // Keep other characters' in-flight config epochs valid; serialize only the local transaction.
+        AppMutationGate.read{
+            val db=store.writableDatabase;db.beginTransaction()
+            try {
+                check(lease.isActive()){"删除已取消"}
+                require(repo.characterStamp(db,plan.friendId)==plan.characterStamp){"角色资料已变化，请重新确认。"}
+                clearRole(db,plan.friendId);checkpoint()
+                check(lease.commit{db.setTransactionSuccessful();true}){"删除已取消"}
+            }finally{db.endTransaction()}
+        }
+    }
     private fun clearRole(db:SQLiteDatabase,id:String){
         fun ids(table:String)=db.rawQuery("SELECT id FROM $table WHERE friend_id=?",arrayOf(id)).use{c->buildSet{while(c.moveToNext())add(c.getString(0))}}
         val turnIds=ids("chat_turns");val batches=ids("memory_batches")

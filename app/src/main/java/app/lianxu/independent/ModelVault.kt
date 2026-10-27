@@ -38,7 +38,7 @@ class ModelVault(context:Context,private val namespace:String="model-configs",pr
     }
     fun list():List<ModelConfig> = AppMutationGate.read { directory.listFiles().orEmpty().filter {it.extension=="enc"}.map {f ->
         val j=read(f.nameWithoutExtension)
-        ModelConfig(f.nameWithoutExtension,j.getString("name"),j.getString("provider"),j.getString("base"),j.getString("model"),j.optInt("contextTokens",16384),j.optInt("outputTokens",2048))
+        ModelConfig(f.nameWithoutExtension,j.getString("name"),j.getString("provider"),j.getString("base"),j.getString("model"),j.optInt("contextTokens",16384),j.optInt("outputTokens",2048),j.optInt("memoryOutputTokens",0))
     }.sortedBy {it.name} }
     fun secret(id:String)=AppMutationGate.read {read(id).getString("key").also{Diagnostics.registerSecret(it)}}
     fun save(config:ModelConfig,secret:String):Unit = AppMutationGate.write {
@@ -50,7 +50,7 @@ class ModelVault(context:Context,private val namespace:String="model-configs",pr
     private fun writeAt(destination:File,config:ModelConfig,secret:String){
         Diagnostics.registerSecret(secret)
         destination.mkdirs()
-        val data=JSONObject().put("name",config.name).put("provider",config.providerId).put("base",config.baseUrl).put("model",config.modelId).put("key",secret).put("contextTokens",config.contextTokens).put("outputTokens",config.outputTokens).toString().toByteArray(Charsets.UTF_8)
+        val data=JSONObject().put("name",config.name).put("provider",config.providerId).put("base",config.baseUrl).put("model",config.modelId).put("key",secret).put("contextTokens",config.contextTokens).put("outputTokens",config.outputTokens).put("memoryOutputTokens",config.memoryOutputTokens).toString().toByteArray(Charsets.UTF_8)
         val cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.ENCRYPT_MODE,key(config.id));cipher.updateAAD(config.id.toByteArray(Charsets.UTF_8))
         val encrypted=byteArrayOf(1)+cipher.iv+cipher.doFinal(data); data.fill(0)
         val atomic=AtomicFile(File(destination,"${config.id}.enc"));val stream=atomic.startWrite()

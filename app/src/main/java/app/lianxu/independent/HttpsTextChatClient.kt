@@ -37,7 +37,7 @@ class HttpsTextChatClient(
     }
     private suspend fun awaitReply(config:ModelConfig,key:String,request:TextChatRequest,budget:Int,onChunk:((String)->Unit)?=null):TextChatResult = suspendCancellableCoroutine {continuation->
         Diagnostics.registerSecret(key);val diagnosticTrace=Diagnostics.traceId()
-        if(ConfigRules.validate(config,key)!=null){continuation.resume(TextChatResult.Failure(ChatFailure.INVALID_CONFIG));return@suspendCancellableCoroutine}
+        if(ConfigRules.validate(config,key)!=null||!ModelTokenPolicy.acceptsRequest(config,request.outputLimit)){continuation.resume(TextChatResult.Failure(ChatFailure.INVALID_CONFIG));return@suspendCancellableCoroutine}
         val connection=AtomicReference<HttpsURLConnection?>(null)
         val deadline=System.nanoTime()+budget*1_000_000L
         val task=workers.submit {

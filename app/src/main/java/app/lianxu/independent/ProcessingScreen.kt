@@ -30,8 +30,8 @@ internal fun processingMessage(code:String)=when(code){
     "HISTORY_CONFIRMATION"->"需要先选择如何处理已有聊天。";"SOURCE_CHANGED","STALE_TASK"->"来源或设置已变化，结果没有覆盖当前记录。"
     "CANCELLED"->"已停止，原话与已保存条目保留。";"INTERRUPTED"->"上次任务已中断。";"CAPACITY","TURN_TOO_LARGE","INPUT_TOO_LARGE"->"模型装不下完整整理批次。请选择更大容量的记忆模型，或在记忆规则主动调整每批轮数；本批未缩小、原话未移出。"
     "MANUAL_RETRY"->"上次整理未完成，请检查配置后手动重试。";"BUSY"->"任务正在进行。";"MODEL_UNAUTHORIZED"->"认证失败，请检查密钥与地域。"
-    "MODEL_RATE_LIMIT"->"服务限流，请稍后手动重试。";"MODEL_TIMEOUT"->"本次超时，旧状态和待处理进度保留。";"MODEL_TLS"->"HTTPS 证书校验失败。"
-    else->"本次未完整完成，旧记录保留。请检查配置后重试。"
+    "MODEL_RATE_LIMIT"->"服务限流，请稍后手动重试。";"MODEL_TIMEOUT"->"本次超时，原有状态和待处理进度保留。";"MODEL_TLS"->"HTTPS 证书校验失败。"
+    else->"本次未完整完成，原有记录保留。请检查配置后重试。"
 }
 internal fun taskDescription(s:ProcessingRepository.TaskStatus)=when(s.state){
     "ARCHIVED"->"导入的历史快照已归档，不恢复旧任务"

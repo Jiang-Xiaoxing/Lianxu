@@ -6,7 +6,7 @@ data class WireMessage(val role:String,val content:String,val toolCalls:List<Cha
     init {require(role in setOf("system","user","assistant","tool"));require(content.isNotBlank()||(role=="assistant"&&toolCalls.isNotEmpty()));require(role!="tool"||toolCallId.isNotBlank())}
 }
 data class TextChatRequest(val messages:List<WireMessage>,val outputLimit:Int=2048,val timeoutMillis:Int=45000,val tools:List<Map<String,Any>> = emptyList()) {
-    init {require(messages.isNotEmpty());require(outputLimit in 1..8192);require(timeoutMillis in 1..300000)}
+    init {require(messages.isNotEmpty());require(outputLimit in 1..ModelTokenPolicy.MAX_OUTPUT);require(timeoutMillis in 1..300000)}
 }
 enum class ChatFailure(val display:String) {
     MISSING_CONFIG("请先在设置的大模型配置中选择聊天模型。"),

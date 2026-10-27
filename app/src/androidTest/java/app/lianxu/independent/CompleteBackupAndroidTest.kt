@@ -3,7 +3,7 @@ package app.lianxu.independent
 import android.content.ContentValues
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.gson.*
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.*
 import org.json.JSONObject
 import org.junit.*
 import org.junit.Assert.*
@@ -67,6 +67,25 @@ class CompleteBackupAndroidTest {
         assertEquals(f.store.friends().size,other.store.friends().size);assertEquals(2,other.repo.read{db->db.rawQuery("SELECT count(*) FROM role_assets",null).use{it.moveToFirst();it.getInt(0)}})
         assertTrue(other.repo.read{db->db.rawQuery("SELECT 1 FROM relationship_jobs WHERE state='RUNNING'",null).use{!it.moveToFirst()}})
     }
+    @Test fun independentOutputBudgetsRoundTripAndLegacyBackupStillInherits()=runBlocking{
+        val separate=config().copy(contextTokens=65536,outputTokens=4096,memoryOutputTokens=16384)
+        f.vault.save(separate,"synthetic-key-original")
+        val target=fixture();roundTrip(target,true,true)
+        assertEquals(separate,target.vault.list().single());assertEquals(16384,target.vault.list().single().memoryOutputLimit())
+        val legacy=f.backup.export(null,true)
+        legacy.root["models"].asJsonArray[0].asJsonObject["config"].asJsonObject.remove("memoryOutputTokens")
+        val oldTarget=fixture();val p=pack(legacy)
+        oldTarget.backup.commit(oldTarget.backup.preview(p,"REPLACE"),true)
+        val old=oldTarget.vault.list().single()
+        assertEquals(65536,old.contextTokens);assertEquals(4096,old.outputTokens);assertEquals(4096,old.memoryOutputLimit())
+    }
+    @Test fun invalidMemoryBudgetIsRejectedBeforeRestoreChangesAnything()=runBlocking{
+        val export=f.backup.export(null,true)
+        export.root["models"].asJsonArray[0].asJsonObject["config"].asJsonObject.addProperty("memoryOutputTokens",-1)
+        val before=f.vault.stamp();val friends=f.store.friends()
+        assertTrue(runCatching{f.backup.preview(pack(export),"REPLACE")}.isFailure)
+        assertEquals(before,f.vault.stamp());assertEquals(friends,f.store.friends())
+    }
     @Test fun noKeysExportNeverContainsFakeSecretAndExactEndpointRetainsLocalKey()=runBlocking{
         val export=f.backup.export(null,false);assertFalse(export.root.toString().contains("synthetic-key-original"))
         val other=fixture();other.vault.save(config(),"synthetic-destination-key")
@@ -121,7 +140,51 @@ class CompleteBackupAndroidTest {
         val count=f.store.friends().size;old.commit(old.preview(p.legacy!!,null));assertEquals(count+1,f.store.friends().size)
     }
     @Test fun schemaFourUpgradeAddsResourceStorageWithoutChangingData()=runBlocking{
-        val other=fixture();other.store.writableDatabase.execSQL("DROP TABLE role_assets");other.store.writableDatabase.version=4;other.store.close()
-        val reopened=Store(context,"${other.name}.db");try{assertTrue(reopened.friends().isNotEmpty());RoleAssets(ProcessingRepository(reopened)).put("seed-lin",RoleAssets.Asset("avatar.png","avatar","image/png",byteArrayOf(1)))}finally{reopened.close()}
+        val other=fixture();other.store.add(listOf(Friend("existing","合成旧角色","升级夹具")),false);other.store.writableDatabase.execSQL("DROP TABLE role_assets");other.store.writableDatabase.version=4;other.store.close()
+        val reopened=Store(context,"${other.name}.db");try{assertEquals("existing",reopened.friends().single().id);RoleAssets(ProcessingRepository(reopened)).put("existing",RoleAssets.Asset("avatar.png","avatar","image/png",byteArrayOf(1)))}finally{reopened.close()}
+    }
+    @Test fun deletingOneRoleClearsAllItsDataAndKeepsOtherRoleAndGlobalConfig()=runBlocking{
+        val beforeOther=f.backup.export("b").root.toString();val vault=f.vault.stamp()
+        val plan=f.backup.previewRoleDeletion("a")
+        f.backup.deleteRole(plan,true)
+        assertEquals(listOf("b"),f.store.friends().map{it.id})
+        assertEquals(beforeOther,f.backup.export("b").root.toString());assertEquals(vault,f.vault.stamp())
+        assertEquals("合成用户",f.store.preference("nickname",""))
+        assertTrue(f.repo.memories("a").isEmpty());assertTrue(f.store.messages().none{it.friendId=="a"})
+        assertTrue(f.repo.read{db->db.rawQuery("PRAGMA foreign_key_check",null).use{!it.moveToFirst()}})
+        assertEquals("",f.store.preference(RolePromptStore.key("a"),""));assertEquals("",f.store.preference("role-examples:a",""))
+        assertTrue(RoleAssets(f.repo).list("a").isEmpty())
+    }
+    @Test fun cancelledFailedOrStaleDeletionCannotPartlyRemoveRole()=runBlocking{
+        val before=f.backup.export("a").root.toString();val plan=f.backup.previewRoleDeletion("a")
+        assertTrue(runCatching{f.backup.deleteRole(plan,false)}.isFailure)
+        val cancelled=ChatAttemptLease();cancelled.cancel()
+        assertTrue(runCatching{f.backup.deleteRole(plan,true,cancelled)}.isFailure)
+        assertTrue(runCatching{f.backup.deleteRole(plan,true){error("synthetic transaction failure")}}.isFailure)
+        assertEquals(before,f.backup.export("a").root.toString())
+        f.store.updateRolePrompts("a"){it.copy(expression="变更后的合成表达")}
+        assertTrue(runCatching{f.backup.deleteRole(plan,true)}.isFailure)
+        assertTrue(f.store.friends().any{it.id=="a"})
+    }
+    @Test fun lateDeletedRoleReplyFailsWhileOtherRoleInflightReplyCanFinish()=runBlocking{
+        val ledger=ChatLedger(f.store);val a=ledger.begin("a","合成在途甲","service");val b=ledger.begin("b","合成在途乙","service")
+        val epoch=AppMutationGate.epoch();f.backup.deleteRole(f.backup.previewRoleDeletion("a"),true)
+        assertEquals(epoch,AppMutationGate.epoch());assertFalse(ledger.finish(a.id,1,"不应出现的迟到回复"))
+        assertTrue(ledger.finish(b.id,1,"其他角色正常完成"));assertTrue(f.store.messages().any{it.friendId=="b"&&it.text=="其他角色正常完成"})
+        assertTrue(runCatching{f.store.updateRolePrompts("a"){it.copy(expression="迟到写入")}}.isFailure)
+        assertEquals("",f.store.preference(RolePromptStore.key("a"),""))
+    }
+    @Test fun lateEmbeddingResultCannotRecreateDeletedRoleCache()=runBlocking{
+        f.vault.setPurpose(ModelPurpose.EMBEDDING,"service")
+        val started=CompletableDeferred<Int>();val reply=CompletableDeferred<List<DoubleArray>>()
+        val index=MemoryVectorIndex(f.repo,ModelAccess(f.vault),object:MemoryEmbeddingClient{
+            override suspend fun embed(credential:ModelCredential,texts:List<String>,timeout:Int):List<DoubleArray>{started.complete(texts.size);return reply.await()}
+        })
+        val work=async(Dispatchers.Default){index.index("a")}
+        val count=withTimeout(5000){started.await()}
+        f.backup.deleteRole(f.backup.previewRoleDeletion("a"),true)
+        reply.complete(List(count){doubleArrayOf(1.0,0.5)})
+        withTimeout(5000){work.await()}
+        assertEquals("",f.store.preference("memory-vectors-v1:a",""));assertTrue(f.store.friends().none{it.id=="a"})
     }
 }

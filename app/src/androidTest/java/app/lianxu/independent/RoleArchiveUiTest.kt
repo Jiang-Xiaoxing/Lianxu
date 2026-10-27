@@ -27,7 +27,7 @@ class RoleArchiveUiTest {
     private lateinit var name:String
     private lateinit var oldName:String
     private lateinit var vm:AppState
-    @get:Rule(order=0)val fixture=object:ExternalResource(){override fun before(){oldName=AppServices.databaseName;name="archive-ui-${System.nanoTime()}.db";AppServices.databaseName=name};override fun after(){AppServices.databaseName=oldName;instrument.targetContext.deleteDatabase(name)}}
+    @get:Rule(order=0)val fixture=object:ExternalResource(){override fun before(){oldName=AppServices.databaseName;name="archive-ui-${System.nanoTime()}.db";AppServices.databaseName=name;seedLegacyTestRoles(instrument.targetContext,name)};override fun after(){AppServices.databaseName=oldName;instrument.targetContext.deleteDatabase(name)}}
     @get:Rule(order=1)val ui=createAndroidComposeRule<ComponentActivity>()
     private fun show(dark:Boolean=false,big:Boolean=false,invalid:Boolean=false){
         ui.runOnUiThread{vm=ViewModelProvider(ui.activity)[AppState::class.java]}

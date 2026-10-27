@@ -23,7 +23,7 @@ import kotlinx.coroutines.launch
     var reviews by remember{mutableStateOf(emptyList<MemoryBatchRepository.Review>())};var budget by remember{mutableStateOf<CoreBudgetState?>(null)}
     var task by remember{mutableStateOf(ProcessingRepository.TaskStatus())};var policy by remember{mutableStateOf(ProcessingPolicy())}
     var category by rememberSaveable(friend.id){mutableStateOf<MemoryCategory?>(null)};var about by rememberSaveable(friend.id){mutableStateOf<MemoryAbout?>(null)}
-    var query by rememberSaveable(friend.id){mutableStateOf("")};var tag by rememberSaveable(friend.id){mutableStateOf<String?>(null)};var legacy by rememberSaveable(friend.id){mutableStateOf(false)}
+    var query by rememberSaveable(friend.id){mutableStateOf("")};var tag by rememberSaveable(friend.id){mutableStateOf<String?>(null)}
     var detailId by rememberSaveable(friend.id){mutableStateOf<String?>(null)};var mode by rememberSaveable(friend.id){mutableStateOf("browse")}
     var editing by remember{mutableStateOf(false)};var busy by remember{mutableStateOf(false)};var error by remember{mutableStateOf("")}
     var versions by remember{mutableStateOf<List<StoredMemory>?>(null)};var evidence by remember{mutableStateOf<StoredMemory?>(null)}
@@ -39,17 +39,17 @@ import kotlinx.coroutines.launch
         if(error.isNotEmpty())Text(error,Modifier.padding(horizontal=UiSpace.page,vertical=8.dp),style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.error)
         if(detail!=null){
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(20.dp)){
-                Text(if(detail.category.modern)detail.category.label+" · 关于${detail.about!!.label}" else "旧版兼容记录 · 未自动归类",style=MaterialTheme.typography.labelLarge,color=GreenText)
+                Text(MemoryFacets.categoryLabel(detail),style=MaterialTheme.typography.labelLarge,color=GreenText)
                 Text(detail.text,style=MaterialTheme.typography.bodyLarge)
                 if(detail.tags.isNotEmpty())Text(detail.tags.joinToString("  "){"#$it"},style=MaterialTheme.typography.bodyMedium,color=Muted)
                 detail.annualMonthDay?.let{Text("年度生日 $it"+(detail.eventDate?.let{date->" · 已知日期 $date"}?:" · 出生年份未知"),style=MaterialTheme.typography.bodySmall,color=Muted)}
                 detail.dueDate?.let{Text("到期提醒 $it · 到期不会自动完成",style=MaterialTheme.typography.bodySmall,color=Muted)}
                 Text("${lifeLabel(detail.life)} · "+(if(detail.valid)"来源有效" else "来源已失效"),style=MaterialTheme.typography.bodySmall,color=Muted)
-                Row{TextButton({editing=true},enabled=detail.category.modern,modifier=Modifier.testTag("memory-edit")){Text("编辑")};TextButton({action{repo.setLock(friend.id,detail.id,!detail.locked)}},modifier=Modifier.testTag("memory-lock-toggle")){Text(if(detail.locked)"解锁" else "锁定")};if(detail.core)TextButton({demote=detail},modifier=Modifier.testTag("core-demote-${detail.id}")){Text("改为普通记忆")}}
+                Row{if(detail.category.modern)TextButton({editing=true},modifier=Modifier.testTag("memory-edit")){Text("编辑")};TextButton({action{repo.setLock(friend.id,detail.id,!detail.locked)}},modifier=Modifier.testTag("memory-lock-toggle")){Text(if(detail.locked)"解锁" else "锁定")};if(detail.core)TextButton({demote=detail},modifier=Modifier.testTag("core-demote-${detail.id}")){Text("改为普通记忆")}}
                 HorizontalDivider(color=Line)
                 Text("记录信息",style=MaterialTheme.typography.titleSmall)
                 Text("版本 ${detail.version} · "+(if(detail.manual)"人工记录" else "整理生成")+" · "+(if(detail.locked)"已锁定" else "未锁定")+" · "+(if(detail.core)"核心记忆" else "普通记忆"),style=MaterialTheme.typography.bodySmall,color=Muted)
-                if(!detail.category.modern)Text("保留旧分类 ${detail.category.name} 和原文。本轮不迁移、不推测关于谁，也不自动重写。",style=MaterialTheme.typography.bodySmall,color=Muted)
+                if(!detail.category.modern)Text("原分类标识 ${detail.category.name} 与原文保留，尚未归入当前四分类；来源、版本和核心/锁定状态保留，不自动推断归属或重分类。",style=MaterialTheme.typography.bodySmall,color=Muted)
                 TextButton({evidence=detail}){Text("查看来源")};TextButton({action{versions=repo.history(friend.id,detail.id)}}){Text("版本历史")}
             }
         }else if(mode=="maintenance"){
@@ -77,15 +77,14 @@ import kotlinx.coroutines.launch
                 }}
             }
         }else{
-            val shown=memories.filter{MemoryFacets.matches(it,category,about,tag,query,legacy)}.sortedBy{!it.category.modern}
+            val shown=memories.filter{MemoryFacets.matches(it,category,about,tag,query)}.sortedBy{!it.category.modern}
             Column(Modifier.fillMaxSize()){
                 Row(Modifier.padding(horizontal=UiSpace.page),verticalAlignment=Alignment.CenterVertically){Text("值得记住的小事",Modifier.weight(1f),style=MaterialTheme.typography.titleLarge);TextButton(onRelationship,Modifier.testTag("processing-relationship")){Text("关系")}}
                 Text("只属于你与${friend.name}的这段对话",Modifier.padding(horizontal=UiSpace.page,vertical=6.dp),style=MaterialTheme.typography.bodySmall,color=Muted)
                 Box(Modifier.padding(horizontal=UiSpace.page,vertical=4.dp)){AppField(query,{query=it},"搜索内容或主题标签","memory-search",true)}
                 Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal=UiSpace.page),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                    MemoryChoice(category==null&&!legacy,{category=null;legacy=false},{Text("全部")},modifier=Modifier.heightIn(min=48.dp).testTag("memory-filter-all"))
-                    MemoryCategory.entries.filter{it.modern}.forEach{c->MemoryChoice(category==c,{category=c;legacy=false},{Text(c.label)},modifier=Modifier.heightIn(min=48.dp).testTag("memory-filter-${c.name}"))}
-                    MemoryChoice(legacy,{category=null;legacy=true},{Text("旧版兼容")},modifier=Modifier.heightIn(min=48.dp).testTag("memory-filter-legacy"))
+                    MemoryChoice(category==null,{category=null},{Text("全部")},modifier=Modifier.heightIn(min=48.dp).testTag("memory-filter-all"))
+                    MemoryCategory.entries.filter{it.modern}.forEach{c->MemoryChoice(category==c,{category=c},{Text(c.label)},modifier=Modifier.heightIn(min=48.dp).testTag("memory-filter-${c.name}"))}
                 }
                 Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal=UiSpace.page),horizontalArrangement=Arrangement.spacedBy(8.dp)){
                     MemoryChoice(about==null,{about=null},{Text("关于谁 · 全部")},modifier=Modifier.heightIn(min=48.dp).testTag("memory-about-all"));MemoryAbout.entries.forEach{a->MemoryChoice(about==a,{about=a},{Text(a.label)},modifier=Modifier.heightIn(min=48.dp).testTag("memory-about-${a.name}"))}
@@ -96,7 +95,7 @@ import kotlinx.coroutines.launch
                     if(shown.isEmpty())item{Text(if(memories.isEmpty())"从一件想记住的小事开始。" else "没有匹配的内容，试试其他筛选。",Modifier.padding(vertical=36.dp),style=MaterialTheme.typography.bodyLarge,color=Muted)}
                     items(shown,key={it.id}){m->Column(Modifier.fillMaxWidth().clickable{detailId=m.id}.padding(vertical=18.dp).testTag("memory-${m.id}"),verticalArrangement=Arrangement.spacedBy(8.dp)){
                         Text(m.text,style=MaterialTheme.typography.bodyLarge,maxLines=3,overflow=TextOverflow.Ellipsis)
-                        Text(if(m.category.modern)m.category.label+" · "+m.about!!.label+(if(m.tags.isEmpty())"" else " · "+m.tags.take(2).joinToString(" "){"#$it"}) else "旧版兼容 · 未自动归类",style=MaterialTheme.typography.bodySmall,color=Muted,maxLines=1,overflow=TextOverflow.Ellipsis)
+                        Text(MemoryFacets.categoryLabel(m)+(if(m.tags.isEmpty())""else" · "+m.tags.take(2).joinToString(" "){"#$it"}),style=MaterialTheme.typography.bodySmall,color=Muted,maxLines=1,overflow=TextOverflow.Ellipsis)
                         HorizontalDivider(Modifier.padding(top=10.dp),color=Line,thickness=.5.dp)
                     }}
                 }
