@@ -97,4 +97,20 @@ class MemoryIntegrityTest {
             assertTrue(called);assertEquals("current-tea",repo.memories("a").single().text)
         }finally{scope.cancel();vault.list().forEach{vault.delete(it.id)}}
     }
+    @Test fun summaryCurrentMemoryViewDoesNotCarryHistoricalEvidenceBodies()=runBlocking {
+        val s=source("old-evidence-sentinel");val memory=StoredMemory("current","a",MemoryCategory.STATE_FACT,"current statement",evidence=listOf(MemoryEvidence(s.source,"user",s.user.text,s.user.text,s.user.created,s.zone)),about=MemoryAbout.USER)
+        repo.tx{repo.saveMemory(it,memory)}
+        val vault=ModelVault(context,"integrity-context-${System.nanoTime()}");val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+        try {
+            val config=ModelConfig("synthetic","Synthetic","custom","https://example.invalid/v1","fake",64000,2048)
+            vault.save(config,"synthetic-only");vault.setPurpose(ModelPurpose.MEMORY,config.id);var called=false
+            val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
+                called=true;val data=JSONObject(request.messages.last().content);val rows=data.getJSONArray("existing_memories")
+                assertEquals(1,rows.length());assertEquals("current statement",rows.getJSONObject(0).getString("text"));assertEquals(0,rows.getJSONObject(0).getJSONArray("evidence").length())
+                return TextChatResult.Success(JSONObject().put("batch_id",data.getString("batch_id")).put("character_id","a").put("operations",JSONArray()).put("operation_count",0).put("complete",true).put("end_marker",data.getString("batch_id")).toString())
+            }}
+            assertTrue(MemoryEngine(scope,repo,ModelAccess(vault),client,{}).ensureRoom("a",forceOne=true).success)
+            assertTrue(called);assertEquals(memory.evidence,repo.memories("a").single().evidence)
+        }finally{scope.cancel();vault.list().forEach{vault.delete(it.id)}}
+    }
 }
