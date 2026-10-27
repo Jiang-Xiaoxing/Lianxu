@@ -22,6 +22,7 @@ class MemoryIntegrityTest {
         assertEquals(id,b.apply(w,op(s,"two","new:two").put("core",true).put("tags",JSONArray().put("extra"))))
         assertEquals(id,b.apply(w,op(s,"three")));assertEquals(id,b.apply(w,first))
         assertEquals(1,repo.memories("a").size);assertEquals(1,repo.history("a",id).size);assertFalse(repo.memories("a").single().core)
+        rejected("OPERATION_CHANGED"){b.apply(w,op(s,"bad","new:two","Different fact"))}
         b.apply(w,op(s,"four","new:two","No coffee now").put("op","UPDATE"))
         assertEquals(2,repo.memories("a").single().version);assertEquals(1,repo.memories("a").single().evidence.size)
         assertTrue(b.complete(w,setOf("one","two","three","four"),4,w.id))
@@ -90,7 +91,7 @@ class MemoryIntegrityTest {
             val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
                 called=true;assertFalse(request.messages.any{"old-derived-sentinel" in it.content})
                 val data=JSONObject(request.messages.last().content);val saved=data.getJSONArray("already_saved_operations")
-                assertEquals(1,saved.length());assertEquals(setOf("id"),saved.getJSONObject(0).keys().asSequence().toSet())
+                assertEquals(1,saved.length());assertEquals(setOf("id","op","target"),saved.getJSONObject(0).keys().asSequence().toSet());assertEquals("new:one",saved.getJSONObject(0).getString("target"))
                 return TextChatResult.Success(JSONObject().put("batch_id",data.getString("batch_id")).put("character_id","a").put("operations",JSONArray()).put("operation_count",1).put("complete",true).put("end_marker",data.getString("batch_id")).toString())
             }}
             assertTrue(MemoryEngine(scope,repo,ModelAccess(vault),client,{}).ensureRoom("a",forceOne=true,manualRetry=true).success)
@@ -139,5 +140,21 @@ class MemoryIntegrityTest {
         assertEquals("after own write",b.currentContext(w).single().text)
         repo.manualSave("a",m.id,"after external correction",m.category,false,true,MemoryAbout.USER)
         rejected("BATCH_REVIEW_REQUIRED"){b.currentContext(w)}
+    }
+    @Test fun retryCanReserveTheFirstAliasAndSaveAnotherFact()=runBlocking {
+        val s=source();val b=MemoryBatchRepository(repo);val w=work(b,s);val id=b.apply(w,op(s,"first","new:N1"));b.fail(w,"INTERRUPTED")
+        val vault=ModelVault(context,"integrity-alias-${System.nanoTime()}");val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+        try {
+            val config=ModelConfig("synthetic","Synthetic","custom","https://example.invalid/v1","fake",64000,2048)
+            vault.save(config,"synthetic-only");vault.setPurpose(ModelPurpose.MEMORY,config.id);var called=false
+            val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
+                called=true;val data=JSONObject(request.messages.last().content);val saved=data.getJSONArray("already_saved_operations").getJSONObject(0)
+                assertEquals("first",saved.getString("id"));assertEquals("ADD",saved.getString("op"));assertEquals("new:N1",saved.getString("target"));assertFalse(saved.has("text"))
+                val second=JSONObject().put("id","second").put("op","ADD").put("target","N2").put("category","PREFERENCE_BOUNDARY").put("about","USER").put("text","Likes tea").put("evidence",JSONArray().put("S1"))
+                return TextChatResult.Success(JSONObject().put("batch_id",data.getString("batch_id")).put("character_id","a").put("operations",JSONArray().put(second)).put("operation_count",2).put("complete",true).put("end_marker",data.getString("batch_id")).toString())
+            }}
+            assertTrue(MemoryEngine(scope,repo,ModelAccess(vault),client,{}).ensureRoom("a",forceOne=true,manualRetry=true).success)
+            assertTrue(called);assertEquals(setOf("No coffee","Likes tea"),repo.memories("a").map{it.text}.toSet());assertEquals(1,repo.history("a",id).size)
+        }finally{scope.cancel();vault.list().forEach{vault.delete(it.id)}}
     }
 }

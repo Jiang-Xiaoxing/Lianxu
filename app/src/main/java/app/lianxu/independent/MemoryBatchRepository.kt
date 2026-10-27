@@ -123,7 +123,7 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
         val local=op.optString("target")
         val id=if(kind=="ADD"){
             rejectUnless(local.matches(Regex("new:[A-Za-z0-9_-]{1,64}")))
-            "memory-"+stableDigest(work.friendId+work.id+local).take(40)
+            localTarget(db,work,local)
         }else if(local.startsWith("new:"))localTarget(db,work,local) else local
         var old=repo.memory(db,work.friendId,id)
         if(kind!="ADD")rejectUnless(old!=null&&(local.startsWith("new:")||id in work.existingVersions),"UNKNOWN_TARGET")
