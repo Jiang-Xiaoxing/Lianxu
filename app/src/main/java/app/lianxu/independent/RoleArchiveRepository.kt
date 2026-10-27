@@ -76,6 +76,7 @@ internal class RoleArchiveRepository(private val store:Store) {
         // No import can activate paid evaluation or restore model selection.
         db.delete("processing_policies","friend_id=?",arrayOf(id))
         db.insertOrThrow("processing_policies",null,ContentValues().apply{put("friend_id",id);put("json",ProcessingPolicy().json().toString());put("version",1)})
+        if(target==null&&archive.scope=="role")store.seedOpening(db,id,RolePromptStore.decode(prompts.toString()).opening)
         checkpoint();check(lease.commit{true}){"导入已取消"};id
     }
     private fun clearJobs(db:SQLiteDatabase,id:String){

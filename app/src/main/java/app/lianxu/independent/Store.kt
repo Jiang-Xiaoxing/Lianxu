@@ -54,6 +54,45 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
             db.setTransactionSuccessful()
         }finally{db.endTransaction()}
     }}
+    internal fun persona(db:SQLiteDatabase):UserPersona {
+        fun value(key:String)=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(key)).use{if(it.moveToFirst())it.getString(0)else""}
+        return UserPersona.decode(value(UserPersona.KEY),value("nickname"))
+    }
+    suspend fun persona()=withContext(Dispatchers.IO){AppMutationGate.read{persona(readableDatabase)}}
+    suspend fun savePersona(value:UserPersona)=withContext(Dispatchers.IO){AppMutationGate.read{
+        val p=value.normalized();val db=writableDatabase;db.beginTransaction()
+        try{
+            db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",UserPersona.KEY);put("value",p.encode())},SQLiteDatabase.CONFLICT_REPLACE)
+            if(p.name.isBlank())db.delete("preferences","key=?",arrayOf("nickname"))else db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key","nickname");put("value",p.name)},SQLiteDatabase.CONFLICT_REPLACE)
+            db.setTransactionSuccessful()
+        }finally{db.endTransaction()}
+    }}
+    internal fun seedOpening(db:SQLiteDatabase,id:String,opening:String){
+        if(opening.isNotBlank()&&!db.rawQuery("SELECT 1 FROM messages WHERE friend_id=? LIMIT 1",arrayOf(id)).use{it.moveToFirst()}){
+            val name=db.rawQuery("SELECT name FROM friends WHERE id=?",arrayOf(id)).use{check(it.moveToFirst());it.getString(0)}
+            insertMessage(db,id,UserPersona.expand(opening,name,persona(db)),false)
+        }
+    }
+    internal suspend fun addConfigured(friend:Friend,prompts:RolePrompts)=withContext(Dispatchers.IO){AppMutationGate.read{
+        require(friend.name.isNotBlank()&&friend.name.length<=30&&prompts.characterDefinition.isNotBlank()&&prompts.characterDefinition.length<=8000&&prompts.expression.length<=8000&&prompts.opening.length<=8000)
+        val db=writableDatabase;db.beginTransaction()
+        try{
+            check(insertFriend(db,friend));RoleExamplesRepository.initialize(db,friend.id)
+            db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",RolePromptStore.key(friend.id));put("value",RolePromptStore.encode(prompts))},SQLiteDatabase.CONFLICT_REPLACE)
+            seedOpening(db,friend.id,prompts.opening);db.setTransactionSuccessful()
+        }finally{db.endTransaction()}
+    }}
+    internal suspend fun saveConfigured(id:String,name:String,change:(RolePrompts)->RolePrompts)=withContext(Dispatchers.IO){AppMutationGate.read{
+        require(name.isNotBlank()&&name.trim().length<=30)
+        val db=writableDatabase;db.beginTransaction()
+        try{
+            val raw=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(RolePromptStore.key(id))).use{if(it.moveToFirst())it.getString(0)else""}
+            val p=change(RolePromptStore.decode(raw));require(p.characterDefinition.isNotBlank()&&p.initialRelationship.length<=4000&&listOf(p.characterDefinition,p.expression,p.opening,p.extra,p.internalPrompt).all{it.length<=8000})
+            check(db.update("friends",ContentValues().apply{put("name",name.trim())},"id=?",arrayOf(id))==1)
+            db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",RolePromptStore.key(id));put("value",RolePromptStore.encode(p))},SQLiteDatabase.CONFLICT_REPLACE)
+            seedOpening(db,id,p.opening);db.setTransactionSuccessful()
+        }finally{db.endTransaction()}
+    }}
     suspend fun setPreference(key: String, value: String) = withContext(Dispatchers.IO) {
         writableDatabase.insertWithOnConflict("preferences",null,ContentValues().apply { put("key",key); put("value",value) },SQLiteDatabase.CONFLICT_REPLACE)
     }
