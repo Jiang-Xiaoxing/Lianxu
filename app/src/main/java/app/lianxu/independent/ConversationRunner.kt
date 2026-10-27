@@ -61,7 +61,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                 val fixedOnly=CompanionPrompt.build(context.friend,prompts,emptyList(),context.input,refs.valid.filter{it.mandatory},capacity=credentials.config.contextTokens,outputLimit=credentials.config.outputTokens)
                 if(fixedOnly is PromptBuild.Blocked&&processing.coreBudget(friendId).overGoal){ledger.fail(current.id,current.attempt,ChatFailure.CORE_CAPACITY);changed();return@task}
                 if(built is PromptBuild.Blocked&&built.reason==ChatFailure.CONTEXT_NEEDS_MEMORY&&context.recent.isNotEmpty()){
-                    val run=memory.ensureRoom(friendId,context.input)
+                    val run=awaitMemoryCapacity(friendId,store.memorySummary){memory.ensureRoom(friendId,context.input)}
                     if(!run.success){ledger.fail(current.id,current.attempt,when(run.code){"NO_MEMORY_MODEL"->ChatFailure.MISSING_MEMORY_MODEL;"CAPACITY","TURN_TOO_LARGE"->ChatFailure.MEMORY_CAPACITY;else->ChatFailure.MEMORY_FAILED});changed();return@task}
                     context=ledger.context(current.id);prompts=RolePromptStore.decode(context.rawPrompts);rules=processing.memoryRules().first
                     refs=processing.references(friendId,context.input,current.userMessageId,vectors.scores(friendId,context.input));built=build()
