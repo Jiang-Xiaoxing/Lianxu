@@ -15,15 +15,16 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
     companion object {private val session=UUID.randomUUID().toString()}
     private val batches=MemoryBatchRepository(repo)
     private val vectors=MemoryVectorIndex(repo,access)
+    private val background=RoleBackgroundJobs(scope)
     private val mutexes=ConcurrentHashMap<String,Mutex>()
     private class Active(val job:Job,val lease:ChatAttemptLease,var work:MemoryWork?=null)
     private val active=ConcurrentHashMap<String,Active>()
-    fun cancel(friendId:String){active.remove(friendId)?.let{a->a.lease.cancel();a.job.cancel();a.work?.let{w->scope.launch(NonCancellable){batches.fail(w,"CANCELLED");changed()}}}}
-    fun afterChat(friendId:String){scope.launch(Diagnostics.context("memory")){runCatching{repo.maintainCore(friendId);val rules=repo.memoryRules().first;if(repo.recentSources(friendId).size>rules.recentRounds)ensureRoom(friendId);vectors.index(friendId)}}}
+    fun cancel(friendId:String){background.cancel(friendId);active.remove(friendId)?.let{a->a.lease.cancel();a.job.cancel();a.work?.let{w->scope.launch(NonCancellable){batches.fail(w,"CANCELLED");changed()}}}}
+    fun afterChat(friendId:String){background.launch(friendId,Diagnostics.context("memory")){runCatching{repo.maintainCore(friendId);val rules=repo.memoryRules().first;if(repo.recentSources(friendId).size>rules.recentRounds)ensureRoom(friendId);vectors.index(friendId)}}}
     suspend fun recover(){
         batches.recoverAbandoned(session)
         val friends=repo.store.friends()
-        friends.forEach{f->val work=batches.pending(f.id);if(work!=null){val info=status(work.id);if(info.first in setOf("WAITING","PENDING")||info.third=="INTERRUPTED")scope.launch{ensureRoom(f.id,forceOne=true)}}}
+        friends.forEach{f->val work=batches.pending(f.id);if(work!=null){val info=status(work.id);if(info.first in setOf("WAITING","PENDING")||info.third=="INTERRUPTED")background.launch(f.id){ensureRoom(f.id,forceOne=true)}}}
     }
     private suspend fun status(id:String):Triple<String,Int,String> = repo.read{db->db.rawQuery("SELECT state,attempt,error FROM memory_batches WHERE id=?",arrayOf(id)).use{if(it.moveToFirst())Triple(it.getString(0),it.getInt(1),if(it.isNull(2))"" else it.getString(2)) else Triple("",0,"")}}
     suspend fun ensureRoom(friendId:String,input:String="",forceOne:Boolean=false,manualRetry:Boolean=false):ProcessingRun = withContext(Diagnostics.context("memory")){mutexes.getOrPut(friendId){Mutex()}.withLock{
@@ -76,7 +77,7 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
                         val req=makeRequest(friendId,work.id,work.targets,existing,accepted,output,core,auxiliary)
                         if(inputCost(req)+output>credentials.config.contextTokens)throw ProcessingRejected("CAPACITY")
                         consume(work,credentials,req,lease,accepted)
-                        finished=true;didChange=true;changed();scope.launch{vectors.index(friendId)};break
+                        finished=true;didChange=true;changed();background.launch(friendId){vectors.index(friendId)};break
                     }catch(e:CancellationException){throw e}
                     catch(e:Exception){
                         Diagnostics.failure("memory.batch.attempt_failed",e,mapOf("character" to friendId,"batch" to work.id,"attempt" to attempt))
