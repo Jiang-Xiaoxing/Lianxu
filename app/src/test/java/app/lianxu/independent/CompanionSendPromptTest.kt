@@ -54,4 +54,13 @@ class CompanionSendPromptTest {
         assertFalse(none.messages.first().content.contains("本次提供记忆回查与写入工具"))
         assertEquals(both.messages.drop(1),none.messages.drop(1))
     }
+    @Test fun naturalRulesSurviveToolContinuationWithoutMovingTimeOrPayloads(){
+        val original=request();val call=ChatToolCall("natural-call","agent_history_search","{}")
+        val result=WireMessage("tool","原始来源结果",toolCallId=call.id,name=call.name)
+        val continued=CompanionPrompt.forSend(original.copy(messages=original.messages+WireMessage("assistant","",listOf(call))+result),listOf(read))
+        assertTrue(continued.messages.first().content.contains(CompanionPrompt.MEMORY_USE))
+        assertEquals(1,continued.messages.count{CompanionPrompt.MEMORY_USE in it.content})
+        assertEquals(original.messages.last(),continued.messages.last());assertEquals(result,continued.messages.first{it.role=="tool"})
+        assertTrue(continued.messages.first().content.contains("不能调用记忆写入工具"))
+    }
 }

@@ -38,4 +38,14 @@ class CompanionPromptTest {
     }
     @Test fun cancelLeaseRejectsLateCommit(){val l=ChatAttemptLease();l.cancel();var wrote=false;assertFalse(l.commit{wrote=true;true});assertFalse(wrote)}
     @Test fun successfulLeaseCommitsOnce(){val l=ChatAttemptLease();var writes=0;assertTrue(l.commit{writes++;true});assertFalse(l.commit{writes++;true});assertEquals(1,writes)}
+    @Test fun naturalMemoryRulesApplyWithCustomExpressionAndKeepEvidenceSeparate(){
+        val raw="你还记得我之前说过什么吗？";val p=RolePrompts(expression="自定义语气",extra="保留附加要求")
+        val m=(CompanionPrompt.build(f,p,emptyList(),raw,listOf(PromptReference("已确认","当前事实",true)),listOf("未确认建议")) as PromptBuild.Ready).request.messages
+        val fixed=m.first().content
+        assertTrue(fixed.contains(CompanionPrompt.MEMORY_USE));assertTrue(fixed.contains("不逐条背诵"));assertTrue(fixed.contains("不每次都说‘我记得’"))
+        assertTrue(fixed.contains("明确询问过去或来源"));assertTrue(fixed.contains("缺少依据"));assertTrue(fixed.contains("不确定内容"))
+        assertTrue(fixed.contains("自定义语气"));assertTrue(fixed.contains("保留附加要求"))
+        assertEquals(raw,m.single{it.role=="user"}.content);assertTrue(m.last().turnContext)
+        assertTrue(m.any{"拿不准的记忆，不得当作确定事实" in it.content&&"未确认建议" in it.content})
+    }
 }
