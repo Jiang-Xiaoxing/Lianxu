@@ -27,6 +27,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -37,6 +38,13 @@ class MainActivity:ComponentActivity(){
 @Composable fun Lianxu(vm:AppState=viewModel()){
     val lifecycle=LocalLifecycleOwner.current.lifecycle
     val chatState=rememberSaveableStateHolder()
+    var rememberedChatIds by rememberSaveable(stateSaver=listSaver<List<String>,String>(save={it},restore={it.toList()})){mutableStateOf(emptyList<String>())}
+    LaunchedEffect(vm.ready,vm.friends,vm.page,vm.activeId){if(vm.ready){
+        val live=vm.friends.map{it.id}.toSet()
+        val known=rememberedChatIds.toSet()+(if(vm.page=="chat")setOf(vm.activeId)else emptySet())
+        (known-live).forEach{chatState.removeState("chat-$it")}
+        rememberedChatIds=known.intersect(live).toList()
+    }}
     DisposableEffect(lifecycle){val observer=LifecycleEventObserver{_,event->if(event==Lifecycle.Event.ON_STOP){if(vm.searching)vm.cancelSearch();vm.cancelChats()}else if(event==Lifecycle.Event.ON_START)vm.foreground()};lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}}
     BackHandler(vm.page!="home"){vm.back()}
     Surface(Modifier.fillMaxSize(),color=Paper){Column(Modifier.safeDrawingPadding().imePadding()){
@@ -61,9 +69,22 @@ class MainActivity:ComponentActivity(){
 }
 @Composable private fun Home(vm:AppState){
     var menu by remember{mutableStateOf(false)}
+    var removal by remember{mutableStateOf<BackupRepository.RoleDeletion?>(null)}
+    var removing by remember{mutableStateOf(false)}
+    var removalError by remember{mutableStateOf("")}
+    val scope=rememberCoroutineScope()
+    fun askDelete(friend:Friend){if(!removing){removing=true;removalError="";scope.launch{try{removal=vm.previewRoleDeletion(friend.id)}catch(_:Exception){removalError="角色资料读取失败，请重试。"}finally{removing=false}}}}
+    removal?.let{plan->AlertDialog(
+        onDismissRequest={if(!removing)removal=null},
+        title={Text("删除「${plan.name}」？")},
+        text={Text("将从聊天和通讯录同时移除这个角色，并永久删除其聊天、记忆（含历史与候选）、关系记录、提示词和已保存资源。进行中的回复和后台任务会停止。\n\n无法在应用内撤销，建议先导出备份。其他角色和全局模型配置保留。",Modifier.verticalScroll(rememberScrollState()))},
+        confirmButton={TextButton(onClick={if(!removing){removing=true;scope.launch{try{vm.deleteRole(plan,true);removal=null}catch(_:Exception){removal=null;removalError="角色删除未完成，请重新选择后重试。"}finally{removing=false}}}},enabled=!removing,modifier=Modifier.testTag("role-delete-confirm")){Text(if(removing)"正在删除…"else"删除角色",color=MaterialTheme.colorScheme.error)}},
+        dismissButton={TextButton(onClick={removal=null},enabled=!removing,modifier=Modifier.testTag("role-delete-cancel")){Text("取消")}}
+    )}
     val labels=listOf("聊天","通讯录","设置","我的")
     val time=remember{SimpleDateFormat("HH:mm",Locale.getDefault())}
     Column(Modifier.fillMaxSize()){
+        if(removalError.isNotEmpty())Text(removalError,Modifier.padding(UiSpace.page).testTag("role-delete-error"),color=MaterialTheme.colorScheme.error)
         Row(Modifier.fillMaxWidth().heightIn(min=80.dp).padding(start=20.dp,end=8.dp,top=12.dp,bottom=12.dp),verticalAlignment=Alignment.CenterVertically){
             Column(Modifier.weight(1f)){
                 Text(labels[vm.tab].let{if(vm.tab==0)"恋叙" else it},Modifier.testTag("home-title"),style=if(vm.tab==0)BrandStyle else MaterialTheme.typography.titleLarge)
@@ -80,11 +101,13 @@ class MainActivity:ComponentActivity(){
         Box(Modifier.weight(1f)){when(vm.tab){
             0->LazyColumn(Modifier.fillMaxSize().testTag("chat-list")){
                 item{Text("每位AI拥有独立会话",Modifier.padding(horizontal=UiSpace.page,vertical=8.dp),style=MaterialTheme.typography.bodySmall,color=Muted)}
-                items(vm.friends,key={it.id}){friend->val message=vm.messages.lastOrNull{it.friendId==friend.id};FriendRow(friend,message?.text?:"开始聊天",vm.compact,message?.let{time.format(Date(it.created))}.orEmpty()){vm.open("chat",friend.id)}}
+                if(vm.friends.isEmpty())item{Text("还没有AI，点右上角＋添加你自己的角色。",Modifier.padding(UiSpace.page).testTag("roles-empty-chat"),style=MaterialTheme.typography.bodyMedium,color=Muted)}
+                items(vm.friends,key={it.id}){friend->val message=vm.messages.lastOrNull{it.friendId==friend.id};FriendRow(friend,message?.text?:"开始聊天",vm.compact,message?.let{time.format(Date(it.created))}.orEmpty(),!removing,{askDelete(friend)}){vm.open("chat",friend.id)}}
             }
             1->LazyColumn(Modifier.fillMaxSize().testTag("contacts-list")){
                 item{Text("${vm.friends.size} 位AI",Modifier.padding(horizontal=UiSpace.page,vertical=8.dp),style=MaterialTheme.typography.bodySmall,color=Muted)}
-                items(vm.friends,key={it.id}){friend->FriendRow(friend,friend.bio,vm.compact,""){vm.open("detail",friend.id)}}
+                if(vm.friends.isEmpty())item{Text("还没有AI，点右上角＋添加你自己的角色。",Modifier.padding(UiSpace.page).testTag("roles-empty-contacts"),style=MaterialTheme.typography.bodyMedium,color=Muted)}
+                items(vm.friends,key={it.id}){friend->FriendRow(friend,friend.bio,vm.compact,"",!removing,{askDelete(friend)}){vm.open("detail",friend.id)}}
             }
             2->SettingsDirectory(vm)
             3->Profile(vm)
@@ -97,12 +120,13 @@ class MainActivity:ComponentActivity(){
         }}
     }
 }
-@Composable private fun FriendRow(friend:Friend,subtitle:String,compact:Boolean,meta:String,onClick:()->Unit){
+@Composable private fun FriendRow(friend:Friend,subtitle:String,compact:Boolean,meta:String,deleteEnabled:Boolean,onDelete:()->Unit,onClick:()->Unit){
     Row(Modifier.fillMaxWidth().clickable(onClick=onClick).padding(horizontal=UiSpace.page,vertical=if(compact)12.dp else 16.dp),verticalAlignment=Alignment.CenterVertically){
         Avatar(friend);Spacer(Modifier.width(12.dp));Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
             Row(verticalAlignment=Alignment.CenterVertically){Text(friend.name,Modifier.weight(1f),style=MaterialTheme.typography.titleSmall,maxLines=1,overflow=TextOverflow.Ellipsis);if(meta.isNotEmpty())Text(meta,style=MaterialTheme.typography.labelSmall,color=Muted)}
             Text(subtitle,style=MaterialTheme.typography.bodyMedium,color=Muted,maxLines=1,overflow=TextOverflow.Ellipsis)
         }
+        TextButton(onClick=onDelete,enabled=deleteEnabled,modifier=Modifier.heightIn(min=UiSpace.action).testTag("role-delete-${friend.id}").semantics{contentDescription="删除角色${friend.name}"}){Text("删除",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
     };HorizontalDivider(Modifier.padding(start=76.dp,end=UiSpace.page),color=Line,thickness=.5.dp)
 }
 @Composable private fun Detail(vm:AppState){

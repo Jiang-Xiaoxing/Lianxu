@@ -17,10 +17,6 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
         db.execSQL("CREATE TABLE preferences(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         ChatLedger.createSchema(db)
         ProcessingSchema.create(db)
-        insertFriend(db, Friend("seed-lin", "林间", "喜欢植物和散步，也想听听你今天的小事。"))
-        insertFriend(db, Friend("seed-an", "时安", "爱读书、听音乐。让谈话慢一点。", tone = 1))
-        insertMessage(db, "seed-lin", "【演示开场】今天过得怎么样？这里的故事可以慢慢开始。", false)
-        insertMessage(db, "seed-an", "【演示开场】最近有哪首歌，让你想多听一遍？", false)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) { if(oldVersion<2)ChatLedger.createSchema(db);if(oldVersion<5)ProcessingSchema.create(db) }
     private fun insertFriend(db: SQLiteDatabase, f: Friend): Boolean = db.insertWithOnConflict("friends", null, ContentValues().apply {
@@ -50,6 +46,7 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
     internal suspend fun updateRolePrompts(id:String,change:(RolePrompts)->RolePrompts)=withContext(Dispatchers.IO){AppMutationGate.read{
         val db=writableDatabase;db.beginTransaction()
         try{
+            require(db.rawQuery("SELECT 1 FROM friends WHERE id=?",arrayOf(id)).use{it.moveToFirst()}){"角色已不存在，请返回列表。"}
             val key=RolePromptStore.key(id)
             val old=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(key)).use{if(it.moveToFirst())RolePromptStore.decode(it.getString(0)) else RolePrompts()}
             db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",key);put("value",RolePromptStore.encode(change(old)))},SQLiteDatabase.CONFLICT_REPLACE)

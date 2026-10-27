@@ -19,7 +19,7 @@ class BackupConcurrencyUiTest {
     private lateinit var vm:AppState;private lateinit var vault:ModelVault
     private var response=CompletableDeferred<TextChatResult>();private val calls=AtomicInteger()
     @get:Rule(order=0)val fixture=object:ExternalResource(){
-        override fun before(){oldDb=AppServices.databaseName;oldVault=AppServices.vaultNamespace;name="backup-race-${System.nanoTime()}";AppServices.databaseName="$name.db";AppServices.vaultNamespace=name}
+        override fun before(){oldDb=AppServices.databaseName;oldVault=AppServices.vaultNamespace;name="backup-race-${System.nanoTime()}";AppServices.databaseName="$name.db";AppServices.vaultNamespace=name;seedLegacyTestRoles(context,"$name.db")}
         override fun after(){if(::vault.isInitialized)vault.list().forEach{vault.delete(it.id)};if(::vm.isInitialized)vm.processing.store.close();context.deleteDatabase("$name.db");File(context.noBackupFilesDir,name).deleteRecursively();AppServices.databaseName=oldDb;AppServices.vaultNamespace=oldVault}
     }
     @get:Rule(order=1)val ui=createAndroidComposeRule<ComponentActivity>()

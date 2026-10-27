@@ -31,7 +31,7 @@ class BackupUiTest {
     private lateinit var name:String;private lateinit var oldDb:String;private lateinit var oldVault:String
     private val saves=mutableListOf<Uri>();private var openUri:Uri?=null;private val calls=AtomicInteger()
     @get:Rule(order=0)val fixture=object:ExternalResource(){
-        override fun before(){oldDb=AppServices.databaseName;oldVault=AppServices.vaultNamespace;name="backup-ui-${System.nanoTime()}";AppServices.databaseName="$name.db";AppServices.vaultNamespace=name}
+        override fun before(){oldDb=AppServices.databaseName;oldVault=AppServices.vaultNamespace;name="backup-ui-${System.nanoTime()}";AppServices.databaseName="$name.db";AppServices.vaultNamespace=name;seedLegacyTestRoles(instrument.targetContext,"$name.db")}
         override fun after(){if(::vault.isInitialized)vault.list().forEach{vault.delete(it.id)};instrument.targetContext.deleteDatabase("$name.db");File(instrument.targetContext.noBackupFilesDir,name).deleteRecursively();AppServices.databaseName=oldDb;AppServices.vaultNamespace=oldVault}
     }
     @get:Rule(order=1)val ui=createAndroidComposeRule<ComponentActivity>()

@@ -55,7 +55,7 @@ internal class MemoryVectorIndex(private val repo:ProcessingRepository,private v
             Diagnostics.event("embedding.index.batch",mapOf("character" to friend,"missing_count" to missing.size,"cached_count" to initial.second.length()))
             for(batch in missing.chunked(16)){
                 val vectors=client.embed(credentials,batch.map(::text),5000);require(vectors.size==batch.size&&vectors.all(::valid)&&vectors.map{it.size}.distinct().size==1)
-                repo.tx{db->if(access.current(ModelPurpose.EMBEDDING,credentials.stamp)){
+                repo.tx{db->if(access.current(ModelPurpose.EMBEDDING,credentials.stamp)&&db.rawQuery("SELECT 1 FROM friends WHERE id=?",arrayOf(friend)).use{it.moveToFirst()}){
                     val latest=repo.usableMemories(db,friend).associateBy{it.id};val cache=rows(db,friend)
                     batch.zip(vectors).forEach{(m,v)->if(latest[m.id]?.let(::fingerprint)==fingerprint(m))cache.put(m.id,JSONObject().put("model",credentials.stamp).put("fingerprint",fingerprint(m)).put("vector",JSONArray(v.toList())))}
                     val remove=cache.keys().asSequence().filter{it !in latest}.toList();remove.forEach{cache.remove(it)}

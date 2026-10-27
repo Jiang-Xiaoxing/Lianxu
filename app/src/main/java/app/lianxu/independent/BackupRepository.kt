@@ -12,6 +12,7 @@ import java.util.UUID
 internal class BackupRepository(private val store:Store,private val vault:ModelVault){
     data class Export(val root:JsonObject,val files:Map<String,ByteArray>){override fun toString()="BackupExport(redacted)"}
     data class Preview(val pack:BackupArchive.Package,val mode:String,val target:String?,val fingerprint:String,val contentDigest:String,val impact:String){override fun toString()="BackupPreview(redacted)"}
+    data class RoleDeletion(val friendId:String,val name:String,val characterStamp:String)
     private val base=RoleArchive.tables.keys.toList()
     private val extra=listOf("processing_policies","memory_batches","memory_operations","memory_batch_reviews","candidate_injections","relationship_jobs")
     private val order=base+extra
@@ -147,6 +148,23 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
             }
         }
     };if(plan.mode=="REPLACE"&&plan.pack.all)AppMutationGate.write(action)else AppMutationGate.read(action)}
+    suspend fun previewRoleDeletion(id:String):RoleDeletion=read{db->
+        val name=db.rawQuery("SELECT name FROM friends WHERE id=?",arrayOf(id)).use{require(it.moveToFirst()){"角色已不存在，请返回列表。"};it.getString(0)}
+        RoleDeletion(id,name,repo.characterStamp(db,id))
+    }
+    suspend fun deleteRole(plan:RoleDeletion,confirmed:Boolean,lease:ChatAttemptLease=ChatAttemptLease(),checkpoint:()->Unit={})=withContext(Dispatchers.IO){
+        require(confirmed){"删除角色需要再次确认"}
+        // Keep other characters' in-flight config epochs valid; serialize only the local transaction.
+        AppMutationGate.read{
+            val db=store.writableDatabase;db.beginTransaction()
+            try {
+                check(lease.isActive()){"删除已取消"}
+                require(repo.characterStamp(db,plan.friendId)==plan.characterStamp){"角色资料已变化，请重新确认。"}
+                clearRole(db,plan.friendId);checkpoint()
+                check(lease.commit{db.setTransactionSuccessful();true}){"删除已取消"}
+            }finally{db.endTransaction()}
+        }
+    }
     private fun clearRole(db:SQLiteDatabase,id:String){
         fun ids(table:String)=db.rawQuery("SELECT id FROM $table WHERE friend_id=?",arrayOf(id)).use{c->buildSet{while(c.moveToNext())add(c.getString(0))}}
         val turnIds=ids("chat_turns");val batches=ids("memory_batches")
