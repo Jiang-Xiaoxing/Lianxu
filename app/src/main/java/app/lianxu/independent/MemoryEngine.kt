@@ -63,7 +63,7 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
                 fun request():TextChatRequest=makeRequest(friendId,batchId(friendId,sources),sources,existing,applied,output,core,auxiliary)
                 while(inputCost(request())+output>credentials.config.contextTokens&&existing.isNotEmpty())existing=existing.dropLast(1)
                 while(inputCost(request())+output>credentials.config.contextTokens&&auxiliary.isNotEmpty())auxiliary=auxiliary.drop(1)
-                val work=batches.prepare(friendId,sources,credentials.stamp,existing.map{it.id}.toSet(),rulesState.second,MemoryRecall.relationCandidates(summaryQuery,existing).map{it.id}.toSet());running.work=work
+                val work=batches.prepare(friendId,sources,credentials.stamp,existing.map{it.id}.toSet(),rulesState.second,MemoryRecall.relationCandidates(summaryQuery,existing).map{it.id}.toSet(),existing.associate{it.id to it.version});running.work=work
                 Diagnostics.event("memory.batch.prepared",mapOf("character" to friendId,"batch" to work.id,"sources" to sources.map{mapOf("turn" to it.source.turnId,"version" to it.source.version)},"existing_memories" to existing.map{it.id},"auxiliary_rounds" to auxiliary.size))
                 if(inputCost(request())+output>credentials.config.contextTokens){batches.fail(work,"CAPACITY");changed();return@withLock ProcessingRun(false,"CAPACITY",didChange)}
                 if(manualRetry)repo.tx{db->db.execSQL("UPDATE memory_batches SET attempt=0 WHERE id=?",arrayOf(work.id))}
@@ -74,7 +74,8 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
                     currentCoroutineContext().ensureActive();batches.beginAttempt(work,session);changed()
                     try{
                         val accepted=batches.appliedOperations(work)
-                        val req=makeRequest(friendId,work.id,work.targets,existing,accepted,output,core,auxiliary)
+                        val current=batches.currentContext(work){access.memoryCurrent(credentials.stamp)}
+                        val req=makeRequest(friendId,work.id,work.targets,current,accepted,output,core,auxiliary)
                         if(inputCost(req)+output>credentials.config.contextTokens)throw ProcessingRejected("CAPACITY")
                         consume(work,credentials,req,lease,accepted)
                         finished=true;didChange=true;changed();background.launch(friendId){vectors.index(friendId)};break

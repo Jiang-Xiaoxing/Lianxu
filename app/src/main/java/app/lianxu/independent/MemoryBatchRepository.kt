@@ -6,9 +6,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
-data class MemoryWork(val id:String,val friendId:String,val targets:List<SourceDialogue>,val policyVersion:Int,val characterStamp:String,val configStamp:String,val existingVersions:Map<String,Int> = emptyMap(),val runId:String=UUID.randomUUID().toString(),val rulesVersion:Int=0,val associationVersions:Map<String,Int> = emptyMap()) {
-    fun json()=JSONObject().put("id",id).put("character",friendId).put("targets",JSONArray().apply{targets.forEach{put(it.json())}}).put("policyVersion",policyVersion).put("characterStamp",characterStamp).put("configStamp",configStamp).put("existingVersions",JSONObject().apply{existingVersions.toSortedMap().forEach{(id,version)->put(id,version)}}).put("runId",runId).put("rulesVersion",rulesVersion).put("associationVersions",JSONObject().apply{associationVersions.toSortedMap().forEach{(id,version)->put(id,version)}})
-    companion object {fun from(j:JSONObject):MemoryWork {val a=j.getJSONArray("targets");return MemoryWork(j.getString("id"),j.getString("character"),(0 until a.length()).map{SourceDialogue.from(a.getJSONObject(it))},j.getInt("policyVersion"),j.getString("characterStamp"),j.getString("configStamp"),j.optJSONObject("existingVersions")?.let{v->v.keys().asSequence().associateWith{v.getInt(it)}}?:emptyMap(),j.optString("runId","legacy"),j.optInt("rulesVersion",0),j.optJSONObject("associationVersions")?.let{v->v.keys().asSequence().associateWith{v.getInt(it)}}?:emptyMap())}}
+data class MemoryWork(val id:String,val friendId:String,val targets:List<SourceDialogue>,val policyVersion:Int,val characterStamp:String,val configStamp:String,val existingVersions:Map<String,Int> = emptyMap(),val runId:String=UUID.randomUUID().toString(),val rulesVersion:Int=0,val associationVersions:Map<String,Int> = emptyMap(),val resultVersions:Map<String,Int> = emptyMap()) {
+    fun json()=JSONObject().put("id",id).put("character",friendId).put("targets",JSONArray().apply{targets.forEach{put(it.json())}}).put("policyVersion",policyVersion).put("characterStamp",characterStamp).put("configStamp",configStamp).put("existingVersions",JSONObject().apply{existingVersions.toSortedMap().forEach{(id,version)->put(id,version)}}).put("runId",runId).put("rulesVersion",rulesVersion).put("associationVersions",JSONObject().apply{associationVersions.toSortedMap().forEach{(id,version)->put(id,version)}}).apply{if(resultVersions.isNotEmpty())put("resultVersions",JSONObject().apply{resultVersions.toSortedMap().forEach{(id,version)->put(id,version)}})}
+    companion object {fun from(j:JSONObject):MemoryWork {val a=j.getJSONArray("targets");return MemoryWork(j.getString("id"),j.getString("character"),(0 until a.length()).map{SourceDialogue.from(a.getJSONObject(it))},j.getInt("policyVersion"),j.getString("characterStamp"),j.getString("configStamp"),j.optJSONObject("existingVersions")?.let{v->v.keys().asSequence().associateWith{v.getInt(it)}}?:emptyMap(),j.optString("runId","legacy"),j.optInt("rulesVersion",0),j.optJSONObject("associationVersions")?.let{v->v.keys().asSequence().associateWith{v.getInt(it)}}?:emptyMap(),j.optJSONObject("resultVersions")?.let{v->v.keys().asSequence().associateWith{v.getInt(it)}}?:emptyMap())}}
 }
 class ProcessingRejected(val code:String):Exception(code)
 internal fun rejectUnless(value:Boolean,code:String="FORMAT"){if(!value)throw ProcessingRejected(code)}
@@ -41,14 +41,18 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
         db.insertWithOnConflict("memory_batch_reviews",null,ContentValues().apply{put("batch_id",batchId);put("memory_id",memoryId);put("version",m.version);put("digest",reviewDigest(db,work,m));put("decision","KEEP_CURRENT");put("created",System.currentTimeMillis())},SQLiteDatabase.CONFLICT_REPLACE)
     }
     private fun pendingWork(db:SQLiteDatabase,friendId:String):MemoryWork?=db.rawQuery("SELECT json FROM memory_batches WHERE friend_id=? AND state NOT IN('COMMITTED','ARCHIVED') ORDER BY rowid",arrayOf(friendId)).use{c->var found:MemoryWork?=null;while(found==null&&c.moveToNext()){val w=MemoryWork.from(JSONObject(c.getString(0)));if(repo.sourcesMatch(db,w.targets))found=w};found}
-    suspend fun prepare(friendId:String,targets:List<SourceDialogue>,configStamp:String,existingIds:Set<String>?=null,expectedRulesVersion:Int?=null,associationIds:Set<String> = emptySet()):MemoryWork=repo.tx{db->
+    suspend fun prepare(friendId:String,targets:List<SourceDialogue>,configStamp:String,existingIds:Set<String>?=null,expectedRulesVersion:Int?=null,associationIds:Set<String> = emptySet(),expectedExistingVersions:Map<String,Int>?=null):MemoryWork=repo.tx{db->
         rejectUnless(targets.isNotEmpty()&&targets.all{it.source.characterId==friendId})
         rejectUnless(repo.sourcesMatch(db,targets),"SOURCE_CHANGED")
         val id="batch-"+stableDigest(friendId+targets.joinToString{ "${it.source.turnId}@${it.source.version}" }).take(40)
         val policy=repo.policy(db,friendId)
         val rulesVersion=repo.memoryRules(db).second;rejectUnless(expectedRulesVersion==null||rulesVersion==expectedRulesVersion,"SOURCE_CHANGED")
         val ownIds=db.rawQuery("SELECT DISTINCT result_id FROM memory_operations WHERE batch_id=?",arrayOf(id)).use{c->buildSet{while(c.moveToNext())add(c.getString(0))}}
-        val work=MemoryWork(id,friendId,targets,policy.second,repo.characterStamp(db,friendId),configStamp,repo.memories(db,friendId).filter{it.valid&&(existingIds==null||it.id in existingIds||it.id in ownIds)}.associate{it.id to it.version},rulesVersion=rulesVersion,associationVersions=repo.usableMemories(db,friendId).filter{it.id in associationIds}.take(MemoryRecall.RELATION_CANDIDATE_LIMIT).associate{it.id to it.version})
+        val versions=repo.memories(db,friendId).filter{it.valid}.associate{it.id to it.version}
+        val selected=versions.filterKeys{existingIds==null||it in existingIds}
+        rejectUnless(expectedExistingVersions==null||selected==expectedExistingVersions,"SOURCE_CHANGED")
+        // Only selected keys define M numbers. Omitted partial results are validation-only.
+        val work=MemoryWork(id,friendId,targets,policy.second,repo.characterStamp(db,friendId),configStamp,selected,rulesVersion=rulesVersion,associationVersions=repo.usableMemories(db,friendId).filter{it.id in associationIds}.take(MemoryRecall.RELATION_CANDIDATE_LIMIT).associate{it.id to it.version},resultVersions=versions.filterKeys{it in ownIds})
         val old=db.rawQuery("SELECT state FROM memory_batches WHERE id=?",arrayOf(id)).use{if(it.moveToFirst())it.getString(0) else null}
         rejectUnless(old!="RUNNING","BUSY")
         rejectUnless(old!="COMMITTED","ALREADY_COMMITTED")
@@ -71,14 +75,19 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
     }
     private fun validateMemoryContext(db:SQLiteDatabase,work:MemoryWork,allowReviewed:Boolean=false){
         val own=db.rawQuery("SELECT result_id,MAX(result_version) FROM memory_operations WHERE batch_id=? GROUP BY result_id",arrayOf(work.id)).use{c->buildMap{while(c.moveToNext())if(c.getInt(1)>0)put(c.getString(0),c.getInt(1))}}
-        for(id in work.existingVersions.keys+own.keys){
+        val captured=work.resultVersions+work.existingVersions
+        for(id in captured.keys+own.keys){
             val m=repo.memory(db,work.friendId,id)
-            val current=m!=null&&m.valid&&m.evidence.all{repo.sourceValid(db,it.source)}&&MemoryEvidenceRules.contextCurrent(work.existingVersions[id],own[id],m.version)
+            val current=m!=null&&m.valid&&m.evidence.all{repo.sourceValid(db,it.source)}&&MemoryEvidenceRules.contextCurrent(captured[id],own[id],m.version)
             if(!current){
                 if(allowReviewed&&id in own&&m!=null&&m.valid&&m.evidence.all{repo.sourceValid(db,it.source)}&&acknowledged(db,work,m))continue
                 throw ProcessingRejected(if(id in own)"BATCH_REVIEW_REQUIRED" else "SOURCE_CHANGED")
             }
         }
+    }
+    suspend fun currentContext(work:MemoryWork,configCurrent:()->Boolean={true}):List<StoredMemory> = repo.read{db->
+        validate(db,work,configCurrent);validateMemoryContext(db,work)
+        work.existingVersions.keys.map{repo.memory(db,work.friendId,it)?:throw ProcessingRejected("SOURCE_CHANGED")}
     }
     private fun localTarget(db:SQLiteDatabase,work:MemoryWork,local:String):String {
         val saved=db.rawQuery("SELECT json,result_id FROM memory_operations WHERE batch_id=? ORDER BY op_key",arrayOf(work.id)).use{c->

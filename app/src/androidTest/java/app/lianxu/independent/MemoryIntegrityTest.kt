@@ -113,4 +113,31 @@ class MemoryIntegrityTest {
             assertTrue(called);assertEquals(memory.evidence,repo.memories("a").single().evidence)
         }finally{scope.cancel();vault.list().forEach{vault.delete(it.id)}}
     }
+    @Test fun omittedPartialResultCannotShiftTheNumberOfAShownMemory()=runBlocking {
+        val shown=StoredMemory("z-shown","a",MemoryCategory.PREFERENCE_BOUNDARY,"shown fact",manual=true,about=MemoryAbout.USER)
+        repo.tx{repo.saveMemory(it,shown)};val s=source();val b=MemoryBatchRepository(repo)
+        val first=b.prepare("a",listOf(s),"synthetic",existingIds=emptySet());b.beginAttempt(first,"first")
+        val hidden=b.apply(first,op(s));b.fail(first,"INTERRUPTED")
+        val retry=b.prepare("a",listOf(s),"synthetic",existingIds=setOf(shown.id),expectedExistingVersions=mapOf(shown.id to 1))
+        assertEquals(setOf(shown.id),retry.existingVersions.keys);assertEquals(setOf(hidden),retry.resultVersions.keys)
+        assertEquals(retry,MemoryWork.from(retry.json()));assertFalse(first.json().has("resultVersions"))
+        b.beginAttempt(retry,"retry");assertEquals(listOf(shown.id),b.currentContext(retry).map{it.id})
+        val update=MemoryNumberedReferences(retry.targets,retry.existingVersions.keys).normalize(op(s,"update","M1","correct shown").put("op","UPDATE"))
+        assertEquals(shown.id,update.getString("target"));assertEquals(shown.id,b.apply(retry,update))
+        assertEquals("No coffee",repo.memories("a").first{it.id==hidden}.text)
+    }
+    @Test fun correctionBetweenSelectionAndPreparationRejectsTheStaleRequest()=runBlocking {
+        val m=repo.manualSave("a",null,"before",MemoryCategory.PREFERENCE_BOUNDARY,false,true,MemoryAbout.USER);val selected=mapOf(m.id to m.version);val s=source()
+        repo.manualSave("a",m.id,"after",m.category,false,true,MemoryAbout.USER)
+        rejected("SOURCE_CHANGED"){MemoryBatchRepository(repo).prepare("a",listOf(s),"synthetic",existingIds=selected.keys,expectedExistingVersions=selected)}
+        assertEquals("after",repo.memories("a").single().text)
+    }
+    @Test fun attemptContextRefreshesOwnWritesAndRejectsExternalChanges()=runBlocking {
+        val s=source();val m=StoredMemory("shown","a",MemoryCategory.PREFERENCE_BOUNDARY,"before",evidence=listOf(MemoryEvidence(s.source,"user",s.user.text,s.user.text,s.user.created,s.zone)),about=MemoryAbout.USER)
+        repo.tx{repo.saveMemory(it,m)};val b=MemoryBatchRepository(repo);val w=work(b,s)
+        b.apply(w,op(s,"update",m.id,"after own write").put("op","UPDATE"))
+        assertEquals("after own write",b.currentContext(w).single().text)
+        repo.manualSave("a",m.id,"after external correction",m.category,false,true,MemoryAbout.USER)
+        rejected("BATCH_REVIEW_REQUIRED"){b.currentContext(w)}
+    }
 }

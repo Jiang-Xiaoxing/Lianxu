@@ -43,4 +43,11 @@ class MemoryEvidenceRulesTest {
         assertTrue(MemoryEvidenceRules.contextCurrent(3,2,3));assertFalse(MemoryEvidenceRules.contextCurrent(1,2,3))
         assertFalse(MemoryEvidenceRules.contextCurrent(1,null,null));assertFalse(MemoryEvidenceRules.contextCurrent(3,2,2))
     }
+    @Test fun validationOnlyResultsCannotShiftModelMemoryNumbers(){
+        val selected=mapOf("middle-shown" to 1,"z-shown" to 2)
+        val work=MemoryWork("batch","a",emptyList(),1,"character","config",selected,resultVersions=mapOf("a-hidden" to 7))
+        val sent=MemoryNumberedReferences(emptyList(),selected.keys);val decoded=MemoryNumberedReferences(emptyList(),work.existingVersions.keys)
+        assertEquals("M1",decoded.memoryRef("middle-shown"));assertEquals("M2",decoded.memoryRef("z-shown"))
+        selected.keys.forEach{assertEquals(sent.memoryRef(it),decoded.memoryRef(it))};assertFalse("a-hidden" in work.existingVersions)
+    }
 }
