@@ -2,20 +2,20 @@ package app.lianxu.independent
 
 import java.net.URI
 
-data class ProviderPreset(val id:String,val label:String,val base:String,val hint:String,val modelsPath:String?=null,val testPath:String?=modelsPath,val authHeader:String="Authorization")
+data class ProviderPreset(val id:String,val label:String,val base:String,val hint:String,val modelsPath:String?=null,val testPath:String?=modelsPath,val authHeader:String="Authorization",val modelsHint:String="本版尚未适配此服务的模型列表，请手动填写模型 ID。")
 object ProviderPresets {
     val all=listOf(
         ProviderPreset("silicon-cn","硅基流动 · 中国大陆","https://api.siliconflow.cn/v1","大陆账户；不要混用国际站 Key。","models?sub_type=chat"),
         ProviderPreset("deepseek","DeepSeek","https://api.deepseek.com","OpenAI 兼容接口；不使用 Anthropic 地址。","models"),
-        ProviderPreset("bailian-cn","阿里百炼 · 北京","https://dashscope.aliyuncs.com/compatible-mode/v1","现有北京域名仍可用。可改为控制台业务空间专属域名；新加坡等地域须使用对应 Key。当前手填模型 ID。"),
-        ProviderPreset("ark-cn","火山方舟 · 北京","https://ark.cn-beijing.volces.com/api/v3","填写已开通 Model ID 或推理接入点 Endpoint ID；本版不接管理面签名接口，手填模型。"),
+        ProviderPreset("bailian-cn","阿里百炼 · 北京","https://dashscope.aliyuncs.com/compatible-mode/v1","现有北京域名仍可用。可改为控制台业务空间专属域名；新加坡等地域须使用对应 Key。当前手填模型 ID。",modelsHint="当前地址请手填模型 ID；模型列表需要业务空间专属地址，本版尚未适配。"),
+        ProviderPreset("ark-cn","火山方舟 · 北京","https://ark.cn-beijing.volces.com/api/v3","填写已开通 Model ID 或推理接入点 Endpoint ID；本版不接管理面签名接口，手填模型。",modelsHint="模型目录需要管理接口鉴权，请手填 Model ID 或 Endpoint ID。"),
         ProviderPreset("zhipu-cn","智谱 · 中国大陆","https://open.bigmodel.cn/api/paas/v4","标准开放平台 Key；不是 Coding Plan 专用地址。当前手填模型 ID。"),
-        ProviderPreset("moonshot","Moonshot / Kimi · 国际","https://api.moonshot.ai/v1","国际开放平台账户；不混用国内站或 Kimi Code 订阅 Key。当前手填模型 ID。"),
+        ProviderPreset("moonshot","Moonshot / Kimi · 国际","https://api.moonshot.ai/v1","国际开放平台账户；不混用国内站或 Kimi Code 订阅 Key。","models"),
         ProviderPreset("openai","OpenAI","https://api.openai.com/v1","官方 API Key，不是 ChatGPT 订阅。模型目录不代表每个模型均支持聊天。","models"),
         ProviderPreset("openrouter","OpenRouter","https://openrouter.ai/api/v1","目录可能公开可读；连接测试额外访问 /key 验证认证。","models","key"),
-        ProviderPreset("mimo","小米 MiMo","https://api.xiaomimimo.com/v1","按量 API；Token Plan 地址/Key 另行配置。使用 api-key 鉴权，当前手填模型 ID。",authHeader="api-key"),
-        ProviderPreset("minimax-cn","MiniMax · 中国大陆","https://api.minimax.cn/v1","国内按量平台；不混用国际站或订阅 Key。当前手填模型 ID。"),
-        ProviderPreset("minimax-intl","MiniMax · 国际","https://api.minimax.io/v1","国际按量平台 Key，当前手填模型 ID。"),
+        ProviderPreset("mimo","小米 MiMo","https://api.xiaomimimo.com/v1","按量 API；Token Plan 地址/Key 另行配置。使用 api-key 鉴权。","models",authHeader="api-key"),
+        ProviderPreset("minimax-cn","MiniMax · 中国大陆","https://api.minimax.cn/v1","国内按量平台；不混用国际站或订阅 Key。","models"),
+        ProviderPreset("minimax-intl","MiniMax · 国际","https://api.minimax.io/v1","国际按量平台 Key，不混用国内站 Key。","models"),
         ProviderPreset("custom","自定义 OpenAI 兼容","","仅 HTTPS；标准 Bearer 鉴权。可尝试 /models，不支持时请手填。","models")
     )
     fun get(id:String)=all.firstOrNull {it.id==id} ?: all.last()

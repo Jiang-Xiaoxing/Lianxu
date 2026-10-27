@@ -59,7 +59,7 @@ class ModelConfigUiTest {
         activity.window.decorView.clearFocus()
     };ui.waitForIdle()}
     private fun shot(name:String){hideKeyboard();android.os.SystemClock.sleep(350)
-        val dir=File(context.getExternalFilesDir(null),"evidence-unified-ui/models").apply{mkdirs()}
+        val dir=File(context.filesDir,"evidence-unified-ui/models").apply{mkdirs()}
         val bitmap=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
         File(dir,"$name.png").outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}
     }
@@ -90,6 +90,7 @@ class ModelConfigUiTest {
         ui.onNodeWithTag("config-status").performScrollTo().assertTextContains("HTTPS",substring=true)
         ui.onNodeWithTag("config-url").performScrollTo().performTextReplacement("https://example.invalid/v1")
         hideKeyboard();ui.onNodeWithTag("config-advanced").performScrollTo().performClick()
+        ui.onNodeWithTag("config-key").performScrollTo().performTextInput("synthetic-key-only");hideKeyboard()
         ui.onNodeWithTag("config-name").performScrollTo();shot("03-editor-masked-real-app")
         ui.onNodeWithTag("config-save").performTouchInput{doubleClick()}
         waitSaved(3);assertEquals(0,client.calls.get())
@@ -145,11 +146,11 @@ class ModelConfigUiTest {
         ui.onNodeWithTag("config-add-top").performClick();back()
         ui.onNodeWithTag("config-overview").assertIsDisplayed()
         ui.onNodeWithTag("config-add-top").performClick()
-        ui.onNodeWithTag("provider-search").performTextInput("mimo")
-        ui.onNodeWithTag("provider-mimo").performClick()
+        ui.onNodeWithTag("provider-search").performTextInput("zhipu")
+        ui.onNodeWithTag("provider-zhipu-cn").performClick()
         ui.onNodeWithTag("config-fetch").assertDoesNotExist();ui.onNodeWithTag("config-test").assertDoesNotExist()
         ui.onNodeWithTag("config-key").performTextInput("synthetic-key-only")
-        ui.onNodeWithTag("config-model").performScrollTo().performTextInput("synthetic-mimo")
+        ui.onNodeWithTag("config-model").performScrollTo().performTextInput("synthetic-glm")
         hideKeyboard();shot("05-manual-provider-real-app")
         ui.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
         ui.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
@@ -167,5 +168,66 @@ class ModelConfigUiTest {
         late.complete(ConfigResult.Failure(ConfigError.NETWORK))
         ui.waitForIdle();assertEquals(ProbePhase.UNTESTED,state.probe.phase);assertFalse(state.testing)
         assertEquals(0,state.connections.size)
+    }
+    @Test fun fetchKeepsCurrentModelSearchAndSelectionOnlyChangesDraftUntilSave(){
+        edit();client.reply(ConfigResult.Success(listOf(a.modelId,"synthetic-fast","synthetic-pro")))
+        ui.onNodeWithTag("config-fetch").performScrollTo().performClick()
+        ui.waitUntil(10000){state.models.size==3}
+        ui.onNodeWithTag("config-model").assertTextContains(a.modelId,substring=true)
+        assertEquals(a.modelId,vault.list().single{it.id==a.id}.modelId)
+        ui.onNodeWithTag("model-search").performScrollTo().performTextInput("missing")
+        hideKeyboard();ui.onNodeWithTag("model-options-empty").assertExists();assertEquals(1,client.calls.get())
+        ui.onNodeWithTag("model-search").performTextReplacement("fast");hideKeyboard()
+        shot("06-model-list-current-unchanged-real-app")
+        ui.onNodeWithTag("model-options").performScrollToNode(hasText("synthetic-fast"))
+        ui.onNodeWithText("synthetic-fast").performClick()
+        ui.onNodeWithTag("config-model").performScrollTo().assertTextContains("synthetic-fast",substring=true)
+        assertEquals(a.modelId,vault.list().single{it.id==a.id}.modelId)
+        ui.onNodeWithTag("config-save").performClick();waitSaved(2)
+        assertEquals("synthetic-fast",vault.list().single{it.id==a.id}.modelId);assertEquals(1,client.calls.get())
+    }
+    @Test fun repeatedFetchClicksCancelAndLateSuccessDoNotReplaceDraft(){
+        edit();val late=client.pending()
+        ui.onNodeWithTag("config-fetch").performScrollTo().performTouchInput{doubleClick()}
+        ui.waitUntil(10000){client.calls.get()==1};assertTrue(state.fetching)
+        ui.onNodeWithTag("config-fetch").assertIsNotEnabled();ui.onNodeWithTag("config-save").assertIsNotEnabled()
+        shot("07-model-list-loading-real-app")
+        ui.onNodeWithTag("config-fetch-cancel").performClick();assertFalse(state.fetching)
+        late.complete(ConfigResult.Success(listOf("stale-model")))
+        ui.waitForIdle();ui.onNodeWithTag("model-options").assertDoesNotExist()
+        ui.onNodeWithTag("config-model").assertTextContains(a.modelId,substring=true)
+        assertEquals(a.modelId,vault.list().single{it.id==a.id}.modelId)
+        client.reply(ConfigResult.Failure(ConfigError.FORBIDDEN,403))
+        ui.onNodeWithTag("config-fetch").performClick();ui.waitUntil(10000){state.statusError}
+        ui.onNodeWithTag("config-status").performScrollTo().assertTextContains("403",substring=true)
+        shot("08-model-list-error-real-app")
+        client.reply(ConfigResult.Success());ui.onNodeWithTag("config-fetch").performScrollTo().performClick()
+        ui.waitUntil(10000){!state.testing&&state.status.contains("目录为空")}
+        ui.onNodeWithTag("config-model").assertTextContains(a.modelId,substring=true)
+    }
+    @Test fun addressOrProviderChangeInvalidatesFetchAndCannotReuseSavedKey(){
+        edit();val late=client.pending()
+        ui.onNodeWithTag("config-key").performTextInput("synthetic-key-only");hideKeyboard()
+        ui.onNodeWithTag("config-fetch").performScrollTo().performClick();ui.waitUntil(10000){client.calls.get()==1}
+        ui.onNodeWithTag("config-advanced").performScrollTo().performClick()
+        ui.onNodeWithTag("config-url").performScrollTo().performTextReplacement("https://changed.invalid/v1")
+        hideKeyboard();assertFalse(state.testing)
+        ui.onNodeWithTag("config-key").performScrollTo().assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.EditableText,androidx.compose.ui.text.AnnotatedString("")))
+        late.complete(ConfigResult.Success(listOf("stale-endpoint-model")));ui.waitForIdle()
+        ui.onNodeWithTag("config-fetch").performScrollTo().performClick()
+        ui.waitUntil(10000){!state.testing&&state.statusError};assertEquals(1,client.calls.get())
+        ui.onNodeWithTag("config-status").performScrollTo().assertTextContains("重新输入",substring=true)
+        ui.onNodeWithTag("provider-picker").performScrollTo().performClick()
+        ui.onNodeWithTag("provider-search").performTextReplacement("mimo");ui.onNodeWithTag("provider-mimo").performClick()
+        ui.onNodeWithTag("config-key").performTextInput("synthetic-key-only");hideKeyboard()
+        val oldProvider=client.pending();ui.onNodeWithTag("config-fetch").performScrollTo().performClick()
+        ui.waitUntil(10000){client.calls.get()==2}
+        ui.onNodeWithTag("provider-picker").performScrollTo().performClick()
+        ui.onNodeWithTag("provider-search").performTextReplacement("minimax-intl");ui.onNodeWithTag("provider-minimax-intl").performClick()
+        oldProvider.complete(ConfigResult.Success(listOf("stale-provider-model")));ui.waitForIdle()
+        ui.onNodeWithTag("model-options").assertDoesNotExist();assertFalse(state.testing)
+        ui.onNodeWithTag("config-model").assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.EditableText,androidx.compose.ui.text.AnnotatedString("")))
+        ui.onNodeWithTag("config-fetch").performScrollTo().performClick();ui.waitUntil(10000){!state.testing&&state.statusError}
+        assertEquals(2,client.calls.get());assertEquals(a,vault.list().single{it.id==a.id})
     }
 }

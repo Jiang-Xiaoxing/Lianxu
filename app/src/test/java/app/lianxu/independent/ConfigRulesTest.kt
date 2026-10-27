@@ -14,8 +14,12 @@ class ConfigRulesTest {
     }
     @Test fun rejectHeaderInjection() {assertNotNull(ConfigRules.validate("name","https://example.com","m","synthetic\r\nAuthorization: injected"))}
     @Test fun directorySupportIsExplicit() {
-        assertNull(ProviderPresets.get("minimax-cn").modelsPath)
+        listOf("mimo","moonshot","minimax-cn","minimax-intl").forEach {assertEquals(it,"models",ProviderPresets.get(it).modelsPath)}
         assertNull(ProviderPresets.get("ark-cn").modelsPath)
+        assertNull(ProviderPresets.get("bailian-cn").modelsPath)
+        assertNull(ProviderPresets.get("zhipu-cn").modelsPath)
+        assertEquals("models",ProviderPresets.get("deepseek").modelsPath)
+        assertEquals("models?sub_type=chat",ProviderPresets.get("silicon-cn").modelsPath)
         assertEquals("api-key",ProviderPresets.get("mimo").authHeader)
         assertEquals("key",ProviderPresets.get("openrouter").testPath)
         assertTrue(ProviderPresets.all.all {it.base.isEmpty()||ConfigRules.urlError(it.base)==null})

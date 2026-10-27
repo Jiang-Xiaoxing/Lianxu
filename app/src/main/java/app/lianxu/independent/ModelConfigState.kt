@@ -23,6 +23,7 @@ class ModelConfigState @JvmOverloads constructor(
     var purposes by mutableStateOf(emptyMap<ModelPurpose,String>());private set
     var saving by mutableStateOf(false);private set
     var testing by mutableStateOf(false);private set
+    var fetching by mutableStateOf(false);private set
     val busy get()=saving||testing
     var status by mutableStateOf("");private set
     var statusError by mutableStateOf(false);private set
@@ -37,7 +38,8 @@ class ModelConfigState @JvmOverloads constructor(
     fun refresh(){viewModelScope.launch{runCatching{reload()}.onFailure{message("无法读取恢复后的配置，请重试。",true)}}}
     private suspend fun reload(){val value=withContext(Dispatchers.IO){Triple(vault.list(),vault.defaultId(),ModelPurpose.entries.associateWith{vault.purposeId(it)})};configs=value.first;defaultId=value.second;purposes=value.third}
     /** Invalidate UI requests on edits, back, disposal and background; keep an explicit disk commit. */
-    fun clearResult(){requestVersion++;requestJob?.cancel();requestJob=null;testing=false;probe=ProbeDisplay();probeStamp=null;models=emptyList();status=""}
+    fun clearResult(){requestVersion++;requestJob?.cancel();requestJob=null;testing=false;fetching=false;probe=ProbeDisplay();probeStamp=null;models=emptyList();status="";statusError=false}
+    fun cancelFetch(){if(fetching){clearResult();message("已取消获取，当前模型未更改。")}}
     private suspend fun secret(config:ModelConfig,entered:String):String {
         if(entered.isNotEmpty())return entered
         val old=configs.find{it.id==config.id}
@@ -66,7 +68,7 @@ class ModelConfigState @JvmOverloads constructor(
     }
     fun delete(config:ModelConfig){if(busy)return;clearResult();saving=true;viewModelScope.launch {try{withContext(Dispatchers.IO){vault.delete(config.id)};reload();connections=connections-config.id;message("配置和关联密钥已删除。")}catch(_:Exception){message("删除未完成，请重试。",true)}finally{saving=false}}}
     fun request(config:ModelConfig,key:String,fetch:Boolean){
-        if(busy)return;clearResult();val version=requestVersion;testing=true
+        if(busy)return;clearResult();val version=requestVersion;testing=true;fetching=fetch
         if(!fetch)probe=ProbeDisplay(ProbePhase.TESTING,"正在测试…") else message("正在获取模型…")
         requestJob=viewModelScope.launch {try {
             val resolved=secret(config,key)
@@ -76,7 +78,7 @@ class ModelConfigState @JvmOverloads constructor(
             val result=diagnosticClient.request(config,resolved,fetch)
             if(version!=requestVersion)return@launch
             when(result){
-                is ConfigResult.Success->if(fetch){models=result.modelIds;message(if(models.isEmpty())"目录为空，可直接填写模型 ID。" else "已取得 ${models.size} 个条目，点选填入。")} else {
+                is ConfigResult.Success->if(fetch){models=result.modelIds;message(if(models.isEmpty())"目录为空，可直接填写模型 ID。" else "已获取 ${models.size} 个条目，当前模型未更改。")} else {
                     probe=ProbeDisplay(ProbePhase.REACHABLE,"目录/认证测试可达");probeStamp=stamp(config,resolved)
                     if(key.isEmpty()&&configs.any{it==config})connections=connections+(config.id to probe)
                 }
@@ -87,6 +89,6 @@ class ModelConfigState @JvmOverloads constructor(
             }
         }catch(e:CancellationException){throw e}
         catch(_:Exception){if(version==requestVersion){if(fetch)message("获取失败，请重试。",true) else probe=ProbeDisplay(ProbePhase.FAILED,"连接失败，请重试。")}}
-        finally{if(version==requestVersion)testing=false}}
+        finally{if(version==requestVersion){testing=false;fetching=false}}}
     }
 }

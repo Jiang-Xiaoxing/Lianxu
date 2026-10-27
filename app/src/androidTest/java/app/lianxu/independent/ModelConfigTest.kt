@@ -26,10 +26,12 @@ class LocalTlsMock(private val status:Int=200,private val body:String="{\"data\"
     val base="https://localhost:${server.localPort}/v1"
     @Volatile var calls=0;private set
     @Volatile var bearerSeen=false;private set
+    @Volatile var apiKeySeen=false;private set
+    @Volatile var requestLine="";private set
     private val worker=thread(isDaemon=true,name="synthetic-tls-mock") {
         try {server.accept().use {socket->
-            calls++;val reader=socket.getInputStream().bufferedReader();var line=reader.readLine()
-            while(!line.isNullOrEmpty()) {if(line=="Authorization: Bearer synthetic-key-only")bearerSeen=true;line=reader.readLine()}
+            calls++;val reader=socket.getInputStream().bufferedReader();var line=reader.readLine();requestLine=line.orEmpty()
+            while(!line.isNullOrEmpty()) {if(line.equals("Authorization: Bearer synthetic-key-only",ignoreCase=true))bearerSeen=true;if(line.equals("api-key: synthetic-key-only",ignoreCase=true))apiKeySeen=true;line=reader.readLine()}
             if(delay>0)Thread.sleep(delay)
             val bytes=body.toByteArray();socket.getOutputStream().apply {write(("HTTP/1.1 $status Result\r\nContent-Type: application/json\r\nContent-Length: ${bytes.size}\r\nLocation: https://example.invalid/stolen\r\nConnection: close\r\n\r\n").toByteArray());write(bytes);flush()}
         }} catch(_:Exception) { /* expected when testing timeout and rejected certificates */ }
@@ -68,6 +70,27 @@ class ModelConfigTest {
         LocalTlsMock(delay=400).use {s->assertEquals(ConfigError.TIMEOUT,(s.client(100).request(config(s.base),"synthetic-key-only",true) as ConfigResult.Failure).error)}
         LocalTlsMock().use {s->assertEquals(ConfigError.TLS,(HttpsModelClient(timeoutMillis=1500).request(config(s.base),"synthetic-key-only",true) as ConfigResult.Failure).error)}
         assertEquals(ConfigError.INVALID,(HttpsModelClient().request(config("http://example.com"),"synthetic-key-only",true) as ConfigResult.Failure).error)
-        assertEquals(ConfigError.UNSUPPORTED,(HttpsModelClient().request(config("https://example.invalid").copy(providerId="mimo"),"synthetic-key-only",true) as ConfigResult.Failure).error)
+        assertEquals(ConfigError.UNSUPPORTED,(HttpsModelClient().request(config("https://example.invalid").copy(providerId="ark-cn"),"synthetic-key-only",true) as ConfigResult.Failure).error)
+    }
+    @Test fun newlySupportedProvidersUseTheirDeclaredAuthWithoutChangingOrigin():Unit=runBlocking {
+        for(id in listOf("mimo","moonshot","minimax-cn","minimax-intl"))LocalTlsMock().use {s->
+            val config=ModelConfig("route","合成目录",id,s.base,"unchanged")
+            assertEquals(listOf("synthetic-model"),(s.client().request(config,"synthetic-key-only",true) as ConfigResult.Success).modelIds)
+            assertEquals("GET /v1/models HTTP/1.1",s.requestLine)
+            assertEquals(id=="mimo",s.apiKeySeen);assertEquals(id!="mimo",s.bearerSeen);assertEquals(1,s.calls)
+        }
+        LocalTlsMock().use {s->
+            s.client().request(ModelConfig("route","合成目录","silicon-cn",s.base,"unchanged"),"synthetic-key-only",true)
+            assertEquals("GET /v1/models?sub_type=chat HTTP/1.1",s.requestLine)
+        }
+    }
+    @Test fun untrustedDirectoryIdsAreBoundedAndSecretsNeverBecomeOptions():Unit=runBlocking {
+        val body="{\"data\":[{\"id\":\"safe-model\"},{\"id\":\"safe-model\"},{\"id\":\"bad model\"},{\"id\":\"synthetic-key-only\"},{\"id\":\"<script>\"},{\"id\":\"${"a".repeat(201)}\"}]}"
+        LocalTlsMock(body=body).use {s->
+            assertEquals(listOf("safe-model"),(s.client().request(ModelConfig("safe","合成目录","custom",s.base,"unchanged"),"synthetic-key-only",true) as ConfigResult.Success).modelIds)
+        }
+        LocalTlsMock(body="{\"data\":["+(0..510).joinToString(","){"{\"id\":\"model-$it\"}"}+"]}").use {s->
+            assertEquals(500,(s.client().request(ModelConfig("safe","合成目录","custom",s.base,"unchanged"),"synthetic-key-only",true) as ConfigResult.Success).modelIds.size)
+        }
     }
 }
