@@ -15,11 +15,11 @@ data class SourceDialogue(val requestId:String,val source:SourceRef,val user:Mes
         return SourceDialogue(j.getString("request"),ref,Message(j.getLong("user_id"),friend,j.getString("user"),true,j.getLong("user_at")),Message(j.getLong("assistant_id"),friend,j.getString("assistant"),false,j.getLong("assistant_at")),j.getString("zone"))
     }}
 }
-// recent/batch/recall token fields remain serialized only for old-policy compatibility. Live counts use MemoryRules.
-data class ProcessingPolicy(val recentBudget:Int=8000,val batchBudget:Int=2000,val coreGoal:Int=1000,val recallBudget:Int=2000,val relationshipEnabled:Boolean=false,val relationshipAutomatic:Boolean=false,val relationshipInterval:Int=5,val historyChoice:String="UNCONFIRMED") {
-    fun valid()=recentBudget in 1000..200000&&batchBudget in 100..(recentBudget-1)&&coreGoal in 100..10000&&recallBudget in 100..20000&&relationshipInterval in 1..100&&historyChoice in setOf("UNCONFIRMED","BACKFILL","FROM_NOW")
-    fun json()=JSONObject().put("recent",recentBudget).put("batch",batchBudget).put("core",coreGoal).put("recall",recallBudget).put("relationshipEnabled",relationshipEnabled).put("relationshipAutomatic",relationshipAutomatic).put("relationshipInterval",relationshipInterval).put("historyChoice",historyChoice)
-    companion object {fun from(j:JSONObject)=ProcessingPolicy(j.optInt("recent",8000),j.optInt("batch",2000),j.optInt("core",1000),j.optInt("recall",2000),j.optBoolean("relationshipEnabled"),j.optBoolean("relationshipAutomatic"),j.optInt("relationshipInterval",5),j.optString("historyChoice","UNCONFIRMED"))}
+// Live history/batch/recall counts belong to MemoryRules. Old serialized no-op budgets are ignored on read.
+data class ProcessingPolicy(val coreGoal:Int=1000,val relationshipEnabled:Boolean=false,val relationshipAutomatic:Boolean=false,val relationshipInterval:Int=5,val historyChoice:String="UNCONFIRMED") {
+    fun valid()=coreGoal in 100..10000&&relationshipInterval in 1..100&&historyChoice in setOf("UNCONFIRMED","BACKFILL","FROM_NOW")
+    fun json()=JSONObject().put("core",coreGoal).put("relationshipEnabled",relationshipEnabled).put("relationshipAutomatic",relationshipAutomatic).put("relationshipInterval",relationshipInterval).put("historyChoice",historyChoice)
+    companion object {fun from(j:JSONObject)=ProcessingPolicy(j.optInt("core",1000),j.optBoolean("relationshipEnabled"),j.optBoolean("relationshipAutomatic"),j.optInt("relationshipInterval",5),j.optString("historyChoice","UNCONFIRMED"))}
 }
 enum class MemoryCategory(val label:String,val modern:Boolean=false) {
     STATE_FACT("现状与事实",true),PREFERENCE_BOUNDARY("偏好与边界",true),EXPERIENCE_MEMORY("经历与回忆",true),COMMITMENT_OPEN("约定与未竟事项",true),

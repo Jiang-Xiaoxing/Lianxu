@@ -33,40 +33,5 @@ class SearchGate {
     fun clearSelection() { selected = emptySet() }
 }
 
-// Future memory contract. No extraction is called by the demo application.
 data class SourceRef(val characterId: String, val turnId: Long, val version: Long)
-data class CompleteTurn(val source: SourceRef, val userText: String, val assistantText: String, val tokens: Int)
-data class MemoryBatch(val id: String, val characterId: String, val turns: List<CompleteTurn>)
-data class MemoryFact(val id: String, val text: String, val sources: Set<SourceRef>, val exactDate: String? = null, val locked: Boolean = false)
-sealed interface BatchStatus {
-    data object Pending : BatchStatus
-    data class Partial(val savedIds: Set<String>) : BatchStatus
-    data object Committed : BatchStatus
-    data class Conflict(val reason: String) : BatchStatus
-}
 interface TokenCounter { fun tokens(text: String): Int }
-interface MemoryExtractor { suspend fun extract(batch: MemoryBatch): List<MemoryFact> }
-interface MemoryRepository {
-    /** Atomic compare-source-versions + idempotent upsert + commit marker. Do not delete original messages. */
-    suspend fun persist(batch: MemoryBatch, facts: List<MemoryFact>): BatchStatus
-    suspend fun source(ref: SourceRef): CompleteTurn?
-    suspend fun history(characterId: String, memoryId: String): List<MemoryFact>
-}
-object ContextPolicy {
-    const val RECENT_TOKEN_BUDGET = 8000 // Original dialogue only; excludes system prompt and memories.
-    const val BATCH_TARGET_TOKENS = 2000 // Input turns to extraction, NOT summary length.
-    fun plan(characterId: String, recent: List<CompleteTurn>, recentBudget:Int=RECENT_TOKEN_BUDGET,batchBudget:Int=BATCH_TARGET_TOKENS): MemoryBatch? {
-        require(recent.all { it.source.characterId == characterId && it.tokens >= 0 })
-        require(recent.map { it.source.turnId }.distinct().size == recent.size)
-        require(batchBudget>0&&recentBudget>batchBudget)
-        if (recent.sumOf { it.tokens } <= recentBudget) return null
-        var count = 0
-        val prefix = recent.takeWhile { if (count+it.tokens>batchBudget) false else { count += it.tokens; true } }
-        check(prefix.isNotEmpty()){ "最早完整轮次超过整理预算，请调整容量；没有移出原话。" }
-        return MemoryBatch("$characterId:" + prefix.joinToString(",") { "${it.source.turnId}@${it.source.version}" }, characterId, prefix)
-    }
-    fun mayRetire(batch: MemoryBatch, status: BatchStatus, currentVersions: Map<SourceRef, Long>): Boolean =
-        status == BatchStatus.Committed && batch.turns.all { currentVersions[it.source] == it.source.version }
-    fun prompt(custom: String, default: String) = custom.trim().ifEmpty { default }
-    fun conflict(existing: MemoryFact, incoming: MemoryFact): Boolean = existing.locked && existing != incoming
-}

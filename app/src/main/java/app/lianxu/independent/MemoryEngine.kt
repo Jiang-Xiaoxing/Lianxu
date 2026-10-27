@@ -146,7 +146,7 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
         val instruction="""你负责整理本角色的长期记忆，只输出逐行JSON（NDJSON），每行完整独立，不输出思考、Markdown或工具调用。
 目标原话是唯一写入证据；辅助原话和已有记忆不可伪装为新证据。用户画像必须引用用户原话。未知更新目标不可改成新增。不要覆盖人工或锁定内容，程序会另存冲突。
 core_maintenance 是核心维护目标，不是摘要长度。优先保留精简稳定事实；自动且未锁定的过量核心可降为普通记忆，不能删除人工/锁定核心或伪造证据来压缩。保护内容超目标时交由用户选择，不能静默截断。
-内容分类仅 STATE_FACT(现状与事实), PREFERENCE_BOUNDARY(偏好与边界), EXPERIENCE_MEMORY(经历与回忆), COMMITMENT_OPEN(约定与未竟事项)。每项独立提供 about=USER/CHARACTER/BOTH，BOTH仍仅当前角色会话，不是跨角色共享。tags为自定义主题字符串数组，最多12个，每个24字。分类不是关于谁，也不是核心/锁定/人工/待确认状态；这些状态正交。关于USER必须有用户原话支持。不能改写或猜测旧版记忆分类，旧记录不作为更新目标。
+内容分类仅 STATE_FACT(现状与事实), PREFERENCE_BOUNDARY(偏好与边界), EXPERIENCE_MEMORY(经历与回忆), COMMITMENT_OPEN(约定与未竟事项)。每项独立提供 about=USER/CHARACTER/BOTH，BOTH仍仅当前角色会话，不是跨角色共享。tags为自定义主题字符串数组，最多12个，每个24字。分类不是关于谁，也不是核心/锁定/人工/待确认状态；这些状态正交。关于USER必须有用户原话支持。未归入当前四分类的历史记录不作为更新目标，不推断其所属类别。
 可选due_expression为目标原话逐字到期表达，不明确留null，由程序按原消息时间时区解析；不可提供due_date。到期不代表完成，只有有证据的COMPLETE操作才完成事项。事实改变使用UPDATE并保留历史，不因日期或分类而删除记录。
 操作 op 仅 ADD,UPDATE,CANCEL,COMPLETE,RETRACT。每项 id 在同批重试时必须稳定；ADD 的 target 使用 new:编号，后续项可引用同批 new:编号；其他target必须是提供的已有记忆ID。保留已保存操作的id及字段，不因重试重新编号或重写它们。
 每项提供category、text、core布尔、date_expression（不明确填null），以及 evidence 数组，每条为 {"turn":目标轮编号,"version":来源版本,"side":"user或assistant","quote":"逐字原文片段"}。不能添加locked或manual字段。不要把消息时间当事件日期；那年、上次等日期留空，保留原表达。明确相对日期由程序按原消息时间和时区处理。
