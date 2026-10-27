@@ -94,9 +94,9 @@ internal object RoleArchive {
         val f=root["character"].asJsonObject;require(f.keySet()==setOf("id","name","bio","prompt","tone")){"角色字段不支持"}
         text(f,"id",200);val name=text(f,"name",30);text(f,"bio",500);text(f,"prompt",4000,true);require(integer(f["tone"]) in 0..10)
         val p=root["prompts"].asJsonObject
-        val fields=setOf("expression","extra","internalPrompt","internalEnabled","thinkingNone","examples","examplesEnabled","examplesClosed","initialRelationship","initialScores")
+        val fields=setOf("expression","extra","internalPrompt","internalEnabled","thinkingNone","examples","examplesEnabled","examplesClosed","initialRelationship","initialScores","characterDefinition","opening")
         require(p.keySet().all{it in fields}){"提示设置含未知字段"}
-        listOf("expression","extra","internalPrompt","initialRelationship").forEach{if(p.has(it))text(p,it,if(it=="initialRelationship")4000 else 8000,true)}
+        listOf("expression","extra","internalPrompt","initialRelationship","characterDefinition","opening").forEach{if(p.has(it))text(p,it,if(it=="initialRelationship")4000 else 8000,true)}
         listOf("internalEnabled","thinkingNone","examplesEnabled","examplesClosed").forEach{if(p.has(it))require(p[it].isJsonPrimitive&&p[it].asJsonPrimitive.isBoolean)}
         p["examples"]?.asJsonArray?.let{require(it.size()<=10);it.forEach{v->val e=v.asJsonObject;require(e.keySet()==setOf("user","assistant"));text(e,"user",8000);text(e,"assistant",16000)}}
         p["initialScores"]?.asJsonObject?.let{scores->scores.entrySet().forEach{(key,v)->require(RelationshipDimension.entries.any{it.name==key});val a=v.asJsonObject;require(a.keySet()==setOf("score","statement"));require(integer(a["score"]) in 0..100);text(a,"statement",500)}}

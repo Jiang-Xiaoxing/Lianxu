@@ -59,7 +59,7 @@ class ChatLedger(private val store:Store,private val session:String=processSessi
     suspend fun fail(id:String,attempt:Int,error:ChatFailure)=transition(id,attempt,TurnState.FAILED,error)
     suspend fun cancel(id:String,attempt:Int)=transition(id,attempt,TurnState.CANCELLED,null)
     private suspend fun transition(id:String,attempt:Int,state:TurnState,error:ChatFailure?)=withContext(Dispatchers.IO){store.writableDatabase.update("chat_turns",ContentValues().apply{put("state",state.name);if(error==null)putNull("error_code") else put("error_code",error.name)},"id=? AND attempt=? AND state='PENDING' AND owner_session=?",arrayOf(id,attempt.toString(),session))==1}
-    data class Context(val friend:Friend,val recent:List<Message>,val input:String,val rawPrompts:String,val stamp:String)
+    data class Context(val friend:Friend,val recent:List<Message>,val input:String,val rawPrompts:String,val stamp:String,val persona:UserPersona=UserPersona(),val openingEligible:Boolean=false)
     private fun snapshot(db:SQLiteDatabase,id:String):Context {
         val t=turn(db,id)?:error("Missing turn")
         RoleExamplesRepository.maintain(db,t.friendId)
@@ -67,9 +67,11 @@ class ChatLedger(private val store:Store,private val session:String=processSessi
         val recent=completed(db,t.friendId)
         val input=db.rawQuery("SELECT body FROM messages WHERE id=?",arrayOf(t.userMessageId.toString())).use{c->check(c.moveToFirst());c.getString(0)}
         val prompts=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(RolePromptStore.key(t.friendId))).use{c->if(c.moveToFirst())c.getString(0) else ""}
-        val raw=listOf(friend.toString(),recent.joinToString("\u0000"),t.userMessageId.toString(),input,prompts).joinToString("\u0001")
+        val persona=store.persona(db)
+        val openingEligible=!db.rawQuery("SELECT 1 FROM chat_turns WHERE friend_id=? AND state='COMPLETED' LIMIT 1",arrayOf(t.friendId)).use{it.moveToFirst()}
+        val raw=listOf(friend.toString(),recent.joinToString("\u0000"),t.userMessageId.toString(),input,prompts,persona.encode(),openingEligible.toString()).joinToString("\u0001")
         val stamp=MessageDigest.getInstance("SHA-256").digest(raw.toByteArray()).joinToString(""){"%02x".format(it)}
-        return Context(friend,recent,input,prompts,stamp)
+        return Context(friend,recent,input,prompts,stamp,persona,openingEligible)
     }
     suspend fun context(id:String):Context=withContext(Dispatchers.IO){atomic{snapshot(it,id)}}
     private fun completed(db:SQLiteDatabase,friendId:String):List<Message> = db.rawQuery("SELECT m.id,m.friend_id,m.body,m.mine,m.created FROM messages m JOIN chat_turns t ON m.id=t.user_message_id OR m.id=t.assistant_message_id WHERE t.friend_id=? AND t.state='COMPLETED' AND NOT EXISTS(SELECT 1 FROM memory_retired r WHERE r.friend_id=t.friend_id AND r.source_user_id=t.user_message_id AND r.source_version=t.source_revision) AND NOT EXISTS(SELECT 1 FROM message_state ms WHERE ms.message_id IN(t.user_message_id,t.assistant_message_id) AND ms.deleted=1) ORDER BY m.id",arrayOf(friendId)).use{c->buildList{while(c.moveToNext())add(Message(c.getLong(0),c.getString(1),c.getString(2),c.getInt(3)==1,c.getLong(4)))}}

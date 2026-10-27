@@ -26,7 +26,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
             val replaced=if(plan.pack.all)friends.map{it.id}else listOf(requireNotNull(plan.target))
             replaced.forEach{runner.cancel(it);memory.cancel(it);relationship.cancel(it);examplesJobs[it]?.cancel()}
         }
-        reload();compact=store.preference("compact","false").toBoolean();nickname=store.preference("nickname","旅人");ids
+        reload();compact=store.preference("compact","false").toBoolean();persona=store.persona();ids
     }}
     internal val examples=RoleExamplesRepository(store)
     private val examplesEngine=RoleExamplesEngine(examples,modelAccess,diagnosticClient)
@@ -56,9 +56,10 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     private var saving by mutableStateOf(false)
     var error by mutableStateOf(""); private set
     var compact by mutableStateOf(false); private set
-    var nickname by mutableStateOf("旅人"); private set
+    var persona by mutableStateOf(UserPersona());private set
+    val nickname get()=persona.displayName
     var ready by mutableStateOf(false); private set
-    init { viewModelScope.launch { runCatching { withContext(Dispatchers.IO){Diagnostics.configure(java.io.File(application.filesDir,"diagnostics/$vaultNamespace"),application.packageManager.getPackageInfo(application.packageName,0).versionName.orEmpty())};ledger.recoverInterrupted();examples.recover();reload(); compact=store.preference("compact","false").toBoolean(); nickname=store.preference("nickname","旅人"); ready=true;recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
+    init { viewModelScope.launch { runCatching { withContext(Dispatchers.IO){Diagnostics.configure(java.io.File(application.filesDir,"diagnostics/$vaultNamespace"),application.packageManager.getPackageInfo(application.packageName,0).versionName.orEmpty())};ledger.recoverInterrupted();examples.recover();reload(); compact=store.preference("compact","false").toBoolean(); persona=store.persona(); ready=true;recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
     private var reloadSerial=0L
     private suspend fun reload() {val id=++reloadSerial;val f=store.friends();val m=store.messages();val t=ledger.all();if(id==reloadSerial){friends=f;messages=m;turns=t;processingRevision++}}
     internal suspend fun refreshProcessing(){reload()}
@@ -125,7 +126,20 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     fun saveRolePrompts(id:String,expression:String,extra:String,internal:String,enabled:Boolean,initialRelationship:String=""){
         save{store.updateRolePrompts(id){old->old.copy(expression=expression,extra=extra,internalPrompt=internal,internalEnabled=enabled,thinkingNone=!enabled,initialRelationship=initialRelationship)};back()}
     }
-    fun saveProfile(name: String) { if(name.isBlank()) {error="昵称不能为空。"; return}; save { store.setPreference("nickname",name.trim()); nickname=name.trim() } }
+    fun saveProfile(name:String){if(name.isBlank()){error="昵称不能为空。";return};savePersona(persona.copy(name=name))}
+    fun savePersona(value:UserPersona){if(!value.valid()){error="请检查名字、称呼及自我介绍的长度；名字和称呼不要换行。";return};save{store.savePersona(value);persona=store.persona()}}
+    fun createCompanion(name:String,definition:String,expression:String,opening:String,extra:String=""){
+        if(busy)return
+        if(name.isBlank()||definition.isBlank()){error="请填写名字和角色设定。";return}
+        if(name.trim().length>30||listOf(definition,expression,opening,extra).any{it.length>8000}){error="请检查角色资料长度。";return}
+        val body=definition.trim();val summary=body.take(500).let{if(it.lastOrNull()?.isHighSurrogate()==true)it.dropLast(1)else it}
+        val f=Friend(UUID.randomUUID().toString(),name.trim(),summary,"")
+        save{store.addConfigured(f,RolePrompts(expression=expression,extra=extra,characterDefinition=body,opening=opening));reload();open("chat",f.id)}
+    }
+    fun saveCharacter(id:String,name:String,definition:String,expression:String,opening:String,extra:String,internal:String,enabled:Boolean,initialRelationship:String){
+        if(name.isBlank()||definition.isBlank()){error="请填写名字和角色设定。";return}
+        save{store.saveConfigured(id,name){old->old.copy(characterDefinition=definition,expression=expression,opening=opening,extra=extra,internalPrompt=internal,internalEnabled=enabled,thinkingNone=!enabled,initialRelationship=initialRelationship)};reload();back()}
+    }
     fun updateCompact(value: Boolean) { save { store.setPreference("compact",value.toString()); compact=value } }
     private fun save(block: suspend () -> Unit) { saving=true; error=""; viewModelScope.launch { try { block() } catch(e: Exception) {error="保存未完成，请重试。"} finally {saving=false} } }
 }

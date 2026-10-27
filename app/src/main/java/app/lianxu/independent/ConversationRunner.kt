@@ -55,10 +55,10 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                     context=ledger.context(current.id);prompts=RolePromptStore.decode(context.rawPrompts)
                 }
                 var refs=processing.references(friendId,context.input,current.userMessageId,vectors.scores(friendId,context.input))
-                fun build()=CompanionPrompt.build(context.friend,prompts,context.recent,context.input,refs.valid,refs.pending,capacity=credentials.config.contextTokens,outputLimit=credentials.config.outputTokens,recentLimit=rules.recentRounds,relatedLimit=rules.relatedCount)
+                fun build()=CompanionPrompt.build(context.friend,prompts,context.recent,context.input,refs.valid,refs.pending,capacity=credentials.config.contextTokens,outputLimit=credentials.config.outputTokens,recentLimit=rules.recentRounds,relatedLimit=rules.relatedCount,persona=context.persona,openingEligible=context.openingEligible)
                 var built=build()
                 Diagnostics.event("prompt.assembled",mapOf("character" to friendId,"turn" to current.id,"recent_rounds" to context.recent.size,"reference_count" to refs.valid.size,"pending_count" to refs.pending.size,"result" to built.javaClass.simpleName))
-                val fixedOnly=CompanionPrompt.build(context.friend,prompts,emptyList(),context.input,refs.valid.filter{it.mandatory},capacity=credentials.config.contextTokens,outputLimit=credentials.config.outputTokens)
+                val fixedOnly=CompanionPrompt.build(context.friend,prompts,emptyList(),context.input,refs.valid.filter{it.mandatory},capacity=credentials.config.contextTokens,outputLimit=credentials.config.outputTokens,persona=context.persona,openingEligible=context.openingEligible)
                 if(fixedOnly is PromptBuild.Blocked&&processing.coreBudget(friendId).overGoal){ledger.fail(current.id,current.attempt,ChatFailure.CORE_CAPACITY);changed();return@task}
                 if(built is PromptBuild.Blocked&&built.reason==ChatFailure.CONTEXT_NEEDS_MEMORY&&context.recent.isNotEmpty()){
                     val run=awaitMemoryCapacity(friendId,store.memorySummary){memory.ensureRoom(friendId,context.input)}
