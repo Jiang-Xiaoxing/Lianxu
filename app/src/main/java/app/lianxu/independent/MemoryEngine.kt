@@ -13,6 +13,7 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
     companion object {private val session=UUID.randomUUID().toString()}
     private val batches=MemoryBatchRepository(repo)
     private val vectors=MemoryVectorIndex(repo,access)
+    internal var semanticEmbeddingClient:MemoryEmbeddingClient?=null
     private val background=RoleBackgroundJobs(scope)
     private val guard=repo.store.memorySummary
     private class SummaryTimeout:CancellationException("Memory summary deadline")
@@ -117,12 +118,16 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
     }
     /** Sequential writes and bounded back-pressure preserve valid lines if transport ends early. */
     private suspend fun consume(work:MemoryWork,credentials:ModelCredential,request:TextChatRequest,lease:ChatAttemptLease,accepted:List<JSONObject>,taskCurrent:()->Boolean){
+        val embedding=access.credential(ModelPurpose.EMBEDDING)
+        val staged=embedding?.let{mutableListOf<JSONObject>()}
+        fun current()=taskCurrent()&&access.memoryCurrent(credentials.stamp)&&(embedding==null||access.current(ModelPurpose.EMBEDDING,embedding.stamp))
         val dropped=linkedMapOf<String,Int>();val buffer=StringBuilder();val received=mutableSetOf<String>();val allKeys=accepted.map{it.getString("id")}.toMutableSet();var receipt:JSONObject?=null
         suspend fun operation(raw:JSONObject){
             val op=MemoryNumberedReferences(work.targets,work.existingVersions.keys).normalize(raw)
             currentCoroutineContext().ensureActive();val key=op.getString("id");rejectUnless(received.add(key)&&(key in allKeys||allKeys.size<64))
             rejectUnless(!op.toString().contains(credentials.key)&&!Regex("(?i)</?think").containsMatchIn(op.toString()))
-            batches.apply(work,op){taskCurrent()&&lease.isActive()&&access.memoryCurrent(credentials.stamp)};allKeys.add(key);changed()
+            if(staged==null){batches.apply(work,op){current()&&lease.isActive()};changed()}else staged+=op
+            allKeys.add(key)
         }
         suspend fun rejected(e:Exception){
             if(e is CancellationException)throw e
@@ -143,7 +148,7 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
             }
         }
         suspend fun record(line:String){
-            rejectUnless(taskCurrent(),"CANCELLED")
+            rejectUnless(current(),"CANCELLED")
             try{recordUnsafe(line)}catch(e:Exception){rejected(e)}
         }
         currentCoroutineContext().ensureActive()
@@ -157,7 +162,15 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
         rejectUnless(dropped.isEmpty(),"FORMAT")
         val end=receipt?:throw ProcessingRejected("INCOMPLETE")
         rejectUnless(end.opt("complete")==true&&allKeys.size<=64,"INCOMPLETE")
-        rejectUnless(batches.complete(work,allKeys,end.getInt("operation_count"),end.getString("end_marker"),{taskCurrent()&&access.memoryCurrent(credentials.stamp)},lease),"CANCELLED")
+        if(staged==null){rejectUnless(batches.complete(work,allKeys,end.getInt("operation_count"),end.getString("end_marker"),{current()},lease),"CANCELLED")}
+        else {
+            val snapshot=batches.previewSemantic(work,staged){current()}
+            val index=semanticEmbeddingClient?.let{MemoryVectorIndex(repo,access,it)}?:vectors
+            val result=MemorySemanticDeduplicator(index,client).resolve(work,staged,snapshot,credentials,requireNotNull(embedding)){current()}
+            val committed=batches.applySemantic(work,staged,result.operations,snapshot,end.getInt("operation_count"),end.getString("end_marker"),{current()},lease)
+            if(result.byText.isNotEmpty())try{index.rememberSemantic(work.friendId,committed,result.byText,embedding){current()}}catch(e:CancellationException){throw e}catch(e:Exception){Diagnostics.failure("memory.semantic.cache_skipped",e,mapOf("character" to work.friendId))}
+            changed()
+        }
     }
     private fun batchId(friendId:String,rows:List<SourceDialogue>)="batch-"+stableDigest(friendId+rows.joinToString{"${it.source.turnId}@${it.source.version}"}).take(40)
     private fun inputCost(request:TextChatRequest)=request.messages.sumOf{ConservativeTokens.tokens(it.content)}

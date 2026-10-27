@@ -113,13 +113,14 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
             MemoryEvidence(source.source,side,quote,text,if(side=="user")source.user.created else source.assistant.created,source.zone)
         }.let{MemoryEvidenceRules.merge(emptyList(),it)}
     }
-    suspend fun apply(work:MemoryWork,op:JSONObject,configCurrent:()->Boolean={true}):String=repo.tx{db->
+    suspend fun apply(work:MemoryWork,op:JSONObject,configCurrent:()->Boolean={true}):String=repo.tx{db->apply(db,work,op,configCurrent)}
+    private fun apply(db:SQLiteDatabase,work:MemoryWork,op:JSONObject,configCurrent:()->Boolean,original:JSONObject=op,semanticVersions:Map<String,Int> = emptyMap()):String {
         Diagnostics.event("memory.operation.received",mapOf("character" to work.friendId,"batch" to work.id,"operation" to op.toString()))
         validate(db,work,configCurrent)
         val key=op.getString("id");rejectUnless(key.matches(Regex("[A-Za-z0-9_-]{1,64}")))
-        val digest=stableDigest(canonicalJson(op))
+        val digest=stableDigest(canonicalJson(original))
         val previous=db.rawQuery("SELECT digest,result_id FROM memory_operations WHERE batch_id=? AND op_key=?",arrayOf(work.id,key)).use{if(it.moveToFirst())it.getString(0) to it.getString(1) else null}
-        if(previous!=null){rejectUnless(previous.first==digest,"OPERATION_CHANGED");return@tx previous.second}
+        if(previous!=null){rejectUnless(previous.first==digest,"OPERATION_CHANGED");return previous.second}
         validateMemoryContext(db,work)
         rejectUnless(!op.has("locked")&&!op.has("manual"),"PROTECTED")
         val kind=op.getString("op");rejectUnless(kind in setOf("ADD","UPDATE","CANCEL","COMPLETE","RETRACT"))
@@ -129,7 +130,7 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
             localTarget(db,work,local)
         }else if(local.startsWith("new:"))localTarget(db,work,local) else local
         var old=repo.memory(db,work.friendId,id)
-        if(kind!="ADD")rejectUnless(old!=null&&(local.startsWith("new:")||id in work.existingVersions),"UNKNOWN_TARGET")
+        if(kind!="ADD")rejectUnless(old!=null&&(local.startsWith("new:")||id in work.existingVersions||id in semanticVersions),"UNKNOWN_TARGET")
         val category=op.optString("category").takeIf{it.isNotBlank()}?.let{MemoryCategory.valueOf(it)}?:old?.category?:throw ProcessingRejected("FORMAT")
         rejectUnless(category.modern&&(old==null||old.category.modern),"LEGACY_READ_ONLY")
         val about=if(op.has("about"))MemoryAbout.valueOf(op.getString("about")) else old?.about?:throw ProcessingRejected("FORMAT")
@@ -158,7 +159,7 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
         val actualId=old?.id?:id
         val proposed=StoredMemory(actualId,work.friendId,category,text,life,if(op.has("core"))op.getBoolean("core") else old?.core?:false,false,false,(old?.version?:0)+1,true,expression,date,MemoryEvidenceRules.merge(old?.evidence.orEmpty(),proof),about,tags,dueExpression,dueDate,old?.expiresAt,dateType,annual)
         val lastOwnVersion=db.rawQuery("SELECT MAX(result_version) FROM memory_operations WHERE batch_id=? AND result_id=?",arrayOf(work.id,actualId)).use{if(it.moveToFirst()&&!it.isNull(0))it.getInt(0) else null}
-        val expectedVersion=lastOwnVersion?:work.existingVersions[actualId]
+        val expectedVersion=lastOwnVersion?:semanticVersions[actualId]?:work.existingVersions[actualId]
         val protected=old!=null&&(old.locked||old.manual||old.version!=expectedVersion)
         val unchanged=old!=null&&old.text==proposed.text&&old.category==proposed.category&&old.about==about&&old.tags==tags&&old.dueDate==dueDate&&old.life==proposed.life&&old.eventDate==proposed.eventDate&&old.dateType==proposed.dateType&&old.annualMonthDay==proposed.annualMonthDay&&old.core==proposed.core
         var savedVersion=old?.version?:1
@@ -166,14 +167,16 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
         if(doubt==null&&old!=null&&MemoryEvidenceRules.repeated(old,proposed,proof)){
             savedVersion=old.version
         }else if(doubt!=null){
-            repo.candidate(db,work.friendId,old?.id,proposed,"拿不准：${doubt.take(240)}","candidate-"+stableDigest(work.id+key).take(40));savedVersion=old?.version?:0
+            val sameProposal=old!=null&&original.optString("op")=="ADD"&&kind=="UPDATE"&&old.id in semanticVersions&&repo.candidates(db,work.friendId).any{it.targetId==old.id&&it.targetVersion==old.version&&it.valid&&MemoryEvidenceRules.repeated(it.proposed,proposed,proposed.evidence)}
+            if(!sameProposal)repo.candidate(db,work.friendId,old?.id,proposed,"拿不准：${doubt.take(240)}","candidate-"+stableDigest(work.id+key).take(40));savedVersion=old?.version?:0
         }else if(protected&&!unchanged){
             repo.candidate(db,work.friendId,actualId,proposed,"人工、锁定或并发修改的内容受保护", "candidate-"+stableDigest(work.id+key).take(40))
         }else if(!protected){repo.saveMemory(db,proposed);savedVersion=proposed.version}
-        db.insertOrThrow("memory_operations",null,ContentValues().apply{put("batch_id",work.id);put("op_key",key);put("json",canonicalJson(op));put("digest",digest);put("result_id",actualId);put("result_version",savedVersion)})
-        actualId
+        db.insertOrThrow("memory_operations",null,ContentValues().apply{put("batch_id",work.id);put("op_key",key);put("json",canonicalJson(original));put("digest",digest);put("result_id",actualId);put("result_version",savedVersion)})
+        return actualId
     }
-    suspend fun complete(work:MemoryWork,operationKeys:Set<String>,declaredCount:Int,marker:String,configCurrent:()->Boolean={true},lease:ChatAttemptLease?=null)=repo.tx{db->
+    suspend fun complete(work:MemoryWork,operationKeys:Set<String>,declaredCount:Int,marker:String,configCurrent:()->Boolean={true},lease:ChatAttemptLease?=null)=repo.tx{db->complete(db,work,operationKeys,declaredCount,marker,configCurrent,lease)}
+    private fun complete(db:SQLiteDatabase,work:MemoryWork,operationKeys:Set<String>,declaredCount:Int,marker:String,configCurrent:()->Boolean,lease:ChatAttemptLease?):Boolean {
         val finish={
         validate(db,work,configCurrent)
         validateMemoryContext(db,work,allowReviewed=true)
@@ -201,8 +204,42 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
         catch(_:Exception){db.execSQL("ROLLBACK TO optional_associations");db.execSQL("RELEASE optional_associations")}
         true
         }
-        if(lease==null)finish() else lease.guard(finish)
+        return if(lease==null)finish() else lease.guard(finish)
     }
+    internal data class SemanticSnapshot(val base:List<StoredMemory>,val fresh:List<SemanticFact>)
+    /** Run the existing validator/exact dedup first; its trial writes never leave this savepoint. */
+    internal suspend fun previewSemantic(work:MemoryWork,ops:List<JSONObject>,configCurrent:()->Boolean):SemanticSnapshot=repo.tx{db->
+        validate(db,work,configCurrent);validateMemoryContext(db,work)
+        val base=repo.usableMemories(db,work.friendId);val before=repo.memories(db,work.friendId).associateBy{it.id}
+        val results=linkedMapOf<String,String>();db.execSQL("SAVEPOINT semantic_preview")
+        try{
+            ops.forEach{op->results[op.getString("id")]=apply(db,work,op,configCurrent)}
+            val repeatedTargets=ops.groupingBy{it.getString("target")}.eachCount().filterValues{it>1}.keys
+            val fresh=ops.mapNotNull{op->
+                val kind=op.getString("op");val target=op.getString("target");val id=results.getValue(op.getString("id"))
+                if(kind !in setOf("ADD","UPDATE")||op.optString("doubt").let{it.isNotBlank()&&it!="null"}||target in repeatedTargets)return@mapNotNull null
+                val m=repo.memory(db,work.friendId,id)?:return@mapNotNull null
+                if(kind=="ADD"&&(id in before||ops.any{it!==op&&it.getString("target")==target})||kind=="UPDATE"&&m.version==(before[id]?.version?:0))return@mapNotNull null
+                SemanticFact("N${ops.indexOf(op)+1}",m.copy(evidence=m.evidence.filter{e->work.targets.any{it.source==e.source}}),op.getString("id"),kind)
+            }
+            SemanticSnapshot(base,fresh)
+        }finally{db.execSQL("ROLLBACK TO semantic_preview");db.execSQL("RELEASE semantic_preview");Diagnostics.event("memory.semantic.preview.rolled_back",mapOf("character" to work.friendId,"operations" to ops.size))}
+    }
+    /** Decisions, all operations and the completion receipt publish together, or none publish. */
+    internal suspend fun applySemantic(work:MemoryWork,originals:List<JSONObject>,resolved:List<JSONObject>,snapshot:SemanticSnapshot,count:Int,marker:String,configCurrent:()->Boolean,lease:ChatAttemptLease):List<StoredMemory> =repo.tx{db->
+        rejectUnless(originals.size==resolved.size)
+        val finish={
+            validate(db,work,configCurrent);validateMemoryContext(db,work)
+            rejectUnless(repo.usableMemories(db,work.friendId)==snapshot.base,"SOURCE_CHANGED")
+            val versions=snapshot.base.associate{it.id to it.version}
+            originals.zip(resolved).forEach{(raw,op)->apply(db,work,op,configCurrent,raw,versions)}
+            val keys=appliedKeys(db,work);rejectUnless(complete(db,work,keys,count,marker,configCurrent,null),"CANCELLED")
+            true
+        }
+        rejectUnless(lease.guard(finish),"CANCELLED")
+        repo.usableMemories(db,work.friendId)
+    }
+    private fun appliedKeys(db:SQLiteDatabase,work:MemoryWork)=db.rawQuery("SELECT op_key FROM memory_operations WHERE batch_id=?",arrayOf(work.id)).use{c->buildSet{while(c.moveToNext())add(c.getString(0))}}
     suspend fun fail(work:MemoryWork,code:String,retryAt:Long=0)=repo.tx{db->db.update("memory_batches",ContentValues().apply{put("state",if(retryAt>0)"WAITING" else "FAILED");put("error",code);put("next_retry",retryAt)},"id=? AND json=? AND state NOT IN('COMMITTED','ARCHIVED')",arrayOf(work.id,work.json().toString()))}
 }
 
