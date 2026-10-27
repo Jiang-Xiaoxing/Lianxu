@@ -206,7 +206,7 @@ internal class BackupRemapper(private val old:String,private val id:String,priva
     private val numeric=setOf("message_id","source_user_id","user_message_id","assistant_message_id","user_id","assistant_id","turn","turnId","cursor","boundary")
     private val ids=setOf("id","request","task","task_id","batch_id","batch","candidate_id","target_id","memory_id","result_id","source","target","sourceId","targetId","memoryIds","retainedIds")
     fun json(v:JsonElement,key:String=""):JsonElement=when{
-        v.isJsonObject->JsonObject().apply{v.asJsonObject.entrySet().forEach{(k,x)->add(if(key in setOf("associationVersions","existingVersions"))strings[k]?:error("记忆版本引用缺失") else k,json(x,k))}}
+        v.isJsonObject->JsonObject().apply{v.asJsonObject.entrySet().forEach{(k,x)->add(if(key in setOf("associationVersions","existingVersions","resultVersions"))strings[k]?:error("记忆版本引用缺失") else k,json(x,k))}}
         v.isJsonArray->JsonArray().apply{v.asJsonArray.forEach{add(json(it,key))}}
         v.isJsonNull->JsonNull.INSTANCE
         v.asJsonPrimitive.isNumber&&(key in numeric||key=="id")->JsonPrimitive(if(v.asLong==0L)0L else messages[v.asLong]?:error("原话编号无法映射"))
