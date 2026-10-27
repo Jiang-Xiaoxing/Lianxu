@@ -61,6 +61,19 @@ class ModelConfigTest {
         vault.delete("b");assertFalse(vault.hasKey("b"));assertEquals("",vault.defaultId());vault.delete("a");assertFalse(vault.hasKey("a"));assertTrue(vault.list().isEmpty())
         assertFalse(android.security.NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted("example.com"))
     }
+    @Test fun purposeBudgetsPersistAndLegacyZeroKeepsSavedCustomOutput() {
+        val namespace="test-token-budgets-${System.nanoTime()}"
+        val vault=ModelVault(context,namespace)
+        val old=ModelConfig("legacy","合成旧配置","custom","https://example.invalid/v1","synthetic",65536,3333)
+        val separate=old.copy(id="separate",outputTokens=4096,memoryOutputTokens=16384)
+        try {
+            vault.save(old,"synthetic-key-only");vault.save(separate,"synthetic-key-only")
+            val reopened=ModelVault(context,namespace).list().associateBy{it.id}
+            assertEquals(old,reopened.getValue(old.id));assertEquals(3333,reopened.getValue(old.id).memoryOutputLimit())
+            assertEquals(separate,reopened.getValue(separate.id));assertEquals(16384,reopened.getValue(separate.id).memoryOutputLimit())
+            assertEquals(4096,reopened.getValue(separate.id).outputTokens)
+        } finally {vault.list().forEach{vault.delete(it.id)}}
+    }
     @Test fun actualHttpsMockSuccessErrorsTimeoutAndRedaction():Unit=runBlocking {
         fun config(base:String)=ModelConfig("mock","合成测试","custom",base,"synthetic-model")
         LocalTlsMock().use {s->val result=s.client().request(config(s.base),"synthetic-key-only",true);assertEquals(listOf("synthetic-model"),(result as ConfigResult.Success).modelIds);assertTrue(s.bearerSeen)}

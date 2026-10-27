@@ -11,8 +11,23 @@ sealed interface PromptBuild {
     data class Ready(val request:TextChatRequest,val estimatedInputTokens:Int,val boundaryReached:Boolean):PromptBuild
     data class Blocked(val reason:ChatFailure):PromptBuild
 }
-/** UTF-8 upper-bound estimate, not a vendor tokenizer. Kept explicit instead of claiming exact tokens. */
-object ConservativeTokens:TokenCounter {override fun tokens(text:String)=text.toByteArray(Charsets.UTF_8).size+4}
+/** Script-aware estimate with 25% headroom and per-message overhead, not an exact/vendor upper bound. */
+object ConservativeTokens:TokenCounter {
+    override fun tokens(text:String):Int {
+        var units=0L;var index=0
+        while(index<text.length){
+            val cp=text.codePointAt(index);index+=Character.charCount(cp)
+            units+=when {
+                cp in 0x4e00..0x9fff || cp in 0x3400..0x4dbf -> 12 // common Han: 1.2 before headroom
+                cp in 'a'.code..'z'.code || cp in 'A'.code..'Z'.code || cp in '0'.code..'9'.code -> 5
+                cp==9 || cp==10 || cp==13 || cp==32 -> 2
+                cp<128 || cp in 0x3000..0x303f || cp in 0xff00..0xffef -> 10
+                else -> (if(cp<=0x7ff)2 else if(cp<=0xffff)3 else 4)*10L
+            }
+        }
+        return ((units*5+39)/40+12).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    }
+}
 object CompanionPrompt {
     const val DEFAULT_EXPRESSION="用自然、简洁的日常语言接话，依据已知记忆保持连续。适度关心，也可以温和表达不同意见。少用机械反问；没有证据时不编造共同经历或线下行动，不诱导排他依赖，不替用户断言感受。"
     const val DEFAULT_INTERNAL="仅在内部核对当前消息意图、可用证据与角色表达；区分历史观察和此刻信息。不输出逐步推理，直接给用户自然的回复。"

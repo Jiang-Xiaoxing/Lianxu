@@ -67,6 +67,25 @@ class CompleteBackupAndroidTest {
         assertEquals(f.store.friends().size,other.store.friends().size);assertEquals(2,other.repo.read{db->db.rawQuery("SELECT count(*) FROM role_assets",null).use{it.moveToFirst();it.getInt(0)}})
         assertTrue(other.repo.read{db->db.rawQuery("SELECT 1 FROM relationship_jobs WHERE state='RUNNING'",null).use{!it.moveToFirst()}})
     }
+    @Test fun independentOutputBudgetsRoundTripAndLegacyBackupStillInherits()=runBlocking{
+        val separate=config().copy(contextTokens=65536,outputTokens=4096,memoryOutputTokens=16384)
+        f.vault.save(separate,"synthetic-key-original")
+        val target=fixture();roundTrip(target,true,true)
+        assertEquals(separate,target.vault.list().single());assertEquals(16384,target.vault.list().single().memoryOutputLimit())
+        val legacy=f.backup.export(null,true)
+        legacy.root["models"].asJsonArray[0].asJsonObject["config"].asJsonObject.remove("memoryOutputTokens")
+        val oldTarget=fixture();val p=pack(legacy)
+        oldTarget.backup.commit(oldTarget.backup.preview(p,"REPLACE"),true)
+        val old=oldTarget.vault.list().single()
+        assertEquals(65536,old.contextTokens);assertEquals(4096,old.outputTokens);assertEquals(4096,old.memoryOutputLimit())
+    }
+    @Test fun invalidMemoryBudgetIsRejectedBeforeRestoreChangesAnything()=runBlocking{
+        val export=f.backup.export(null,true)
+        export.root["models"].asJsonArray[0].asJsonObject["config"].asJsonObject.addProperty("memoryOutputTokens",-1)
+        val before=f.vault.stamp();val friends=f.store.friends()
+        assertTrue(runCatching{f.backup.preview(pack(export),"REPLACE")}.isFailure)
+        assertEquals(before,f.vault.stamp());assertEquals(friends,f.store.friends())
+    }
     @Test fun noKeysExportNeverContainsFakeSecretAndExactEndpointRetainsLocalKey()=runBlocking{
         val export=f.backup.export(null,false);assertFalse(export.root.toString().contains("synthetic-key-original"))
         val other=fixture();other.vault.save(config(),"synthetic-destination-key")

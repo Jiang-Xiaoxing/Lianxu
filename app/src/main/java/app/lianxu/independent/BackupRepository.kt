@@ -70,7 +70,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
         Export(JsonObject().apply{addProperty("scope",if(id==null)"all" else "role");add("roles",roles);add("preferences",settings);add("models",models);add("selections",selections);addProperty("includesKeys",includeKeys)},files).also{validate(db,it.root,it.files)}
     }
     private fun modelJson(row:BackupModel,includeKeys:Boolean)=JsonObject().apply{add("config",Gson().toJsonTree(row.config));if(includeKeys)addProperty("key",row.secret.orEmpty())}
-    private fun models(root:JsonObject)=root["models"].asJsonArray.map{v->val j=v.asJsonObject;require(j.keySet()==if(root["includesKeys"].asBoolean)setOf("config","key")else setOf("config"));require(j["config"].asJsonObject.keySet()==setOf("id","name","providerId","baseUrl","modelId","contextTokens","outputTokens"));val config=Gson().fromJson(j["config"],ModelConfig::class.java)
+    private fun models(root:JsonObject)=root["models"].asJsonArray.map{v->val j=v.asJsonObject;require(j.keySet()==if(root["includesKeys"].asBoolean)setOf("config","key")else setOf("config"));val fields=j["config"].asJsonObject.keySet();val old=setOf("id","name","providerId","baseUrl","modelId","contextTokens","outputTokens");require(fields==old||fields==old+"memoryOutputTokens");val config=Gson().fromJson(j["config"],ModelConfig::class.java)
         require(config.id.matches(Regex("[a-zA-Z0-9-]{1,80}"))&&config.name.length<=200&&config.modelId.length<=200&&config.baseUrl.length<=2000&&ConfigRules.validate(config,"validation-placeholder")==null){"模型配置无效"}
         val key=if(j.has("key"))j["key"].asString else null;require(key==null||key.length<=4096&&key.none{it.isWhitespace()||it.code<32}){"密钥字段格式无效"};BackupModel(config,key)
     }

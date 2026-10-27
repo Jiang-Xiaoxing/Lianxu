@@ -58,12 +58,13 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
                 var auxiliary=repo.recentSources(friendId).filter{r->sources.none{it.source==r.source}}.takeLast(6)
                 while(auxiliary.sumOf{it.tokens}>2000&&auxiliary.isNotEmpty())auxiliary=auxiliary.drop(1)
                 val applied=previous?.let{batches.appliedOperations(it)}?:emptyList()
-                fun request():TextChatRequest=makeRequest(friendId,batchId(friendId,sources),sources,existing,applied,credentials.config.outputTokens,core,auxiliary)
-                while(inputCost(request())+credentials.config.outputTokens>credentials.config.contextTokens&&existing.isNotEmpty())existing=existing.dropLast(1)
-                while(inputCost(request())+credentials.config.outputTokens>credentials.config.contextTokens&&auxiliary.isNotEmpty())auxiliary=auxiliary.drop(1)
+                val output=credentials.config.memoryOutputLimit()
+                fun request():TextChatRequest=makeRequest(friendId,batchId(friendId,sources),sources,existing,applied,output,core,auxiliary)
+                while(inputCost(request())+output>credentials.config.contextTokens&&existing.isNotEmpty())existing=existing.dropLast(1)
+                while(inputCost(request())+output>credentials.config.contextTokens&&auxiliary.isNotEmpty())auxiliary=auxiliary.drop(1)
                 val work=batches.prepare(friendId,sources,credentials.stamp,existing.map{it.id}.toSet(),rulesState.second,MemoryRecall.relationCandidates(summaryQuery,existing).map{it.id}.toSet());running.work=work
                 Diagnostics.event("memory.batch.prepared",mapOf("character" to friendId,"batch" to work.id,"sources" to sources.map{mapOf("turn" to it.source.turnId,"version" to it.source.version)},"existing_memories" to existing.map{it.id},"auxiliary_rounds" to auxiliary.size))
-                if(inputCost(request())+credentials.config.outputTokens>credentials.config.contextTokens){batches.fail(work,"CAPACITY");changed();return@withLock ProcessingRun(false,"CAPACITY",didChange)}
+                if(inputCost(request())+output>credentials.config.contextTokens){batches.fail(work,"CAPACITY");changed();return@withLock ProcessingRun(false,"CAPACITY",didChange)}
                 if(manualRetry)repo.tx{db->db.execSQL("UPDATE memory_batches SET attempt=0 WHERE id=?",arrayOf(work.id))}
                 val already=status(work.id).second
                 if(already>=3)return@withLock ProcessingRun(false,"MANUAL_RETRY",didChange)
@@ -72,8 +73,8 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
                     currentCoroutineContext().ensureActive();batches.beginAttempt(work,session);changed()
                     try{
                         val accepted=batches.appliedOperations(work)
-                        val req=makeRequest(friendId,work.id,work.targets,existing,accepted,credentials.config.outputTokens,core,auxiliary)
-                        if(inputCost(req)+credentials.config.outputTokens>credentials.config.contextTokens)throw ProcessingRejected("CAPACITY")
+                        val req=makeRequest(friendId,work.id,work.targets,existing,accepted,output,core,auxiliary)
+                        if(inputCost(req)+output>credentials.config.contextTokens)throw ProcessingRejected("CAPACITY")
                         consume(work,credentials,req,lease,accepted)
                         finished=true;didChange=true;changed();scope.launch{vectors.index(friendId)};break
                     }catch(e:CancellationException){throw e}

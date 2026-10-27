@@ -42,6 +42,15 @@ class TextTlsMock(val status:Int=200,val response:String="{\"choices\":[{\"finis
 class LiveChatFoundationTest {
     private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
     private val request=TextChatRequest(listOf(WireMessage("system","合成规则"),WireMessage("user","合成输入"),WireMessage("system","合成时间尾段")))
+    @Test fun generatedLimitIsSentPerPurposeAndLargeMemoryLimitIsNotClampedTo8192():Unit=runBlocking{
+        for(provider in listOf("mimo","openai","custom"))for(memory in listOf(false,true))TextTlsMock().use{s->
+            val config=ModelConfig("budget","合成预算",provider,s.base,"synthetic-model",65536,4096,16384)
+            val limit=if(memory)config.memoryOutputLimit()else config.outputTokens
+            assertTrue(s.client().complete(config,"synthetic-key-only",request.copy(outputLimit=limit)) is TextChatResult.Success)
+            val body=JSONObject(s.body);val parameter=if(provider in setOf("mimo","openai"))"max_completion_tokens"else"max_tokens"
+            assertEquals(limit,body.getInt(parameter));assertFalse(body.has("contextTokens"));assertFalse(body.has("memoryOutputTokens"))
+        }
+    }
     @Test fun actualTlsPostAllPresetsAndAuthDifferences():Unit=runBlocking{
         for(p in ProviderPresets.all)TextTlsMock().use{s->
             val cfg=ModelConfig("mock","合成",p.id,s.base,"synthetic-model")
