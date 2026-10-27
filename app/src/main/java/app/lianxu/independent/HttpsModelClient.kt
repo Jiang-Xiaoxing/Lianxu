@@ -1,7 +1,6 @@
 package app.lianxu.independent
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.net.SocketTimeoutException
 import java.net.URL
@@ -21,9 +20,15 @@ class HttpsModelClient(
         val provider=ProviderPresets.get(config.providerId)
         val path=(if(fetchModels) provider.modelsPath else provider.testPath) ?: return@withContext ConfigResult.Failure(ConfigError.UNSUPPORTED)
         var connection:HttpsURLConnection?=null
+        var cancellationWatcher:Job?=null
         val deadline=System.nanoTime()+timeoutMillis*3L*1_000_000L
         try {
+            ensureActive()
             connection=factory.open(URL(config.baseUrl.trimEnd('/')+"/"+path))
+            val opened=connection
+            cancellationWatcher=launch(start=CoroutineStart.UNDISPATCHED){
+                try{awaitCancellation()}finally{opened.disconnect()}
+            }
             connection.instanceFollowRedirects=false
             connection.connectTimeout=timeoutMillis; connection.readTimeout=timeoutMillis;connection.requestMethod="GET"
             connection.setRequestProperty(provider.authHeader,if(provider.authHeader=="Authorization") "Bearer $key" else key)
@@ -35,6 +40,7 @@ class HttpsModelClient(
             val bytes=connection.inputStream.use {input ->
                 val output=ByteArrayOutputStream();val buffer=ByteArray(8192)
                 while(output.size()<=1024*1024) {
+                    ensureActive()
                     val remaining=((deadline-System.nanoTime())/1_000_000L).toInt()
                     if(remaining<=0)throw SocketTimeoutException()
                     connection.readTimeout=minOf(timeoutMillis,remaining)
@@ -52,10 +58,11 @@ class HttpsModelClient(
                 val ids=(0 until data.length()).mapNotNull {data.optJSONObject(it)?.optString("id")?.takeIf {id -> id.matches(Regex("[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}")) && !id.contains(key)}}.distinct().take(500)
                 ConfigResult.Success(ids)
             }
-        } catch(e:SocketTimeoutException) {Diagnostics.failure("model.http.timeout",e,secrets=listOf(key));ConfigResult.Failure(ConfigError.TIMEOUT)}
-        catch(e:SSLException) {Diagnostics.failure("model.http.tls_failed",e,secrets=listOf(key));ConfigResult.Failure(ConfigError.TLS)}
-        catch(e:org.json.JSONException) {Diagnostics.failure("model.http.format_failed",e,secrets=listOf(key));ConfigResult.Failure(ConfigError.FORMAT)}
-        catch(e:Exception) {Diagnostics.failure("model.http.failed",e,secrets=listOf(key));ConfigResult.Failure(ConfigError.NETWORK)}
-        finally {connection?.disconnect()}
+        } catch(e:CancellationException) {throw e}
+        catch(e:SocketTimeoutException) {ensureActive();Diagnostics.failure("model.http.timeout",e,secrets=listOf(key));ConfigResult.Failure(ConfigError.TIMEOUT)}
+        catch(e:SSLException) {ensureActive();Diagnostics.failure("model.http.tls_failed",e,secrets=listOf(key));ConfigResult.Failure(ConfigError.TLS)}
+        catch(e:org.json.JSONException) {ensureActive();Diagnostics.failure("model.http.format_failed",e,secrets=listOf(key));ConfigResult.Failure(ConfigError.FORMAT)}
+        catch(e:Exception) {ensureActive();Diagnostics.failure("model.http.failed",e,secrets=listOf(key));ConfigResult.Failure(ConfigError.NETWORK)}
+        finally {cancellationWatcher?.cancel();connection?.disconnect()}
     }
 }
