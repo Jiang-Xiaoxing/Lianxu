@@ -18,6 +18,8 @@
 
 ## 格式与限额
 
+新增本地更新说明阅读记录归入全局设置：全部备份及覆盖恢复包含它，新增导入保留接收端记录，单角色包排除。记录不触发联网或推送，页面接入状态见 [本地更新说明后端](LOCAL-UPDATES.md)。
+
 新包为 ZIP，`manifest.json` 声明 `format=lianxu-backup`、`version=2` 和逐文件大小/SHA256；数据为 `backup.json`，资源仅为 `assets/数字.bin`。不解压到外部路径。压缩输入上限 64 MiB（包括尾部数据），展开总量 48 MiB，资料 JSON 8 MiB，单资源 16 MiB，最多 100 个角色、100 个模型配置、200000 条数据记录。写入也遵守这些限制，超限明确拒绝。资源采用分块 SQLite BLOB 读取，避免超过 CursorWindow。
 
 旧 `lianxu-role` v1 包继续按原 32 MiB、文件清单、哈希及来源规则读取；旧包缺少的关联、配置等不能补齐，其原有覆盖语义在预览中说明。旧格式细节见 [ROLE-ARCHIVE.md](ROLE-ARCHIVE.md)。

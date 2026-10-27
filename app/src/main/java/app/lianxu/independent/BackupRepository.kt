@@ -16,7 +16,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
     private val base=RoleArchive.tables.keys.toList()
     private val extra=listOf("processing_policies","memory_batches","memory_operations","memory_batch_reviews","candidate_injections","relationship_jobs")
     private val order=base+extra
-    private val globalKeys=setOf("nickname","compact",MemoryRules.KEY,UserPersona.KEY)
+    private val globalKeys=setOf("nickname","compact",MemoryRules.KEY,UserPersona.KEY,LocalUpdateReceipt.KEY)
     private val legacy=RoleArchiveRepository(store)
     private val repo=ProcessingRepository(store)
     private class Budget {
@@ -77,7 +77,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
     }
     private fun validate(db:SQLiteDatabase,root:JsonObject,files:Map<String,ByteArray>){
         require(root["preferences"].asJsonObject.keySet().all{it in globalKeys})
-        root["preferences"].asJsonObject.entrySet().forEach{(k,v)->require(v.isJsonPrimitive&&v.asJsonPrimitive.isString);when(k){"compact"->require(v.asString in setOf("true","false"));"nickname"->require(v.asString.length in 1..80);MemoryRules.KEY->require(MemoryRules.from(JSONObject(v.asString)).valid());UserPersona.KEY->UserPersona.decode(v.asString)}}
+        root["preferences"].asJsonObject.entrySet().forEach{(k,v)->require(v.isJsonPrimitive&&v.asJsonPrimitive.isString);when(k){"compact"->require(v.asString in setOf("true","false"));"nickname"->require(v.asString.length in 1..80);MemoryRules.KEY->require(MemoryRules.from(JSONObject(v.asString)).valid());UserPersona.KEY->UserPersona.decode(v.asString);LocalUpdateReceipt.KEY->LocalUpdateReceipt.decode(v.asString)}}
         val configs=models(root);require(configs.map{it.config.id}.distinct().size==configs.size)
         root["selections"].asJsonObject.entrySet().forEach{(k,v)->require(ModelPurpose.entries.any{it.key==k}&&(v.asString.isEmpty()||configs.any{it.config.id==v.asString}))}
         val ids=hashSetOf<String>();val used=hashSetOf<String>();var total=0
