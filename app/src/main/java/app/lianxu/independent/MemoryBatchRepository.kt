@@ -33,6 +33,7 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
     }
     /** Explicit local decision only. A valid model receipt is still required to finish this batch. */
     suspend fun keepCurrent(friendId:String,batchId:String,memoryId:String,expectedVersion:Int)=repo.tx{db->
+        repo.store.memorySummary.requireEditable(friendId)
         val work=pendingWork(db,friendId)?:throw ProcessingRejected("STALE_TASK")
         rejectUnless(work.id==batchId&&repo.sourcesMatch(db,work.targets),"SOURCE_CHANGED")
         val m=repo.memory(db,friendId,memoryId)?:throw ProcessingRejected("SOURCE_CHANGED")
@@ -41,7 +42,8 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
         db.insertWithOnConflict("memory_batch_reviews",null,ContentValues().apply{put("batch_id",batchId);put("memory_id",memoryId);put("version",m.version);put("digest",reviewDigest(db,work,m));put("decision","KEEP_CURRENT");put("created",System.currentTimeMillis())},SQLiteDatabase.CONFLICT_REPLACE)
     }
     private fun pendingWork(db:SQLiteDatabase,friendId:String):MemoryWork?=db.rawQuery("SELECT json FROM memory_batches WHERE friend_id=? AND state NOT IN('COMMITTED','ARCHIVED') ORDER BY rowid",arrayOf(friendId)).use{c->var found:MemoryWork?=null;while(found==null&&c.moveToNext()){val w=MemoryWork.from(JSONObject(c.getString(0)));if(repo.sourcesMatch(db,w.targets))found=w};found}
-    suspend fun prepare(friendId:String,targets:List<SourceDialogue>,configStamp:String,existingIds:Set<String>?=null,expectedRulesVersion:Int?=null,associationIds:Set<String> = emptySet(),expectedExistingVersions:Map<String,Int>?=null):MemoryWork=repo.tx{db->
+    suspend fun prepare(friendId:String,targets:List<SourceDialogue>,configStamp:String,existingIds:Set<String>?=null,expectedRulesVersion:Int?=null,associationIds:Set<String> = emptySet(),expectedExistingVersions:Map<String,Int>?=null,taskCurrent:()->Boolean={true}):MemoryWork=repo.tx{db->
+        rejectUnless(taskCurrent(),"CANCELLED")
         rejectUnless(targets.isNotEmpty()&&targets.all{it.source.characterId==friendId})
         rejectUnless(repo.sourcesMatch(db,targets),"SOURCE_CHANGED")
         val id="batch-"+stableDigest(friendId+targets.joinToString{ "${it.source.turnId}@${it.source.version}" }).take(40)
@@ -60,7 +62,8 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
         db.update("memory_batches",ContentValues().apply{put("json",work.json().toString());put("config_stamp",configStamp);put("state","PENDING");putNull("error")},"id=?",arrayOf(id))
         work
     }
-    suspend fun beginAttempt(work:MemoryWork,session:String)=repo.tx{db->
+    suspend fun beginAttempt(work:MemoryWork,session:String,taskCurrent:()->Boolean={true})=repo.tx{db->
+        rejectUnless(taskCurrent(),"CANCELLED")
         rejectUnless(repo.memoryRules(db).second==work.rulesVersion,"SOURCE_CHANGED")
         val count=db.rawQuery("SELECT attempt FROM memory_batches WHERE id=? AND json=? AND state NOT IN('COMMITTED','ARCHIVED')",arrayOf(work.id,work.json().toString())).use{rejectUnless(it.moveToFirst(),"STALE_TASK");it.getInt(0)+1}
         rejectUnless(count<=3,"MANUAL_RETRY")

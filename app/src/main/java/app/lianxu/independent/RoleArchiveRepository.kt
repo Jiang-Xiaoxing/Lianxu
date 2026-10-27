@@ -55,7 +55,7 @@ internal class RoleArchiveRepository(private val store:Store) {
         val archive=RoleArchive.validate(preview.archive.raw.toByteArray());require(archive.digest==preview.archive.digest)
         validate(db,archive)
         val target=preview.target
-        if(target!=null){require(confirmOverwrite){"覆盖需要再次确认"};idle(db,target)
+        if(target!=null){store.memorySummary.requireEditable(target);require(confirmOverwrite){"覆盖需要再次确认"};idle(db,target)
             require(RoleArchive.hash(snapshot(db,target,true).toString().toByteArray())==preview.fingerprint){"本地资料已变化，请重新预览"}
         }
         val root=archive.root()

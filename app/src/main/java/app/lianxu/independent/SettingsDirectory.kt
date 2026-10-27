@@ -93,7 +93,7 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper).testTag("settings-info-page")) {
             InformationRow("storage","本地数据","角色、消息与配置保存在本机应用空间。API Key 加密保存且不参与备份；卸载应用会清除本地数据。")
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
-            InformationRow("model","当前能力","文字聊天使用统一聊天模型；记忆按完整轮次整理，关系评估默认关闭。发送与已启用的整理/评估会请求你配置的服务。搜索AI仍为本地演示，视觉附件未开放；主动回查与当场写记忆可在记忆规则中分别启用，默认关闭。")
+            InformationRow("model","当前能力","文字聊天使用统一聊天模型；记忆按完整轮次总结记忆，关系评估默认关闭。发送与已启用的总结记忆/评估会请求你配置的服务。搜索AI仍为本地演示，视觉附件未开放；主动回查与当场写记忆可在记忆规则中分别启用，默认关闭。")
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
             InformationRow("info","应用版本",version,"settings-version")
         }

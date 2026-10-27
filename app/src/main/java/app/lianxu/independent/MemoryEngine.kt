@@ -1,8 +1,6 @@
 package app.lianxu.independent
 
 import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -11,15 +9,16 @@ import java.util.concurrent.ConcurrentHashMap
 data class ProcessingRun(val success:Boolean,val code:String="",val changed:Boolean=false)
 
 /** Complete-turn batches, per-operation durable idempotency, and an atomic retirement marker. */
-class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingRepository,private val access:ModelAccess,private val client:TextChatClient,private val changed:suspend()->Unit) {
+class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingRepository,private val access:ModelAccess,private val client:TextChatClient,private val changed:suspend()->Unit,private val summaryTimeoutMillis:Long=300_000) {
     companion object {private val session=UUID.randomUUID().toString()}
     private val batches=MemoryBatchRepository(repo)
     private val vectors=MemoryVectorIndex(repo,access)
     private val background=RoleBackgroundJobs(scope)
-    private val mutexes=ConcurrentHashMap<String,Mutex>()
-    private class Active(val job:Job,val lease:ChatAttemptLease,var work:MemoryWork?=null)
+    private val guard=repo.store.memorySummary
+    private class SummaryTimeout:CancellationException("Memory summary deadline")
+    private class Active(val job:Job,val lease:ChatAttemptLease,@Volatile var work:MemoryWork?=null) {lateinit var ticket:MemorySummaryGuard.Ticket}
     private val active=ConcurrentHashMap<String,Active>()
-    fun cancel(friendId:String){background.cancel(friendId);active.remove(friendId)?.let{a->a.lease.cancel();a.job.cancel();a.work?.let{w->scope.launch(NonCancellable){batches.fail(w,"CANCELLED");changed()}}}}
+    fun cancel(friendId:String){background.cancel(friendId);guard.stop(friendId)}
     fun afterChat(friendId:String){background.launch(friendId,Diagnostics.context("memory")){runCatching{repo.maintainCore(friendId);val rules=repo.memoryRules().first;if(repo.recentSources(friendId).size>rules.recentRounds)ensureRoom(friendId);vectors.index(friendId)}}}
     suspend fun recover(){
         batches.recoverAbandoned(session)
@@ -27,33 +26,48 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
         friends.forEach{f->val work=batches.pending(f.id);if(work!=null){val info=status(work.id);if(info.first in setOf("WAITING","PENDING")||info.third=="INTERRUPTED")background.launch(f.id){ensureRoom(f.id,forceOne=true)}}}
     }
     private suspend fun status(id:String):Triple<String,Int,String> = repo.read{db->db.rawQuery("SELECT state,attempt,error FROM memory_batches WHERE id=?",arrayOf(id)).use{if(it.moveToFirst())Triple(it.getString(0),it.getInt(1),if(it.isNull(2))"" else it.getString(2)) else Triple("",0,"")}}
-    suspend fun ensureRoom(friendId:String,input:String="",forceOne:Boolean=false,manualRetry:Boolean=false):ProcessingRun = withContext(Diagnostics.context("memory")){mutexes.getOrPut(friendId){Mutex()}.withLock{
-        val lease=ChatAttemptLease();val job=currentCoroutineContext().job;val running=Active(job,lease);active[friendId]=running
+    suspend fun ensureRoom(friendId:String,input:String="",forceOne:Boolean=false,manualRetry:Boolean=false):ProcessingRun = withContext(Diagnostics.context("memory")){
+        try{withTimeout(summaryTimeoutMillis){runSummary(friendId,input,forceOne,manualRetry)}}catch(e:CancellationException){currentCoroutineContext().ensureActive();if(e is TimeoutCancellationException||e is SummaryTimeout)ProcessingRun(false,"SUMMARY_TIMEOUT")else throw e}
+    }
+    private suspend fun runSummary(friendId:String,input:String,forceOne:Boolean,manualRetry:Boolean):ProcessingRun {
+        val lease=ChatAttemptLease();val job=currentCoroutineContext().job;val running=Active(job,lease)
+        var previous:Active?=null
+        val started=AppMutationGate.read {
+            val ticket=guard.begin(friendId,lease,summaryTimeoutMillis){
+                job.cancel(if(running.ticket.timedOut)SummaryTimeout()else CancellationException("Memory summary stopped"))
+                running.work?.let{w->scope.launch(NonCancellable){batches.fail(w,if(running.ticket.timedOut)"SUMMARY_TIMEOUT" else "CANCELLED");changed()}}
+            }
+            if(ticket==null)false else {running.ticket=ticket;previous=active.put(friendId,running);true}
+        }
+        if(!started)return ProcessingRun(false,"BUSY")
+        fun taskCurrent()=job.isActive&&guard.current(running.ticket)
+        val watchdog=scope.launch{delay(summaryTimeoutMillis);guard.timeout(running.ticket)}
         var didChange=false
-        try{
+        return try{
+            previous?.let{old->old.work?.let{batches.fail(it,if(old.ticket.timedOut)"SUMMARY_TIMEOUT" else "CANCELLED")}}
             repo.maintainCore(friendId)
-            if(batches.reviews(friendId).any{!it.acknowledged})return@withLock ProcessingRun(false,"BATCH_REVIEW_REQUIRED")
+            if(batches.reviews(friendId).any{!it.acknowledged})return ProcessingRun(false,"BATCH_REVIEW_REQUIRED")
             val rulesState=repo.memoryRules();val rules=rulesState.first
             val core=repo.coreBudget(friendId)
             var force=forceOne
             while(true){
                 currentCoroutineContext().ensureActive()
                 var sources=repo.recentSources(friendId)
-                if(!force&&sources.size<=rules.recentRounds)return@withLock ProcessingRun(true,changed=didChange)
-                if(sources.isEmpty())return@withLock ProcessingRun(false,"CAPACITY",didChange)
-                val credentials=access.memoryCredential()?:return@withLock ProcessingRun(false,"NO_MEMORY_MODEL",didChange)
+                if(!force&&sources.size<=rules.recentRounds)return ProcessingRun(true,changed=didChange)
+                if(sources.isEmpty())return ProcessingRun(false,"CAPACITY",didChange)
+                val credentials=access.memoryCredential()?:return ProcessingRun(false,"NO_MEMORY_MODEL",didChange)
                 var existing=repo.read{db->repo.usableMemories(db,friendId).filter{it.category.modern}}
                 val previous=batches.pending(friendId)
                 val oldInfo=previous?.let{status(it.id)}
-                if(!manualRetry&&previous!=null&&previous.rulesVersion!=rulesState.second){batches.fail(previous,"SOURCE_CHANGED");changed();return@withLock ProcessingRun(false,"MANUAL_RETRY",didChange)}
-                if(!manualRetry&&oldInfo!=null&&((oldInfo.first=="FAILED"&&oldInfo.third!="INTERRUPTED")||oldInfo.second>=3))return@withLock ProcessingRun(false,"MANUAL_RETRY",didChange)
+                if(!manualRetry&&previous!=null&&previous.rulesVersion!=rulesState.second){batches.fail(previous,"SOURCE_CHANGED");changed();return ProcessingRun(false,"MANUAL_RETRY",didChange)}
+                if(!manualRetry&&oldInfo!=null&&((oldInfo.first=="FAILED"&&oldInfo.third!="INTERRUPTED")||oldInfo.second>=3))return ProcessingRun(false,"MANUAL_RETRY",didChange)
                 if(oldInfo?.first=="WAITING"){
                     running.work=previous
                     val next=repo.read{db->db.rawQuery("SELECT next_retry FROM memory_batches WHERE id=?",arrayOf(previous.id)).use{if(it.moveToFirst())it.getLong(0) else 0L}}
                     delay((next-System.currentTimeMillis()).coerceIn(0,2000))
                 }
                 sources=previous?.targets?:sources.take(rules.summaryRounds)
-                if(sources.isEmpty())return@withLock ProcessingRun(false,"TURN_TOO_LARGE",didChange)
+                if(sources.isEmpty())return ProcessingRun(false,"TURN_TOO_LARGE",didChange)
                 val summaryQuery=sources.joinToString(" "){it.user.text+" "+it.assistant.text}
                 existing=MemoryRecall.summaryContext(summaryQuery,existing)
                 var auxiliary=repo.recentSources(friendId).filter{r->sources.none{it.source==r.source}}.takeLast(6)
@@ -63,24 +77,26 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
                 fun request():TextChatRequest=makeRequest(friendId,batchId(friendId,sources),sources,existing,applied,output,core,auxiliary)
                 while(inputCost(request())+output>credentials.config.contextTokens&&existing.isNotEmpty())existing=existing.dropLast(1)
                 while(inputCost(request())+output>credentials.config.contextTokens&&auxiliary.isNotEmpty())auxiliary=auxiliary.drop(1)
-                val work=batches.prepare(friendId,sources,credentials.stamp,existing.map{it.id}.toSet(),rulesState.second,MemoryRecall.relationCandidates(summaryQuery,existing).map{it.id}.toSet(),existing.associate{it.id to it.version});running.work=work
+                val work=batches.prepare(friendId,sources,credentials.stamp,existing.map{it.id}.toSet(),rulesState.second,MemoryRecall.relationCandidates(summaryQuery,existing).map{it.id}.toSet(),existing.associate{it.id to it.version}){taskCurrent()};running.work=work
+                currentCoroutineContext().ensureActive()
                 Diagnostics.event("memory.batch.prepared",mapOf("character" to friendId,"batch" to work.id,"sources" to sources.map{mapOf("turn" to it.source.turnId,"version" to it.source.version)},"existing_memories" to existing.map{it.id},"auxiliary_rounds" to auxiliary.size))
-                if(inputCost(request())+output>credentials.config.contextTokens){batches.fail(work,"CAPACITY");changed();return@withLock ProcessingRun(false,"CAPACITY",didChange)}
-                if(manualRetry)repo.tx{db->db.execSQL("UPDATE memory_batches SET attempt=0 WHERE id=?",arrayOf(work.id))}
+                if(inputCost(request())+output>credentials.config.contextTokens){batches.fail(work,"CAPACITY");changed();return ProcessingRun(false,"CAPACITY",didChange)}
+                if(manualRetry)repo.tx{db->rejectUnless(taskCurrent(),"CANCELLED");db.execSQL("UPDATE memory_batches SET attempt=0 WHERE id=? AND json=?",arrayOf(work.id,work.json().toString()))}
                 val already=status(work.id).second
-                if(already>=3)return@withLock ProcessingRun(false,"MANUAL_RETRY",didChange)
+                if(already>=3)return ProcessingRun(false,"MANUAL_RETRY",didChange)
                 var finished=false;var lastCode="INCOMPLETE"
                 for(attempt in (already+1)..3){
-                    currentCoroutineContext().ensureActive();batches.beginAttempt(work,session);changed()
+                    currentCoroutineContext().ensureActive();batches.beginAttempt(work,session){taskCurrent()};changed()
                     try{
                         val accepted=batches.appliedOperations(work)
                         val current=batches.currentContext(work){access.memoryCurrent(credentials.stamp)}
                         val req=makeRequest(friendId,work.id,work.targets,current,accepted,output,core,auxiliary)
                         if(inputCost(req)+output>credentials.config.contextTokens)throw ProcessingRejected("CAPACITY")
-                        consume(work,credentials,req,lease,accepted)
+                        consume(work,credentials,req,lease,accepted){taskCurrent()}
                         finished=true;didChange=true;changed();background.launch(friendId){vectors.index(friendId)};break
                     }catch(e:CancellationException){throw e}
                     catch(e:Exception){
+                        currentCoroutineContext().ensureActive()
                         Diagnostics.failure("memory.batch.attempt_failed",e,mapOf("character" to friendId,"batch" to work.id,"attempt" to attempt))
                         lastCode=if(e is ProcessingRejected)e.code else "FORMAT"
                         val retry=attempt<3&&lastCode !in setOf("BATCH_REVIEW_REQUIRED","SOURCE_CHANGED","STALE_TASK","CANCELLED","CAPACITY","MODEL_UNAUTHORIZED","MODEL_FORBIDDEN","MODEL_TLS","MODEL_INVALID_CONFIG")
@@ -90,24 +106,23 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
                         delay(backoff)
                     }
                 }
-                if(!finished)return@withLock ProcessingRun(false,lastCode,didChange)
+                if(!finished)return ProcessingRun(false,lastCode,didChange)
                 force=false
-                if(forceOne)return@withLock ProcessingRun(true,changed=true)
+                if(forceOne)return ProcessingRun(true,changed=true)
             }
             @Suppress("UNREACHABLE_CODE") ProcessingRun(false,"CAPACITY",didChange)
-        }catch(e:CancellationException){Diagnostics.event("memory.batch.cancelled",mapOf("character" to friendId,"batch" to running.work?.id));withContext(NonCancellable){running.work?.let{batches.fail(it,"CANCELLED")};changed()};throw e}
+        }catch(e:CancellationException){if(e is TimeoutCancellationException)guard.timeout(running.ticket);Diagnostics.event("memory.batch.cancelled",mapOf("character" to friendId,"batch" to running.work?.id));withContext(NonCancellable){running.work?.let{batches.fail(it,if(running.ticket.timedOut)"SUMMARY_TIMEOUT" else "CANCELLED")};changed()};if(running.ticket.timedOut)ProcessingRun(false,"SUMMARY_TIMEOUT",didChange)else throw e}
         catch(e:Exception){Diagnostics.failure("memory.batch.failed",e,mapOf("character" to friendId,"batch" to running.work?.id));val code=if(e is ProcessingRejected)e.code else "FORMAT";withContext(NonCancellable){running.work?.let{batches.fail(it,code)};changed()};ProcessingRun(false,code,didChange)}
-        finally{lease.cancel();if(active[friendId]===running)active.remove(friendId)}
-    }
+        finally{watchdog.cancel();guard.finish(running.ticket);active.remove(friendId,running)}
     }
     /** Sequential writes and bounded back-pressure preserve valid lines if transport ends early. */
-    private suspend fun consume(work:MemoryWork,credentials:ModelCredential,request:TextChatRequest,lease:ChatAttemptLease,accepted:List<JSONObject>){
+    private suspend fun consume(work:MemoryWork,credentials:ModelCredential,request:TextChatRequest,lease:ChatAttemptLease,accepted:List<JSONObject>,taskCurrent:()->Boolean){
         val dropped=linkedMapOf<String,Int>();val buffer=StringBuilder();val received=mutableSetOf<String>();val allKeys=accepted.map{it.getString("id")}.toMutableSet();var receipt:JSONObject?=null
         suspend fun operation(raw:JSONObject){
             val op=MemoryNumberedReferences(work.targets,work.existingVersions.keys).normalize(raw)
             currentCoroutineContext().ensureActive();val key=op.getString("id");rejectUnless(received.add(key)&&(key in allKeys||allKeys.size<64))
             rejectUnless(!op.toString().contains(credentials.key)&&!Regex("(?i)</?think").containsMatchIn(op.toString()))
-            batches.apply(work,op){lease.isActive()&&access.memoryCurrent(credentials.stamp)};allKeys.add(key);changed()
+            batches.apply(work,op){taskCurrent()&&lease.isActive()&&access.memoryCurrent(credentials.stamp)};allKeys.add(key);changed()
         }
         suspend fun rejected(e:Exception){
             if(e is CancellationException)throw e
@@ -128,8 +143,10 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
             }
         }
         suspend fun record(line:String){
+            rejectUnless(taskCurrent(),"CANCELLED")
             try{recordUnsafe(line)}catch(e:Exception){rejected(e)}
         }
+        currentCoroutineContext().ensureActive()
         val response=client.stream(credentials.config,credentials.key,request){chunk->
             buffer.append(chunk);rejectUnless(buffer.length<=256*1024)
             while(true){val end=buffer.indexOf("\n");if(end<0)break;val line=buffer.substring(0,end).removeSuffix("\r");buffer.delete(0,end+1);record(line)}
@@ -140,12 +157,12 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
         rejectUnless(dropped.isEmpty(),"FORMAT")
         val end=receipt?:throw ProcessingRejected("INCOMPLETE")
         rejectUnless(end.opt("complete")==true&&allKeys.size<=64,"INCOMPLETE")
-        rejectUnless(batches.complete(work,allKeys,end.getInt("operation_count"),end.getString("end_marker"),{access.memoryCurrent(credentials.stamp)},lease),"CANCELLED")
+        rejectUnless(batches.complete(work,allKeys,end.getInt("operation_count"),end.getString("end_marker"),{taskCurrent()&&access.memoryCurrent(credentials.stamp)},lease),"CANCELLED")
     }
     private fun batchId(friendId:String,rows:List<SourceDialogue>)="batch-"+stableDigest(friendId+rows.joinToString{"${it.source.turnId}@${it.source.version}"}).take(40)
     private fun inputCost(request:TextChatRequest)=request.messages.sumOf{ConservativeTokens.tokens(it.content)}
     private fun makeRequest(friendId:String,id:String,targets:List<SourceDialogue>,existing:List<StoredMemory>,applied:List<JSONObject>,output:Int,core:CoreBudgetState,auxiliary:List<SourceDialogue>):TextChatRequest {
-        val instruction="""你负责整理本角色的长期记忆，只输出逐行JSON（NDJSON），每行完整独立，不输出思考、Markdown或工具调用。
+        val instruction="""你负责总结本角色的长期记忆，只输出逐行JSON（NDJSON），每行完整独立，不输出思考、Markdown或工具调用。
 目标原话是唯一写入证据；辅助原话和已有记忆不可伪装为新证据。用户画像必须引用用户原话。未知更新目标不可改成新增。不要覆盖人工或锁定内容，程序会另存冲突。
 core_maintenance 是核心维护目标，不是摘要长度。优先保留精简稳定事实；自动且未锁定的过量核心可降为普通记忆，不能删除人工/锁定核心或伪造证据来压缩。保护内容超目标时交由用户选择，不能静默截断。
 内容分类仅 STATE_FACT(现状与事实), PREFERENCE_BOUNDARY(偏好与边界), EXPERIENCE_MEMORY(经历与回忆), COMMITMENT_OPEN(约定与未竟事项)。每项独立提供 about=USER/CHARACTER/BOTH，BOTH仍仅当前角色会话，不是跨角色共享。tags为自定义主题字符串数组，最多12个，每个24字。分类不是关于谁，也不是核心/锁定/人工/待确认状态；这些状态正交。关于USER必须有用户原话支持。未归入当前四分类的历史记录不作为更新目标，不推断其所属类别。

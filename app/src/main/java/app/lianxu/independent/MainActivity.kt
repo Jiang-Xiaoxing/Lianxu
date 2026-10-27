@@ -139,7 +139,7 @@ class MainActivity:ComponentActivity(){
             HorizontalDivider(color=Line)
             Text("角色提示词",style=MaterialTheme.typography.titleSmall)
             Text(friend.prompt.ifBlank{"温柔、自然地回应，尊重用户。不要求披露内部思考。"},style=MaterialTheme.typography.bodyMedium,color=Muted)
-            Text("文字消息、记忆整理和关系评估分别使用统一设置的用途模型；本角色的原话与状态独立保存。",style=MaterialTheme.typography.bodySmall,color=Muted)
+            Text("文字消息、总结记忆和关系评估分别使用统一设置的用途模型；本角色的原话与状态独立保存。",style=MaterialTheme.typography.bodySmall,color=Muted)
             TextButton(onClick={vm.open("role-prompts",friend.id)},modifier=Modifier.heightIn(min=UiSpace.action).testTag("role-prompts-open")){Text("表达与提示词")}
             TextButton(onClick={vm.open("processing-role",friend.id)},modifier=Modifier.heightIn(min=UiSpace.action).testTag("role-processing-open")){Text("记忆与关系")}
             PrimaryAction("发消息",modifier=Modifier.align(Alignment.End)){vm.open("chat",friend.id)}

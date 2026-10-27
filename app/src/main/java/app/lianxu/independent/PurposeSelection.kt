@@ -38,6 +38,6 @@ import androidx.compose.ui.unit.dp
                 if(index<ModelPurpose.entries.lastIndex)HorizontalDivider(Modifier.padding(start=64.dp,end=16.dp),color=Line)
             }
         }
-        Text("选择用途只保存设置，不发出请求。发送文字、主动整理和已开启的后台评估会使用对应模型；视觉附件尚未接入。",style=MaterialTheme.typography.bodySmall,color=Muted)
+        Text("选择用途只保存设置，不发出请求。发送文字、主动总结记忆和已开启的后台评估会使用对应模型；视觉附件尚未接入。",style=MaterialTheme.typography.bodySmall,color=Muted)
     }
 }

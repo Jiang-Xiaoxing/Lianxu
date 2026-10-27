@@ -29,7 +29,7 @@ class ProcessingRepository(val store:Store) {
         require(p.valid());val old=policy(db,friendId)
         db.insertWithOnConflict("processing_policies",null,ContentValues().apply{put("friend_id",friendId);put("json",p.json().toString());put("version",old.second+1)},SQLiteDatabase.CONFLICT_REPLACE)
     }
-    suspend fun savePolicy(friendId:String,p:ProcessingPolicy)=tx{savePolicy(it,friendId,p)}
+    suspend fun savePolicy(friendId:String,p:ProcessingPolicy)=tx{db->if(policy(db,friendId).first.coreGoal!=p.coreGoal)store.memorySummary.requireEditable(friendId);savePolicy(db,friendId,p)}
     internal fun friend(db:SQLiteDatabase,id:String)=db.rawQuery("SELECT id,name,bio,prompt,tone FROM friends WHERE id=?",arrayOf(id)).use{c->check(c.moveToFirst());Friend(c.getString(0),c.getString(1),c.getString(2),c.getString(3),c.getInt(4))}
     internal fun characterStamp(db:SQLiteDatabase,id:String):String {
         val raw=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(RolePromptStore.key(id))).use{if(it.moveToFirst())it.getString(0) else ""}
@@ -65,6 +65,7 @@ class ProcessingRepository(val store:Store) {
         Diagnostics.event("memory.write.staged",mapOf("character" to m.friendId,"memory" to m.id,"version" to m.version,"text" to m.text,"valid" to m.valid,"manual" to m.manual,"locked" to m.locked))
     }
     suspend fun manualSave(friendId:String,id:String?,text:String,category:MemoryCategory,core:Boolean,locked:Boolean,about:MemoryAbout?=null,tags:List<String> = emptyList(),dueDate:String?=null,life:MemoryLife?=null,birthday:String?=null)=tx{db->
+        store.memorySummary.requireEditable(friendId)
         require(text.isNotBlank()&&text.length<=8000);val old=id?.let{memory(db,friendId,it)?:error("Unknown memory")}
         require(!category.modern||about!=null);require(old==null||old.category.modern==category.modern){"旧记录本轮不重分类"}
         val due=if(category.modern)MemoryFacets.dueDate(dueDate.orEmpty()) else null
@@ -72,12 +73,13 @@ class ProcessingRepository(val store:Store) {
         val value=StoredMemory(id?:"manual-${UUID.randomUUID()}",friendId,category,text,life?:old?.life?:MemoryLife.ACTIVE,core,locked,true,(old?.version?:0)+1,about=about,tags=if(category.modern)MemoryFacets.tags(tags) else emptyList(),dueExpression=due,dueDate=due,dateType=if(birthday==null)old?.dateType else if(annual!=null)"birthday" else null,annualMonthDay=if(birthday==null)old?.annualMonthDay else annual,eventDate=if(birthday==null)old?.eventDate else null,dateExpression=if(birthday==null)old?.dateExpression else annual)
         saveMemory(db,value);value
     }
-    suspend fun setLock(friendId:String,id:String,locked:Boolean)=tx{db->val old=memory(db,friendId,id)?:error("Unknown memory");saveMemory(db,old.copy(locked=locked,version=old.version+1))}
+    suspend fun setLock(friendId:String,id:String,locked:Boolean)=tx{db->store.memorySummary.requireEditable(friendId);val old=memory(db,friendId,id)?:error("Unknown memory");saveMemory(db,old.copy(locked=locked,version=old.version+1))}
     suspend fun history(friendId:String,id:String)=read{db->
         check(memory(db,friendId,id)!=null)
         db.rawQuery("SELECT json FROM memory_history WHERE memory_id=? ORDER BY version DESC",arrayOf(id)).use{c->buildList{while(c.moveToNext())add(StoredMemory.from(JSONObject(c.getString(0))))}}
     }
     suspend fun restore(friendId:String,id:String,version:Int)=tx{db->
+        store.memorySummary.requireEditable(friendId)
         val current=memory(db,friendId,id)?:error("Unknown memory")
         val old=db.rawQuery("SELECT json FROM memory_history WHERE memory_id=? AND version=?",arrayOf(id,version.toString())).use{check(it.moveToFirst());StoredMemory.from(JSONObject(it.getString(0)))}
         check(old.friendId==friendId);saveMemory(db,old.copy(version=current.version+1,manual=true,locked=current.locked,valid=true,evidence=emptyList()))
@@ -115,6 +117,7 @@ class ProcessingRepository(val store:Store) {
         References(memory.first+listOfNotNull(relation),memory.second,stamp)
     }
     suspend fun resolveCandidate(friendId:String,id:String,accept:Boolean,expectedTargetVersion:Int?=null)=tx{db->
+        store.memorySummary.requireEditable(friendId)
         Diagnostics.event("memory.candidate.resolve",mapOf("character" to friendId,"candidate" to id,"accept" to accept,"expected_version" to expectedTargetVersion))
         val value=candidates(db,friendId).firstOrNull{it.id==id}?:error("Unknown candidate")
         if(accept){

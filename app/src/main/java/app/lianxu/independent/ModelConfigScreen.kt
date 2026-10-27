@@ -173,14 +173,14 @@ internal fun providerMatches(p:ProviderPreset,query:String):Boolean {
                         ConfigField(base,{base=it.take(500);budgets=budgets.forModel(provider,base,model);key="";reveal=false;changed()},"服务地址（HTTPS）","config-url",keyboard=KeyboardType.Uri)
                         ConfigField(budgets.context,{budgets=budgets.manual(context=it.filter(Char::isDigit).take(7));changed()},"上下文容量（按模型文档）","config-context",keyboard=KeyboardType.Number)
                         ConfigField(budgets.chat,{budgets=budgets.manual(chat=it.filter(Char::isDigit).take(6));changed()},"聊天生成上限 Token","config-output",keyboard=KeyboardType.Number)
-                        ConfigField(budgets.memory,{budgets=budgets.manual(memory=it.filter(Char::isDigit).take(6));changed()},"记忆整理生成上限 Token","config-memory-output",keyboard=KeyboardType.Number)
-                        Text("整理填 0 时沿用聊天上限。生成上限不代表每次都会输出这么长；推理模型的额度还包括推理。",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
+                        ConfigField(budgets.memory,{budgets=budgets.manual(memory=it.filter(Char::isDigit).take(6));changed()},"总结记忆生成上限 Token","config-memory-output",keyboard=KeyboardType.Number)
+                        Text("总结记忆填 0 时沿用聊天上限。生成上限不代表每次都会输出这么长；推理模型的额度还包括推理。",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
                         val known=ModelTokenPolicy.capability(provider,base,model)
                         if(known!=null){
                             Text("已核对：上下文 ${known.context}，生成最多 ${known.maxOutput}。"+(if(known.reasoning)"当前模型默认推理，推理与正文共用额度。"else"当前模型为非推理模型。"),Modifier.testTag("config-budget-known"),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
                             TextButton(onClick={budgets=budgets.apply(provider,base,model).copy(automatic=false);changed()},enabled=!state.busy,modifier=Modifier.testTag("config-budget-apply")){Text("使用模型建议（仅填入草稿）")}
                         }else Text("尚未核对该模型容量，请按服务文档填写；保留手动输入。",Modifier.testTag("config-budget-unknown"),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
-                        Text("本地估算含安全余量，不会自动裁掉未整理原话；顶部保存后才更新配置。",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
+                        Text("本地估算含安全余量，不会自动裁掉未总结原话；顶部保存后才更新配置。",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
 
                         Text("OpenAI 兼容 · "+(if(preset.authHeader=="api-key")"api-key 鉴权" else "Bearer 鉴权"),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
                         Text(preset.hint,style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
