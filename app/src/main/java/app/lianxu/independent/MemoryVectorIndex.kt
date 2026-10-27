@@ -21,7 +21,7 @@ internal class HttpsMemoryEmbeddingClient(private val factory:HttpsConnectionFac
     override suspend fun embed(credential:ModelCredential,texts:List<String>,timeout:Int):List<DoubleArray> = withContext(Dispatchers.IO+Diagnostics.context("embedding")){
         Diagnostics.registerSecret(credential.key);val start=System.nanoTime()
         Diagnostics.event("embedding.http.request",mapOf("endpoint" to credential.config.baseUrl,"provider" to credential.config.providerId,"model" to credential.config.modelId,"input_count" to texts.size,"input_chars" to texts.map{it.length},"timeout_ms" to timeout),secrets=listOf(credential.key))
-        require(ConfigRules.validate(credential.config,credential.key)==null&&texts.size in 1..16)
+        require(ConfigRules.validate(credential.config,credential.key)==null&&texts.size in 1..2048)
         val c=try{factory.open(URL(credential.config.baseUrl.trimEnd('/')+"/embeddings"))}catch(e:Exception){Diagnostics.failure("embedding.http.open_failed",e,secrets=listOf(credential.key));throw e}
         try{
             c.instanceFollowRedirects=false;c.connectTimeout=timeout;c.readTimeout=timeout;c.requestMethod="POST";c.doOutput=true
@@ -31,7 +31,7 @@ internal class HttpsMemoryEmbeddingClient(private val factory:HttpsConnectionFac
             require(bytes.size<=256*1024);c.setFixedLengthStreamingMode(bytes.size);c.outputStream.use{it.write(bytes)};bytes.fill(0)
             val status=c.responseCode;Diagnostics.event("embedding.http.status",mapOf("status" to status),secrets=listOf(credential.key))
             require(status in 200..299){"embedding_response"}
-            val raw=c.inputStream.use{input->val out=java.io.ByteArrayOutputStream();val buffer=ByteArray(8192);while(out.size()<=2*1024*1024){val n=input.read(buffer,0,minOf(buffer.size,2*1024*1024+1-out.size()));if(n<0)break;out.write(buffer,0,n)};out.toByteArray()};require(raw.size<=2*1024*1024)
+            val raw=c.inputStream.use{input->val out=java.io.ByteArrayOutputStream();val buffer=ByteArray(8192);while(out.size()<=16*1024*1024){val n=input.read(buffer,0,minOf(buffer.size,16*1024*1024+1-out.size()));if(n<0)break;out.write(buffer,0,n)};out.toByteArray()};require(raw.size<=16*1024*1024)
             Diagnostics.event("embedding.http.response",mapOf("response_bytes" to raw.size),elapsed=(System.nanoTime()-start)/1_000_000,secrets=listOf(credential.key))
             val rows=JSONObject(String(raw,Charsets.UTF_8)).getJSONArray("data");require(rows.length()==texts.size)
             val indexed=(0 until rows.length()).map{rows.getJSONObject(it)}.associateBy{it.getInt("index")};require(indexed.keys==(texts.indices).toSet())
@@ -46,7 +46,37 @@ internal class MemoryVectorIndex(private val repo:ProcessingRepository,private v
     private fun key(friend:String)="memory-vectors-v1:$friend"
     private fun fingerprint(m:StoredMemory)=stableDigest(m.id+"@"+m.version+":"+m.text+":"+m.tags.joinToString(" ")+":"+m.eventDate.orEmpty())
     private fun text(m:StoredMemory)=(m.text+" "+m.tags.joinToString(" ")+" "+m.eventDate.orEmpty()).take(8000)
+    internal fun semanticText(m:StoredMemory)=text(m)
     private fun rows(db:SQLiteDatabase,friend:String):JSONObject=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(key(friend))).use{if(it.moveToFirst())runCatching{JSONObject(it.getString(0))}.getOrDefault(JSONObject()) else JSONObject()}
+    /** One document pool supplies both new/old and new/new comparisons. No query embedding. */
+    internal suspend fun semanticVectors(friend:String,facts:List<SemanticFact>,credential:ModelCredential,taskCurrent:()->Boolean):Map<String,DoubleArray>{
+        val cached=repo.read{db->val cache=rows(db,friend);facts.filter{it.operation==null}.mapNotNull{f->
+            val row=cache.optJSONObject(f.memory.id)?:return@mapNotNull null
+            if(row.optString("model")!=credential.stamp||row.optString("fingerprint")!=fingerprint(f.memory))return@mapNotNull null
+            decode(row.optJSONArray("vector"))?.let{text(f.memory) to it}
+        }.toMap().toMutableMap()}
+        val missing=facts.map{ text(it.memory) }.distinct().filter{it !in cached}
+        val groups=MemoryEmbeddingLimits.of(credential.config).batches(credential.config,missing)
+        for(batch in groups){
+            rejectUnless(taskCurrent()&&access.current(ModelPurpose.EMBEDDING,credential.stamp),"CANCELLED")
+            val vectors=client.embed(credential,batch,5000)
+            require(vectors.size==batch.size&&vectors.all(::valid)&&vectors.map{it.size}.distinct().size==1)
+            batch.zip(vectors).forEach{(input,vector)->cached[input]=vector}
+        }
+        rejectUnless(taskCurrent()&&access.current(ModelPurpose.EMBEDDING,credential.stamp),"CANCELLED")
+        require(cached.values.map{it.size}.distinct().size<=1)
+        Diagnostics.event("memory.semantic.vectors",mapOf("character" to friend,"documents" to facts.size,"missing_texts" to missing.size,"embedding_calls" to groups.size))
+        return facts.associate{it.ref to cached.getValue(text(it.memory))}
+    }
+    internal suspend fun rememberSemantic(friend:String,snapshots:List<StoredMemory>,byText:Map<String,DoubleArray>,credential:ModelCredential,taskCurrent:()->Boolean)=repo.tx{db->
+        if(!taskCurrent()||!access.current(ModelPurpose.EMBEDDING,credential.stamp))return@tx
+        val latest=repo.usableMemories(db,friend).associateBy{it.id};val cache=rows(db,friend)
+        snapshots.forEach{m->val vector=byText[text(m)]
+            if(vector!=null&&latest[m.id]?.let(::fingerprint)==fingerprint(m))cache.put(m.id,JSONObject().put("model",credential.stamp).put("fingerprint",fingerprint(m)).put("vector",JSONArray(vector.toList())))
+        }
+        cache.keys().asSequence().filter{it !in latest}.toList().forEach{cache.remove(it)}
+        db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",key(friend));put("value",cache.toString())},SQLiteDatabase.CONFLICT_REPLACE)
+    }
     suspend fun index(friend:String){
         try{withTimeoutOrNull(30000){mutexes.getOrPut(friend){Mutex()}.withLock{
             val credentials=access.credential(ModelPurpose.EMBEDDING)?:run{Diagnostics.event("embedding.index.skipped",mapOf("character" to friend,"reason" to "not_configured"));return@withLock}
