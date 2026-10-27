@@ -1,7 +1,7 @@
 package app.lianxu.independent
 
 import androidx.test.platform.app.InstrumentationRegistry
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.*
@@ -78,5 +78,23 @@ class MemoryIntegrityTest {
         repo.tx{it.execSQL("CREATE TEMP TRIGGER integrity_failure BEFORE UPDATE ON memory_current BEGIN SELECT RAISE(ABORT,'synthetic rollback'); END")}
         assertTrue(runCatching{changes.confirm(preview)}.isFailure);repo.tx{it.execSQL("DROP TRIGGER integrity_failure")}
         assertEquals(s,repo.sources("a").single());assertEquals(1,repo.history("a",id).size);assertTrue(repo.memories("a").single().valid)
+    }
+    @Test fun retryReceiptDoesNotResendOldDerivedBodyAsCurrentContext()=runBlocking {
+        val s=source();val b=MemoryBatchRepository(repo);val w=work(b,s);val id=b.apply(w,op(s,text="old-derived-sentinel"));b.fail(w,"INTERRUPTED")
+        repo.manualSave("a",id,"current-tea",MemoryCategory.PREFERENCE_BOUNDARY,false,true,MemoryAbout.USER)
+        b.keepCurrent("a",w.id,id,2)
+        val vault=ModelVault(context,"integrity-vault-${System.nanoTime()}");val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+        try {
+            val config=ModelConfig("synthetic","Synthetic","custom","https://example.invalid/v1","fake",64000,2048)
+            vault.save(config,"synthetic-only");vault.setPurpose(ModelPurpose.MEMORY,config.id);var called=false
+            val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
+                called=true;assertFalse(request.messages.any{"old-derived-sentinel" in it.content})
+                val data=JSONObject(request.messages.last().content);val saved=data.getJSONArray("already_saved_operations")
+                assertEquals(1,saved.length());assertEquals(setOf("id"),saved.getJSONObject(0).keys().asSequence().toSet())
+                return TextChatResult.Success(JSONObject().put("batch_id",data.getString("batch_id")).put("character_id","a").put("operations",JSONArray()).put("operation_count",1).put("complete",true).put("end_marker",data.getString("batch_id")).toString())
+            }}
+            assertTrue(MemoryEngine(scope,repo,ModelAccess(vault),client,{}).ensureRoom("a",forceOne=true,manualRetry=true).success)
+            assertTrue(called);assertEquals("current-tea",repo.memories("a").single().text)
+        }finally{scope.cancel();vault.list().forEach{vault.delete(it.id)}}
     }
 }
