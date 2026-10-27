@@ -145,7 +145,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
         val written=mutableMapOf<String,Int>()
         val resolved=mutableMapOf<String,ProcessingRepository.Candidate>()
         for(i in 0 until stages.length()){
-            val op=stages.getJSONObject(i);rejectUnless(source.source.version==op.getLong("source_version"),"SOURCE_CHANGED");val target=if(op.isNull("target_id"))null else op.getString("target_id");val old=target?.let{repo.memory(db,turn.friendId,it)}
+            val op=stages.getJSONObject(i);rejectUnless(source.source.version==op.getLong("source_version"),"SOURCE_CHANGED");val target=if(op.isNull("target_id"))null else op.getString("target_id");var old=target?.let{repo.memory(db,turn.friendId,it)}
             val candidate=if(op.isNull("candidate"))null else (resolved[op.getString("candidate")]?:repo.candidates(db,turn.friendId).firstOrNull{it.id==op.getString("candidate")&&it.valid})?:throw ProcessingRejected("SOURCE_CHANGED")
             if(target!=null&&old!=null)rejectUnless(old.version==(written[target]?:op.getInt("target_version")),"SOURCE_CHANGED")
             if(target!=null&&old==null)rejectUnless(candidate!=null&&candidate.targetId==null,"SOURCE_CHANGED")
@@ -159,11 +159,16 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
             val id=old?.id?:candidate?.proposed?.id?:"tool-"+stableDigest(turn.id+op.getString("digest")).take(40)
             val evidence=MemoryEvidence(source.source,"user",input,input,source.user.created,source.zone)
             val tags=op.optJSONArray("tags")?.let{a->MemoryFacets.tags((0 until a.length()).map{a.getString(it)})}?:old?.tags?:emptyList()
-            val value=StoredMemory(id,turn.friendId,category,content,when(kind){"cancel"->MemoryLife.CANCELLED;"complete"->MemoryLife.COMPLETED;"retract"->MemoryLife.RETRACTED;else->old?.life?:MemoryLife.ACTIVE},old?.core?:false,old?.locked?:false,false,(old?.version?:0)+1,true,expression,eventDate,((old?.evidence?:emptyList())+evidence).distinct(),about,tags,old?.dueExpression,old?.dueDate,old?.expiresAt,dateType,if(birthday!=null)birthday.second else if(!op.has("date_type")&&!op.has("time_text"))old?.annualMonthDay else null)
+            var value=StoredMemory(id,turn.friendId,category,content,when(kind){"cancel"->MemoryLife.CANCELLED;"complete"->MemoryLife.COMPLETED;"retract"->MemoryLife.RETRACTED;else->old?.life?:MemoryLife.ACTIVE},old?.core?:false,old?.locked?:false,false,(old?.version?:0)+1,true,expression,eventDate,MemoryEvidenceRules.merge(old?.evidence.orEmpty(),listOf(evidence)),about,tags,old?.dueExpression,old?.dueDate,old?.expiresAt,dateType,if(birthday!=null)birthday.second else if(!op.has("date_type")&&!op.has("time_text"))old?.annualMonthDay else null)
+            if(kind=="add"&&old==null&&candidate==null){
+                old=repo.memories(db,turn.friendId).firstOrNull{it.valid&&MemoryEvidenceRules.sameFact(it,value)&&MemoryEvidenceRules.overlaps(it.evidence,listOf(evidence))}
+                old?.let{value=value.copy(id=it.id,version=it.version+1,evidence=MemoryEvidenceRules.merge(it.evidence,listOf(evidence)))}
+            }
+            if(candidate==null&&op.optString("doubt").isBlank()&&old!=null&&MemoryEvidenceRules.repeated(old,value,listOf(evidence))){written[old.id]=old.version;continue}
             if(old?.locked==true||old?.manual==true||op.optString("doubt").isNotBlank()){
                 repo.candidate(db,turn.friendId,target,value,"本轮澄清建议，人工或锁定内容保持保护；${op.optString("doubt")}","tool-candidate-"+stableDigest(turn.id+op.getString("digest")).take(40))
             }else{
-                repo.saveMemory(db,value);written[id]=value.version
+                repo.saveMemory(db,value);written[value.id]=value.version
                 if(candidate!=null){db.update("memory_candidates",ContentValues().apply{put("resolved",1)},"id=? AND friend_id=?",arrayOf(candidate.id,turn.friendId));resolved[candidate.id]=candidate}
             }
         }

@@ -79,4 +79,29 @@ class MemoryVectorTest {
             assertEquals(1,s.calls.get())
         }
     }
+    @Test fun lateIndexResultAfterCorrectionCannotBecomeCurrentCache()=runBlocking{
+        val old=memory("old-coffee-sentinel");vault.setPurpose(ModelPurpose.EMBEDDING,config.id)
+        val started=CompletableDeferred<Unit>();val release=CompletableDeferred<Unit>();val fake=Fake()
+        fake.action={texts->started.complete(Unit);release.await();texts.map{doubleArrayOf(1.0,0.0)}}
+        val index=MemoryVectorIndex(repo,ModelAccess(vault),fake);val job=launch(Dispatchers.IO){index.index("a")}
+        try{withTimeout(2000){started.await()};repo.manualSave("a",old.id,"current-tea",old.category,false,true,MemoryAbout.USER)}finally{release.complete(Unit);job.join()}
+        val calls=fake.requests.size;assertTrue(index.scores("a","query").isEmpty());assertEquals(calls,fake.requests.size)
+        assertEquals("current-tea",repo.memories("a").single().text)
+    }
+    @Test fun correctionInvalidatesDerivedFactsButPreservesUnrelatedGraphAndHistory()=runBlocking{
+        suspend fun source(input:String):SourceDialogue{val l=ChatLedger(store);val t=l.begin("a",input,config.id);assertTrue(l.finish(t.id,t.attempt,"synthetic reply"));return repo.sources("a").last()}
+        val old=source("old-coffee-sentinel original evidence");val fresh=source("unrelated garden original evidence")
+        fun fact(id:String,text:String,s:SourceDialogue)=StoredMemory(id,"a",MemoryCategory.STATE_FACT,text,evidence=listOf(MemoryEvidence(s.source,"user",s.user.text,s.user.text,s.user.created,s.zone)),about=MemoryAbout.USER,tags=listOf("query"))
+        val a=fact("old","old-coffee-sentinel",old);val derived=fact("derived","derived-old-coffee-sentinel",old)
+        val u=fact("unrelated","unrelated garden",fresh);val v=fact("unrelated-two","unrelated walk",fresh)
+        fun edge(s:StoredMemory,t:StoredMemory)=JSONObject().put("character","a").put("source",s.id).put("source_version",s.version).put("target",t.id).put("target_version",t.version).put("kind","explicit_reference").put("reason","synthetic explicit reference").put("quote",s.evidence.single().quote).put("target_quote",t.text).put("batch","synthetic")
+        repo.tx{db->listOf(a,derived,u,v).forEach{repo.saveMemory(db,it)};MemoryReferenceHistory.snapshot(db,"a",fresh.user.id,listOf(a.id,derived.id,u.id,v.id));db.execSQL("INSERT OR REPLACE INTO preferences(key,value) VALUES(?,?)",arrayOf(MemoryAssociations.key("a"),org.json.JSONArray().put(edge(a,u)).put(edge(u,v)).toString()))}
+        vault.setPurpose(ModelPurpose.EMBEDDING,config.id);val fake=Fake();val index=MemoryVectorIndex(repo,ModelAccess(vault),fake);index.index("a")
+        val changes=SourceChanges(repo);changes.confirm(changes.preview("a",old.source.turnId,"user","corrected current source",false))
+        val scores=index.scores("a","query");assertEquals(setOf("${u.id}@1","${v.id}@1"),scores.keys)
+        val refs=repo.references("a","query",999,scores);val wire=(CompanionPrompt.build(Friend("a","A","Synthetic"),RolePrompts(),emptyList(),"query",refs.valid,refs.pending) as PromptBuild.Ready).request.messages
+        assertFalse(wire.any{"old-coffee-sentinel" in it.content});assertTrue(wire.any{"unrelated garden" in it.content})
+        assertEquals(a,repo.history("a",a.id).last());assertEquals(u,repo.memories("a").first{it.id==u.id})
+        repo.read{db->val graph=MemoryAssociations(repo);assertEquals(2,graph.read(db,"a").size);assertEquals(1,graph.verified(db,"a",repo.usableMemories(db,"a")).size)}
+    }
 }
