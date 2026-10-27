@@ -50,13 +50,13 @@ internal fun providerMatches(p:ProviderPreset,query:String):Boolean {
     var name by remember {mutableStateOf("")};var provider by remember {mutableStateOf("silicon-cn")}
     var base by remember {mutableStateOf("")};var model by remember {mutableStateOf("")}
     var key by remember {mutableStateOf("")};var reveal by remember {mutableStateOf(false)}
-    var capacity by remember {mutableStateOf("16384")};var output by remember {mutableStateOf("2048")}
+    var budgets by remember {mutableStateOf(ModelBudgetDraft())}
     var query by remember {mutableStateOf("")};var advanced by remember {mutableStateOf(false)}
     var modelQuery by remember {mutableStateOf("")}
     var deleting by remember {mutableStateOf<ModelConfig?>(null)}
     val activity=LocalActivity.current ?: return
     val lifecycle=LocalLifecycleOwner.current.lifecycle
-    fun draft()=ModelConfig(draftId,name.trim(),provider,base.trim().trimEnd('/'),model.trim(),capacity.toIntOrNull()?:0,output.toIntOrNull()?:0)
+    fun draft()=ModelConfig(draftId,name.trim(),provider,base.trim().trimEnd('/'),model.trim(),budgets.context.toIntOrNull()?:0,budgets.chat.toIntOrNull()?:0,budgets.memory.toIntOrNull()?:-1)
     fun back(){
         if(state.saving)return
         state.clearResult()
@@ -64,9 +64,10 @@ internal fun providerMatches(p:ProviderPreset,query:String):Boolean {
         key="";reveal=false
         if(screen=="edit")screen="overview" else onBack()
     }
-    fun add(){if(state.saving)return;original=null;draftId=UUID.randomUUID().toString();name="";key="";reveal=false;model="";query="";providerReturn="overview";state.clearResult();screen="providers"}
-    fun edit(config:ModelConfig){original=config;draftId=config.id;name=config.name;provider=config.providerId;base=config.baseUrl;model=config.modelId;capacity=config.contextTokens.toString();output=config.outputTokens.toString();key="";reveal=false;advanced=false;state.clearResult();screen="edit"}
+    fun add(){if(state.saving)return;original=null;draftId=UUID.randomUUID().toString();name="";key="";reveal=false;model="";budgets=ModelBudgetDraft();query="";providerReturn="overview";state.clearResult();screen="providers"}
+    fun edit(config:ModelConfig){original=config;draftId=config.id;name=config.name;provider=config.providerId;base=config.baseUrl;model=config.modelId;budgets=ModelBudgetDraft.existing(config);key="";reveal=false;advanced=false;state.clearResult();screen="edit"}
     fun changed(){modelQuery="";state.clearResult()}
+    fun chooseModel(id:String){model=id;budgets=budgets.forModel(provider,base,model);changed()}
     DisposableEffect(lifecycle){
         val observer=LifecycleEventObserver {_,event->if(event==Lifecycle.Event.ON_STOP){key="";reveal=false;state.clearResult()}}
         lifecycle.addObserver(observer)
@@ -120,7 +121,7 @@ internal fun providerMatches(p:ProviderPreset,query:String):Boolean {
                     Row(Modifier.fillMaxWidth().clickable{
                         val old=ProviderPresets.get(provider)
                         if(original==null||name.isBlank()||name==providerName(old))name=providerName(p)
-                        provider=p.id;base=p.base;model="";key="";reveal=false;advanced=p.base.isBlank();changed();screen="edit"
+                        provider=p.id;base=p.base;model="";budgets=budgets.forModel(provider,base,model);key="";reveal=false;advanced=p.base.isBlank();changed();screen="edit"
                     }.testTag("provider-${p.id}").padding(horizontal=18.dp,vertical=14.dp),verticalAlignment=Alignment.CenterVertically){
                         ProviderMark(p);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(providerName(p),style=MaterialTheme.typography.titleSmall);if(regionName(p).isNotBlank())Text(regionName(p),style=MaterialTheme.typography.labelSmall,color=ConfigMuted,modifier=Modifier.padding(top=3.dp))};ControlIcon("chevron")
                     };HorizontalDivider(Modifier.padding(start=72.dp,end=18.dp),color=ConfigLine)
@@ -135,7 +136,7 @@ internal fun providerMatches(p:ProviderPreset,query:String):Boolean {
                     ConfigField(name,{name=it.take(60);changed()},"配置名称","config-name")
                     val retained=original?.baseUrl==base.trim().trimEnd('/')&&original?.providerId==provider
                     TextField(key,{key=it.take(4096);changed()},label={Text("API Key")},placeholder={Text(if(retained)"留空沿用已保存的密钥" else "输入你的密钥")},singleLine=true,visualTransformation=if(reveal)VisualTransformation.None else PasswordVisualTransformation(),keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Password),trailingIcon={TextButton(onClick={reveal=!reveal},modifier=Modifier.semantics{contentDescription=if(reveal)"隐藏密钥" else "显示当前输入的密钥"}){Text(if(reveal)"隐藏" else "显示",style=MaterialTheme.typography.bodySmall)}},colors=fieldColors(),modifier=Modifier.fillMaxWidth().testTag("config-key"))
-                    ConfigField(model,{model=it.take(200);changed()},"模型 ID / Endpoint ID","config-model",placeholder="选择或填写模型")
+                    ConfigField(model,{chooseModel(it.take(200))},"模型 ID / Endpoint ID","config-model",placeholder="选择或填写模型")
                     if(preset.modelsPath!=null)Row(Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically){
                         if(state.fetching)TextButton(onClick={state.cancelFetch()},modifier=Modifier.testTag("config-fetch-cancel")){Text("取消",style=MaterialTheme.typography.bodySmall)}
                         TextButton(onClick={reveal=false;modelQuery="";state.request(draft(),key,true)},enabled=!state.busy,modifier=Modifier.testTag("config-fetch")){
@@ -154,7 +155,7 @@ internal fun providerMatches(p:ProviderPreset,query:String):Boolean {
                         if(filtered.isEmpty())Text("没有匹配的模型，可继续手填。",Modifier.padding(12.dp).testTag("model-options-empty"),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
                         LazyColumn(Modifier.fillMaxWidth().heightIn(max=220.dp).testTag("model-options")){
                             items(filtered,key={it}){id->val selected=id==model
-                                Row(Modifier.fillMaxWidth().heightIn(min=UiSpace.action).clip(RoundedCornerShape(9.dp)).background(if(selected)SelectedBackground else Paper).clickable{model=id;changed()}.semantics{this.selected=selected}.padding(horizontal=12.dp,vertical=12.dp),verticalAlignment=Alignment.CenterVertically){Text(id,Modifier.weight(1f),style=MaterialTheme.typography.bodyMedium,color=if(selected)ConfigGreen else ConfigInk);if(selected)Text("✓ 当前",Modifier.padding(start=8.dp),style=MaterialTheme.typography.bodySmall,color=ConfigGreen)}
+                                Row(Modifier.fillMaxWidth().heightIn(min=UiSpace.action).clip(RoundedCornerShape(9.dp)).background(if(selected)SelectedBackground else Paper).clickable{chooseModel(id)}.semantics{this.selected=selected}.padding(horizontal=12.dp,vertical=12.dp),verticalAlignment=Alignment.CenterVertically){Text(id,Modifier.weight(1f),style=MaterialTheme.typography.bodyMedium,color=if(selected)ConfigGreen else ConfigInk);if(selected)Text("✓ 当前",Modifier.padding(start=8.dp),style=MaterialTheme.typography.bodySmall,color=ConfigGreen)}
                             }
                         }
                     }
@@ -169,10 +170,17 @@ internal fun providerMatches(p:ProviderPreset,query:String):Boolean {
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
                     Row(Modifier.fillMaxWidth().heightIn(min=64.dp).clickable{advanced=!advanced}.testTag("config-advanced").padding(horizontal=18.dp,vertical=14.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("高级设置",style=MaterialTheme.typography.labelLarge);Text("服务地址与兼容方式",style=MaterialTheme.typography.bodySmall,color=ConfigMuted,modifier=Modifier.padding(top=4.dp))};ControlIcon(if(advanced)"up" else "chevron")}
                     if(advanced)Column(Modifier.padding(horizontal=16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-                        ConfigField(base,{base=it.take(500);key="";reveal=false;changed()},"服务地址（HTTPS）","config-url",keyboard=KeyboardType.Uri)
-                        ConfigField(capacity,{capacity=it.filter(Char::isDigit).take(7);changed()},"上下文容量（按模型文档）","config-context",keyboard=KeyboardType.Number)
-                        ConfigField(output,{output=it.filter(Char::isDigit).take(4);changed()},"输出预留 Token","config-output",keyboard=KeyboardType.Number)
-                        Text("本地预算使用保守估算；请按所选模型实际容量填写，不会自动裁掉未整理原话。",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
+                        ConfigField(base,{base=it.take(500);budgets=budgets.forModel(provider,base,model);key="";reveal=false;changed()},"服务地址（HTTPS）","config-url",keyboard=KeyboardType.Uri)
+                        ConfigField(budgets.context,{budgets=budgets.manual(context=it.filter(Char::isDigit).take(7));changed()},"上下文容量（按模型文档）","config-context",keyboard=KeyboardType.Number)
+                        ConfigField(budgets.chat,{budgets=budgets.manual(chat=it.filter(Char::isDigit).take(6));changed()},"聊天生成上限 Token","config-output",keyboard=KeyboardType.Number)
+                        ConfigField(budgets.memory,{budgets=budgets.manual(memory=it.filter(Char::isDigit).take(6));changed()},"记忆整理生成上限 Token","config-memory-output",keyboard=KeyboardType.Number)
+                        Text("整理填 0 时沿用聊天上限。生成上限不代表每次都会输出这么长；推理模型的额度还包括推理。",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
+                        val known=ModelTokenPolicy.capability(provider,base,model)
+                        if(known!=null){
+                            Text("已核对：上下文 ${known.context}，生成最多 ${known.maxOutput}。"+(if(known.reasoning)"当前模型默认推理，推理与正文共用额度。"else"当前模型为非推理模型。"),Modifier.testTag("config-budget-known"),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
+                            TextButton(onClick={budgets=budgets.apply(provider,base,model).copy(automatic=false);changed()},enabled=!state.busy,modifier=Modifier.testTag("config-budget-apply")){Text("使用模型建议（仅填入草稿）")}
+                        }else Text("尚未核对该模型容量，请按服务文档填写；保留手动输入。",Modifier.testTag("config-budget-unknown"),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
+                        Text("本地估算含安全余量，不会自动裁掉未整理原话；顶部保存后才更新配置。",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
 
                         Text("OpenAI 兼容 · "+(if(preset.authHeader=="api-key")"api-key 鉴权" else "Bearer 鉴权"),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
                         Text(preset.hint,style=MaterialTheme.typography.bodySmall,color=ConfigMuted)

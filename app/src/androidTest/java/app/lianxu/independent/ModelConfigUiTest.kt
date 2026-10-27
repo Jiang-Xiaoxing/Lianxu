@@ -67,6 +67,38 @@ class ModelConfigUiTest {
     private fun back(){hideKeyboard();ui.onNodeWithTag("config-back").performClick()}
     private fun waitSaved(count:Int){ui.waitUntil(10000){runCatching{vault.list().size==count}.getOrDefault(false)};ui.waitUntil(10000){!state.saving}}
 
+    @Test fun knownModelSuggestionsOnlyChangeSavedConfigAfterExplicitApplyAndSave(){
+        val c=ModelConfig("budget-known","合成预算","mimo","https://api.xiaomimimo.com/v1","mimo-v2.6-pro",65536,3333)
+        vault.save(c,"synthetic-key-only");ui.runOnIdle{state.refresh()};ui.waitUntil(10000){state.configs.any{it.id==c.id}}
+        edit(c.id);ui.onNodeWithTag("config-advanced").performScrollTo().performClick()
+        ui.onNodeWithTag("config-context").performScrollTo().assertTextContains("65536",substring=true)
+        ui.onNodeWithTag("config-output").performScrollTo().assertTextContains("3333",substring=true)
+        ui.onNodeWithTag("config-memory-output").performScrollTo().assertTextContains("3333",substring=true)
+        ui.onNodeWithTag("config-budget-apply").performScrollTo().performClick()
+        ui.onNodeWithTag("config-output").performScrollTo().assertTextContains("16384",substring=true)
+        ui.onNodeWithTag("config-memory-output").performScrollTo().assertTextContains("32768",substring=true)
+        assertEquals(c,vault.list().single{it.id==c.id});back()
+        assertEquals(c,vault.list().single{it.id==c.id})
+        edit(c.id);ui.onNodeWithTag("config-advanced").performScrollTo().performClick()
+        ui.onNodeWithTag("config-budget-apply").performScrollTo().performClick();ui.onNodeWithTag("config-save").performClick();waitSaved(3)
+        val saved=vault.list().single{it.id==c.id}
+        assertEquals(1000000,saved.contextTokens);assertEquals(16384,saved.outputTokens);assertEquals(32768,saved.memoryOutputTokens);assertEquals(0,client.calls.get())
+    }
+    @Test fun newModelDefaultsRespectManualBudgetsAndNextNewDraftStartsClean(){
+        ui.onNodeWithTag("config-add-top").performClick();ui.onNodeWithTag("provider-search").performTextInput("mimo");ui.onNodeWithTag("provider-mimo").performClick()
+        ui.onNodeWithTag("config-model").performScrollTo().performTextInput("mimo-v2.6-pro");hideKeyboard()
+        ui.onNodeWithTag("config-advanced").performScrollTo().performClick()
+        ui.onNodeWithTag("config-context").performScrollTo().assertTextContains("1000000",substring=true)
+        ui.onNodeWithTag("config-output").performScrollTo().performTextReplacement("7777");hideKeyboard()
+        ui.onNodeWithTag("config-model").performScrollTo().performTextReplacement("unknown-manual-model");hideKeyboard()
+        ui.onNodeWithTag("config-output").performScrollTo().assertTextContains("7777",substring=true)
+        ui.onNodeWithTag("config-budget-unknown").performScrollTo().assertExists();ui.onNodeWithTag("config-budget-apply").assertDoesNotExist()
+        back();ui.onNodeWithTag("config-add-top").performClick();ui.onNodeWithTag("provider-search").performTextInput("mimo");ui.onNodeWithTag("provider-mimo").performClick()
+        ui.onNodeWithTag("config-advanced").performScrollTo().performClick()
+        ui.onNodeWithTag("config-context").performScrollTo().assertTextContains("16384",substring=true)
+        ui.onNodeWithTag("config-output").performScrollTo().assertTextContains("2048",substring=true)
+        assertEquals(2,vault.list().size);assertEquals(0,client.calls.get())
+    }
     @Test fun layeredCrudValidationKeyboardAndRecreation(){
         ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-ui-a"))
         ui.onNodeWithTag("config-probe-ui-a",useUnmergedTree=true).assertTextEquals("未测试")
