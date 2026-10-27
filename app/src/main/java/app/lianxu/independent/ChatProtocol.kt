@@ -23,11 +23,11 @@ enum class ChatFailure(val display:String) {
     TOOLS_UNAVAILABLE("服务请求了尚未启用的工具，本次没有执行任何工具。"),
     INTERRUPTED("上次请求因应用退出而中断，没有自动重发。"),
     SOURCE_CHANGED("对话来源已变化，本次回复没有写入。"),
-    CONTEXT_NEEDS_MEMORY("近期完整轮数已超过设置，请先完成记忆整理；原话没有删除。"),
-    MEMORY_CAPACITY("记忆模型装不下完整整理批次。请选择容量更大的记忆模型，或在记忆规则中调整每批轮数；本批没有缩小或推进。"),
+    CONTEXT_NEEDS_MEMORY("近期完整轮数已超过设置，请先完成总结记忆；原话没有删除。"),
+    MEMORY_CAPACITY("记忆模型装不下完整总结记忆批次。请选择容量更大的记忆模型，或在记忆规则中调整每批轮数；本批没有缩小或推进。"),
     CONTEXT_CAPACITY("模型装不下完整上下文。请选择更大容量模型，或在记忆规则中主动调整近期轮数与相关条数；未自动减少数量或截断核心。"),
-    MISSING_MEMORY_MODEL("原话需要整理，请先在统一设置选择记忆模型；原消息已保留。"),
-    MEMORY_FAILED("记忆整理尚未成功，未截断原话。请到设置的记忆与关系查看并重试。"),
+    MISSING_MEMORY_MODEL("原话需要总结记忆，请先在统一设置选择记忆模型；原消息已保留。"),
+    MEMORY_FAILED("总结记忆尚未成功，未截断原话。请到设置的记忆与关系查看并重试。"),
     CORE_CAPACITY("固定提示与核心记忆超出容量。请到记忆与关系核对核心条目并选择改为普通，或选择更大容量模型；未截断人工核心。调整维护目标不会增加模型容量。"),
     PROMPT_UNCONFIRMED("提示词运行规格尚未确认，本阶段不能发送。")
 }
@@ -43,5 +43,5 @@ interface TextChatClient {
     }
 }
 enum class ModelPurpose(val key:String,val title:String) {
-    EMBEDDING("embedding","记忆向量（可选）"),CHAT("chat","聊天"),MEMORY("memory","记忆整理"),AUX_VISION("aux-vision","辅助视觉"),RELATIONSHIP("relationship","关系评估")
+    EMBEDDING("embedding","记忆向量（可选）"),CHAT("chat","聊天"),MEMORY("memory","总结记忆"),AUX_VISION("aux-vision","辅助视觉"),RELATIONSHIP("relationship","关系评估")
 }

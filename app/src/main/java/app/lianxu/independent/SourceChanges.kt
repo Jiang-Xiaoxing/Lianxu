@@ -20,6 +20,7 @@ class SourceChanges(private val repo:ProcessingRepository){
     }
     suspend fun preview(friendId:String,turnId:Long,side:String,text:String,retract:Boolean)=repo.read{preview(it,friendId,turnId,side,text,retract)}
     suspend fun confirm(impact:SourceImpact)=repo.tx{db->
+        repo.store.memorySummary.requireEditable(impact.dialogue.source.characterId)
         val old=impact.dialogue;val check=preview(db,old.source.characterId,old.source.turnId,impact.side,impact.text,impact.retract)
         rejectUnless(check.stamp==impact.stamp,"SOURCE_CHANGED")
         val message=if(impact.side=="user")old.user else old.assistant

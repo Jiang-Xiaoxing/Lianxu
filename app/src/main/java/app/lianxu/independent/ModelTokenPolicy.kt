@@ -33,7 +33,7 @@ object ModelTokenPolicy {
     fun error(config:ModelConfig):String? {
         val memory=config.memoryOutputLimit()
         if(config.contextTokens !in 4096..2000000||config.outputTokens !in 1..MAX_OUTPUT||config.memoryOutputTokens !in 0..MAX_OUTPUT||memory>=config.contextTokens||config.outputTokens>=config.contextTokens)
-            return "请检查上下文容量、聊天与记忆整理生成上限。"
+            return "请检查上下文容量、聊天与总结记忆生成上限。"
         val known=capability(config)?:return null
         return when {
             config.contextTokens>known.context -> "上下文容量超过该模型已核对的上限 ${known.context}。"

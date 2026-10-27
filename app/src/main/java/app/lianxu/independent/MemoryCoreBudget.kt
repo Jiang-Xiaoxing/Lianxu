@@ -20,6 +20,7 @@ internal fun ProcessingRepository.maintainCore(db:SQLiteDatabase,friendId:String
 }
 suspend fun ProcessingRepository.maintainCore(friendId:String)=tx{maintainCore(it,friendId)}
 suspend fun ProcessingRepository.chooseCore(friendId:String,id:String,expectedVersion:Int,value:Boolean)=tx{db->
+    store.memorySummary.requireEditable(friendId)
     val old=memory(db,friendId,id)?:throw ProcessingRejected("SOURCE_CHANGED")
     rejectUnless(old.version==expectedVersion,"SOURCE_CHANGED")
     saveMemory(db,old.copy(core=value,manual=true,version=old.version+1))

@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
 
 /** Own app-private database. Primary key on friend is also the unique conversation key. */
 class Store(context: Context, name: String = AppServices.databaseName) : SQLiteOpenHelper(context, name, null, 5) {
+    internal val memorySummary=MemorySummaryGuard()
     override fun onConfigure(db: SQLiteDatabase) { db.setForeignKeyConstraintsEnabled(true) }
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE friends(id TEXT PRIMARY KEY, name TEXT NOT NULL, bio TEXT NOT NULL, prompt TEXT NOT NULL, tone INTEGER NOT NULL)")

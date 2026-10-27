@@ -96,9 +96,9 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     fun cancelChats(){runner.cancelAll()}
     fun cancelProcessing(id:String){memory.cancel(id);relationship.cancel(id)}
     fun retryMemory(id:String){
-        if(id in manualMemoryJobs||friends.none{it.id==id})return
+        if(id in store.memorySummary.roles.value||friends.none{it.id==id})return
         error=""
-        val job=viewModelScope.launch(start=CoroutineStart.LAZY){try{val result=memory.ensureRoom(id,forceOne=true,manualRetry=true);if(!result.success)error=processingMessage(result.code);reload()}finally{manualMemoryJobs.remove(id)}}
+        val job=viewModelScope.launch(start=CoroutineStart.LAZY){try{val result=memory.ensureRoom(id,forceOne=true,manualRetry=true);if(!result.success)error=processingMessage(result.code);reload()}finally{if(manualMemoryJobs[id]===currentCoroutineContext().job)manualMemoryJobs.remove(id)}}
         manualMemoryJobs[id]=job;job.start()
     }
     internal suspend fun previewRoleDeletion(id:String)=backup.previewRoleDeletion(id)
@@ -106,8 +106,9 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
         require(confirmed){"删除角色需要再次确认"}
         withContext(NonCancellable){
             val id=plan.friendId
-            runner.cancel(id);memory.cancel(id);relationship.cancel(id);cancelExamples(id);manualMemoryJobs[id]?.cancel()
+            store.memorySummary.requireEditable(id)
             backup.deleteRole(plan,true)
+            runner.cancel(id);memory.cancel(id);relationship.cancel(id);cancelExamples(id);manualMemoryJobs[id]?.cancel()
             if(activeId==id){activeId="";page="home"}
             reload()
         }

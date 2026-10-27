@@ -20,7 +20,7 @@ import kotlinx.coroutines.launch
     val scope=rememberCoroutineScope()
     LaunchedEffect(Unit){val r=vm.processing.memoryRules().first;if(recent.isEmpty()){recent=r.recentRounds.toString();summary=r.summaryRounds.toString();related=r.relatedCount.toString();recall=r.proactiveRecall;write=r.immediateWrite;rounds=r.recallRounds.toString();tokens=r.recallTokens.toString();perCall=r.recallPerCall.toString()};ready=true}
     fun save(){if(busy||!ready)return;val r=MemoryRules(recent.toIntOrNull()?:0,summary.toIntOrNull()?:0,related.toIntOrNull()?:0,recall,write,rounds.toIntOrNull()?:0,tokens.toIntOrNull()?:0,perCall.toIntOrNull()?:0)
-        if(!r.valid()){failed=true;status="请检查正整数及范围：整理轮数不超过近期轮数；回查1–100轮，总额256–64000，单次128至总额。";return}
+        if(!r.valid()){failed=true;status="请检查正整数及范围：总结记忆轮数不超过近期轮数；回查1–100轮，总额256–64000，单次128至总额。";return}
         busy=true;failed=false;status="";scope.launch{try{vm.processing.saveMemoryRules(r);vm.refreshProcessing();status="已保存，所有AI使用这套规则。"}catch(_:Exception){failed=true;status="保存未完成，请重试。"}finally{busy=false}}
     }
     Column(Modifier.fillMaxSize().background(Chrome).testTag("memory-rules-page")){
@@ -29,8 +29,8 @@ import kotlinx.coroutines.launch
             Text("按轮次保留，按条数回想",style=MaterialTheme.typography.titleLarge)
             Text("适用于所有AI，记忆内容仍各自独立。",style=MaterialTheme.typography.bodyMedium,color=Muted)
             AppField(recent,{recent=it.take(10);status=""},"近期原话（轮）","rules-recent",true)
-            Text("超过这个完整轮数后，整理最早的一批。一轮是用户连续发言及其首条有效回复；正在输入或未完成的回复不计入。",style=MaterialTheme.typography.bodySmall,color=Muted)
-            AppField(summary,{summary=it.take(10);status=""},"每批整理（轮）","rules-summary",true)
+            Text("超过这个完整轮数后，总结最早的一批记忆。一轮是用户连续发言及其首条有效回复；正在输入或未完成的回复不计入。",style=MaterialTheme.typography.bodySmall,color=Muted)
+            AppField(summary,{summary=it.take(10);status=""},"每批总结记忆（轮）","rules-summary",true)
             Text("仅在整批保存和来源校验成功后移出近期输入，聊天原文不删除。失败保留进度，可重试。",style=MaterialTheme.typography.bodySmall,color=Muted)
             AppField(related,{related=it.take(10);status=""},"相关记忆最多（条）","rules-related",true)
             Text("直接命中与可用关联补充按记忆去重，共用上限，不凑数。核心记忆单独保留。使用关键词、主题标签及有证据的两跳关联；向量仅在已配置时启用。",style=MaterialTheme.typography.bodySmall,color=Muted)
@@ -42,8 +42,8 @@ import kotlinx.coroutines.launch
             AppField(perCall,{perCall=it.take(6)},"回查单次额度（128至总额）","rules-recall-per-call",true)
             HorizontalDivider(color=Line)
             Text("容量不足时会明确提示",style=MaterialTheme.typography.titleSmall)
-            Text("模型总容量仍有限。装不下完整原话、相关记忆或整理批次时，请选择更大容量模型，或主动调整上述数量；不会暗中缩小批次或截断核心。",style=MaterialTheme.typography.bodySmall,color=Muted)
-            Text("保存本身不联网。修改会使正在运行的旧请求失效；已开始的固定批次保留，手动重试先补齐该批，再按新规则整理。",style=MaterialTheme.typography.bodySmall,color=Muted)
+            Text("模型总容量仍有限。装不下完整原话、相关记忆或总结记忆批次时，请选择更大容量模型，或主动调整上述数量；不会暗中缩小批次或截断核心。",style=MaterialTheme.typography.bodySmall,color=Muted)
+            Text("保存本身不联网。修改会使正在运行的旧请求失效；已开始的固定批次保留，手动重试先补齐该批，再按新规则总结记忆。",style=MaterialTheme.typography.bodySmall,color=Muted)
             if(status.isNotEmpty())Text(status,Modifier.testTag("memory-rules-status"),style=MaterialTheme.typography.bodyMedium,color=if(failed)MaterialTheme.colorScheme.error else GreenText)
         }
     }

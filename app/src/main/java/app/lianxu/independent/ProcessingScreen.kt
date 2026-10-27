@@ -21,6 +21,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 internal fun processingMessage(code:String)=when(code){
+    "MEMORY_SUMMARIZING"->"正在总结记忆，暂不能手动修改；结束或停止后恢复。"
+    "SUMMARY_TIMEOUT"->"总结记忆已达 5 分钟上限，已停止并恢复手动修改；原话和已保存条目保留，可手动重试。"
     "RELATION_REVIEW_UNAVAILABLE"->"仅支持有完整来源快照的最近一次评估；回滚、导入或缺失快照的历史暂不能重评。"
     "RELATION_HISTORY_MISSING"->"这版关系历史已不可用，请刷新后重新选择。"
     "DISABLED"->"请先启用关系评估。"
@@ -28,8 +30,8 @@ internal fun processingMessage(code:String)=when(code){
     "CANDIDATE_SOURCE_INVALID"->"候选来源已失效，不能采用；可查看保留的来源快照。"
     ""->"尚未运行";"NO_MEMORY_MODEL"->"请先在大模型配置选择记忆模型。";"NO_RELATIONSHIP_MODEL"->"请先选择关系评估模型。"
     "HISTORY_CONFIRMATION"->"需要先选择如何处理已有聊天。";"SOURCE_CHANGED","STALE_TASK"->"来源或设置已变化，结果没有覆盖当前记录。"
-    "CANCELLED"->"已停止，原话与已保存条目保留。";"INTERRUPTED"->"上次任务已中断。";"CAPACITY","TURN_TOO_LARGE","INPUT_TOO_LARGE"->"模型装不下完整整理批次。请选择更大容量的记忆模型，或在记忆规则主动调整每批轮数；本批未缩小、原话未移出。"
-    "MANUAL_RETRY"->"上次整理未完成，请检查配置后手动重试。";"BUSY"->"任务正在进行。";"MODEL_UNAUTHORIZED"->"认证失败，请检查密钥与地域。"
+    "CANCELLED"->"已停止，原话与已保存条目保留。";"INTERRUPTED"->"上次任务已中断。";"CAPACITY","TURN_TOO_LARGE","INPUT_TOO_LARGE"->"模型装不下完整总结记忆批次。请选择更大容量的记忆模型，或在记忆规则主动调整每批轮数；本批未缩小、原话未移出。"
+    "MANUAL_RETRY"->"上次总结记忆未完成，请检查配置后手动重试。";"BUSY"->"任务正在进行。";"MODEL_UNAUTHORIZED"->"认证失败，请检查密钥与地域。"
     "MODEL_RATE_LIMIT"->"服务限流，请稍后手动重试。";"MODEL_TIMEOUT"->"本次超时，原有状态和待处理进度保留。";"MODEL_TLS"->"HTTPS 证书校验失败。"
     else->"本次未完整完成，原有记录保留。请检查配置后重试。"
 }

@@ -130,7 +130,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
     private fun contentDigest(pack:BackupArchive.Package)=RoleArchive.hash((pack.root.toString()+pack.files.toSortedMap().entries.joinToString{it.key+RoleArchive.hash(it.value)}).toByteArray())
     private fun cv(row:JsonObject)=ContentValues().apply{row.entrySet().forEach{(k,v)->when{v.isJsonNull->putNull(k);v.asJsonPrimitive.isNumber->put(k,RoleArchive.integer(v));else->put(k,v.asString)}}}
     suspend fun commit(plan:Preview,confirmed:Boolean=false,lease:ChatAttemptLease=ChatAttemptLease(),checkpoint:()->Unit={}):List<String> =withContext(Dispatchers.IO){val action={
-        require(plan.mode!="REPLACE"||confirmed){"覆盖需要明确确认"};val db=store.writableDatabase;var staged:ModelVault.Prepared?=null
+        require(plan.mode!="REPLACE"||confirmed){"覆盖需要明确确认"};if(plan.mode=="REPLACE"){if(plan.pack.all)store.memorySummary.requireAllEditable()else store.memorySummary.requireEditable(requireNotNull(plan.target))};val db=store.writableDatabase;var staged:ModelVault.Prepared?=null
         db.beginTransaction();var committed=false
         try {
             check(lease.isActive()){ "导入已取消" };require(contentDigest(plan.pack)==plan.contentDigest){"备份内容已变化，请重新预览"};require(fingerprint(db)==plan.fingerprint){"资料或配置已变化，请重新预览"};validate(db,plan.pack.root,plan.pack.files)
@@ -158,6 +158,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
         AppMutationGate.read{
             val db=store.writableDatabase;db.beginTransaction()
             try {
+                store.memorySummary.requireEditable(plan.friendId)
                 check(lease.isActive()){"删除已取消"}
                 require(repo.characterStamp(db,plan.friendId)==plan.characterStamp){"角色资料已变化，请重新确认。"}
                 clearRole(db,plan.friendId);checkpoint()
