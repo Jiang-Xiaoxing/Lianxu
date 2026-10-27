@@ -74,11 +74,18 @@ class MemorySummaryGuardAndroidTest {
     }
     @Test fun timeoutReleasesEvenIfClientIgnoresCancellationAndCannotWriteLate()=runBlocking {
         val entered=CompletableDeferred<Unit>();val release=CompletableDeferred<Unit>()
-        val e=engine(object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult=withContext(NonCancellable){entered.complete(Unit);release.await();receipt(request,true)}},1500)
+        val late=CompletableDeferred<Throwable?>()
+        val e=engine(object:TextChatClient{
+            override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest)=receipt(request,true)
+            override suspend fun stream(config:ModelConfig,key:String,request:TextChatRequest,onChunk:suspend(String)->Unit):TextChatResult=withContext(NonCancellable){
+                entered.complete(Unit);release.await();val result=receipt(request,true) as TextChatResult.Success
+                late.complete(runCatching{onChunk(result.text)}.exceptionOrNull());result
+            }
+        },1500)
         val job=scope.async{e.ensureRoom("a",forceOne=true)};withTimeout(5000){entered.await()}
         withTimeout(5000){while("a" in store.memorySummary.roles.value)delay(20)}
         repo.manualSave("a",null,"after deadline",MemoryCategory.STATE_FACT,false,true,MemoryAbout.USER)
-        release.complete(Unit);assertEquals("SUMMARY_TIMEOUT",job.await().code);assertEquals(listOf("after deadline"),repo.memories("a").map{it.text})
+        release.complete(Unit);assertEquals("SUMMARY_TIMEOUT",job.await().code);assertEquals("CANCELLED",(late.await() as ProcessingRejected).code);assertEquals(listOf("after deadline"),repo.memories("a").map{it.text})
     }
     @Test fun concurrentDuplicateIsBusyAndDoesNotCancelTheOwner()=runBlocking {
         val entered=CompletableDeferred<Unit>();val release=CompletableDeferred<Unit>()
