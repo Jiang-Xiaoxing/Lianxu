@@ -41,13 +41,17 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)) {
             DirectoryRow("model","大模型配置",summary,"settings-models","settings-model-summary"){vm.open("models")}
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
-            DirectoryRow("storage","记忆与关系","分角色查看原话、记忆与六维关系","settings-processing"){vm.open("processing")}
+            DirectoryRow("storage","记忆","查看记住的内容、来源与候选","settings-processing"){vm.open("processing")}
+            HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
+            DirectoryRow("info","关系","六维状态、历史回滚与最近一次重评","settings-relationships"){vm.open("relationships")}
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
             DirectoryRow("storage","备份与诊断","完整角色、全部备份与诊断日志","settings-role-archive"){vm.open("role-archive")}
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
             DirectoryRow("list","显示与列表","调整聊天和通讯录的行间距","settings-display"){vm.open("settings-display")}
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
-            DirectoryRow("info","数据与版本","本地数据、演示能力与版本信息","settings-info"){vm.open("settings-info")}
+            DirectoryRow("info","更新说明","随安装包保存，可随时回看","settings-updates"){vm.open("settings-updates")}
+            HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
+            DirectoryRow("info","关于恋叙","作者、版本、许可与致谢","settings-info"){vm.open("settings-info")}
         }
     }
 }
@@ -88,14 +92,37 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
 
 @Composable internal fun DataAndVersion(onBack:()->Unit) {
     val context=LocalContext.current
-    val version=remember(context){runCatching{context.packageManager.getPackageInfo(context.packageName,0).versionName.orEmpty()}.getOrDefault("暂时无法读取")}
-    SettingsPage("数据与版本",onBack) {
+    val build=remember(context){runCatching{InstalledBuild.read(context)}.getOrNull()}
+    val version=build?.let{"${it.versionName}（${it.versionCode}）"}?:"暂时无法读取"
+    SettingsPage("关于恋叙",onBack) {
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper).testTag("settings-info-page")) {
-            InformationRow("storage","本地数据","角色、消息与配置保存在本机应用空间。API Key 加密保存且不参与备份；卸载应用会清除本地数据。")
+            InformationRow("info","作者",AppInformation.AUTHOR)
+            InformationRow("storage","本地数据","角色、消息与配置保存在本机。API 密钥加密保存；全部导出时可明确选择包含密钥。含密钥的备份没有密码保护，请勿分享。卸载应用会清除本地数据。")
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
             InformationRow("model","当前能力","文字聊天使用统一聊天模型；记忆按完整轮次总结记忆，关系评估默认关闭。发送与已启用的总结记忆/评估会请求你配置的服务。搜索AI仍为本地演示，视觉附件未开放；主动回查与当场写记忆可在记忆规则中分别启用，默认关闭。")
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
             InformationRow("info","应用版本",version,"settings-version")
+            InformationRow("info","开源许可",AppInformation.LICENSE)
+            val uri=androidx.compose.ui.platform.LocalUriHandler.current
+            TextButton(onClick={uri.openUri(AppInformation.REPOSITORY)}){Text("项目源码")}
+            TextButton(onClick={uri.openUri(AppInformation.LICENSE_URL)}){Text("查看许可")}
+            TextButton(onClick={uri.openUri(AppInformation.NOTICES_URL)}){Text("第三方致谢")}
+        }
+    }
+}
+
+@Composable internal fun UpdatesScreen(onBack:()->Unit){
+    val context=LocalContext.current
+    val build=remember(context){runCatching{InstalledBuild.read(context)}.getOrNull()}
+    SettingsPage("更新说明",onBack){
+        val notes=build?.let{LocalReleaseNotes.history(it.versionCode)}.orEmpty()
+        if(notes.isEmpty())Text("当前安装包没有随包更新记录。",color=Muted)
+        notes.forEach{note->
+            Text(note.title,style=MaterialTheme.typography.titleMedium)
+            Text(note.version,style=MaterialTheme.typography.labelMedium,color=Muted)
+            note.changes.forEach{Text(it,style=MaterialTheme.typography.bodyMedium)}
+            note.limits.forEach{Text(it,style=MaterialTheme.typography.bodySmall,color=Muted)}
+            HorizontalDivider(color=Line)
         }
     }
 }

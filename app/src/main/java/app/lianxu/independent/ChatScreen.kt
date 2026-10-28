@@ -48,7 +48,7 @@ import java.util.Locale
         Row(Modifier.fillMaxWidth().heightIn(min=64.dp).background(Paper).padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically){
             IconButton(onClick={vm.back()},modifier=Modifier.size(UiSpace.action).testTag("back").semantics{contentDescription="返回"}){ControlIcon("back",Ink)}
             Row(Modifier.weight(1f).padding(horizontal=8.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
-                Avatar(friend,36);Column{Text(friend.name,style=MaterialTheme.typography.titleMedium);Text("AI · 独立会话",style=MaterialTheme.typography.labelSmall,color=Muted)}
+                Avatar(friend,36);Column{Text(friend.name,style=MaterialTheme.typography.titleMedium)}
             }
             TextButton(onClick={vm.open("detail",friend.id)},modifier=Modifier.heightIn(min=UiSpace.action)){Text("资料")}
         }

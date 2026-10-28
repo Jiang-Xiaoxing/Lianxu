@@ -40,7 +40,7 @@ class LiveChatUiTest {
         ui.onNodeWithTag("friend-name").performTextInput("合成·新角色");ui.onNodeWithTag("friend-bio").performTextInput("喜欢安静的小事，仅供本机测试。")
         ui.onNodeWithTag("create-friend").performScrollTo().performClick();ui.waitUntil(10000){ui.onAllNodesWithTag("message-input").fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithText("资料").performClick();ui.onNodeWithTag("role-prompts-open").performScrollTo().performClick()
-        ui.onNodeWithTag("role-expression").performTextInput("用自然表达回应 {{character}}，不要机械反问。")
+        ui.onNodeWithTag("role-expression").performScrollTo().performTextInput("用自然表达回应 {{character}}，不要机械反问。")
         hideIme();ui.activityRule.scenario.recreate();ui.onNodeWithTag("role-expression").assertTextContains("{{character}}",substring=true)
         ui.onNodeWithTag("config-save").performClick();ui.waitUntil(10000){ui.onAllNodesWithTag("role-prompts-open").fetchSemanticsNodes().isNotEmpty()};ui.onNodeWithTag("back").performClick()
         ui.onNodeWithTag("message-input").performTextInput("你好，这是本机合成测试。")
