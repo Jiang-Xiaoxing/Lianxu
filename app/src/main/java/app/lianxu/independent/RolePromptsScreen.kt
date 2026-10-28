@@ -25,7 +25,7 @@ import androidx.compose.ui.unit.dp
     var enabled by rememberSaveable(friend.id){mutableStateOf(false)}
     var initialRelationship by rememberSaveable(friend.id){mutableStateOf("")}
     var advanced by rememberSaveable(friend.id){mutableStateOf(false)}
-    LaunchedEffect(friend.id){if(!loaded){val p=vm.rolePrompts(friend.id);definition=p.characterDefinition.ifBlank{friend.prompt.ifBlank{friend.bio}};opening=p.opening;expression=p.expression;extra=p.extra;internal=p.internalPrompt;enabled=p.internalEnabled&&!p.thinkingNone;initialRelationship=p.initialRelationship;loaded=true}}
+    LaunchedEffect(friend.id){if(!loaded){val p=vm.rolePrompts(friend.id);definition=p.definition(friend);opening=p.opening;expression=p.expression;extra=p.extra;internal=p.internalPrompt;enabled=p.internalEnabled&&!p.thinkingNone;initialRelationship=p.initialRelationship;loaded=true}}
     Column(Modifier.fillMaxSize()){
         AppTopBar("${friend.name} · 角色设定",{vm.back()},extra={CompactSaveAction(loaded&&!vm.busy){vm.saveCharacter(friend.id,name,definition,expression,opening,extra,internal,enabled,initialRelationship)}})
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
