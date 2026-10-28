@@ -6,9 +6,11 @@ import org.junit.Test
 class LocalUpdatesTest {
     @Test fun readOnceMatchesOnlyTheInstalledKnownVersion(){
         val empty=LocalUpdateReceipt();assertEquals(17L,LocalReleaseNotes.pending(17,empty)!!.code)
-        assertNull(LocalReleaseNotes.pending(17,empty.acknowledge(17)));assertNull(LocalReleaseNotes.pending(19,empty))
+        assertNull(LocalReleaseNotes.pending(17,empty.acknowledge(17)));assertNull(LocalReleaseNotes.pending(20,empty))
         assertEquals(18L,LocalReleaseNotes.pending(18,empty.acknowledge(17))!!.code)
         assertNull(LocalReleaseNotes.pending(18,empty.acknowledge(18)))
+        assertEquals(19L,LocalReleaseNotes.pending(19,empty.acknowledge(18))!!.code)
+        assertNull(LocalReleaseNotes.pending(19,empty.acknowledge(19)))
         assertEquals(17L,LocalReleaseNotes.pending(17,empty.acknowledge(16))!!.code)
     }
     @Test fun acknowledgementIsMonotonicAndDoesNotHideManualHistory(){

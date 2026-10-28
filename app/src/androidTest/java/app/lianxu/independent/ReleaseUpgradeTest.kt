@@ -14,11 +14,11 @@ class ReleaseUpgradeTest {
     @Suppress("DEPRECATION")
     @Test fun syntheticDataAndEncryptedConfigSurviveCoverInstall():Unit=runBlocking {
         val stage=InstrumentationRegistry.getArguments().getString("releaseUpgradeStage").orEmpty()
-        assumeTrue("Only run with an explicit release-upgrade stage",stage in setOf("seed16","verify17","seed17","verify18"))
+        assumeTrue("Only run with an explicit release-upgrade stage",stage in setOf("seed16","verify17","seed17","verify18","seed18","verify19"))
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         assertEquals("app.lianxu.independent",context.packageName)
-        assertEquals(when(stage){"seed16"->16;"verify18"->18;else->17},context.packageManager.getPackageInfo(context.packageName,0).versionCode)
-        val generation=if(stage in setOf("seed17","verify18"))"018" else "017"
+        assertEquals(when(stage){"seed16"->16;"verify18","seed18"->18;"verify19"->19;else->17},context.packageManager.getPackageInfo(context.packageName,0).versionCode)
+        val generation=when(stage){"seed18","verify19"->"019";"seed17","verify18"->"018";else->"017"}
         val friend=Friend("release-upgrade-v$generation","升级验收角色","仅含合成数据","这是覆盖升级验收用的人设。")
         // The released v17 class has seven constructor parameters; v18 adds a memory budget.
         // Reflection keeps this instrumentation fixture compatible with both installed APKs.
@@ -44,6 +44,12 @@ class ReleaseUpgradeTest {
             assertTrue(proof.exists())
             val expected=JSONObject(proof.readText())
             assertEquals(friend,store.friends().single{it.id==friend.id})
+            if(generation=="019"){
+                val prompts=RolePromptStore.decode(store.preference(RolePromptStore.key(friend.id),""))
+                val request=(CompanionPrompt.build(friend,prompts,emptyList(),"合成升级验证") as PromptBuild.Ready).request
+                val system=request.messages.first{it.role=="system"}.content
+                assertTrue(system.contains(friend.bio));assertTrue(system.contains(friend.prompt))
+            }
             val messages=store.messages().filter{it.friendId==friend.id}
             assertEquals(2,messages.size)
             assertEquals(listOf("升级前保存的合成原话","升级前保存的合成回复"),messages.map{it.text})
