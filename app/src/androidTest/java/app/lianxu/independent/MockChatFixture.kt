@@ -22,6 +22,7 @@ class MockChatFixture(private val clientFactory:(()->TextChatClient)?=null,priva
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         AppServices.databaseName=database;AppServices.vaultNamespace=namespace
         seedLegacyTestRoles(context,database)
+        runBlocking { val store=Store(context,database); try { LocalUpdateRepository(store).acknowledge(InstalledBuild.read(context).versionCode) } finally { store.close() } }
         ModelVault(context,namespace).save(ModelConfig("fixture","合成测试服务","custom",base,"synthetic-model"),"synthetic-key-only")
         AppServices.createTextClient=clientFactory?:{object:TextChatClient{
             override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {

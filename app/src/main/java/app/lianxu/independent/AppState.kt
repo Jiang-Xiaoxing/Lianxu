@@ -65,8 +65,8 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     internal suspend fun refreshProcessing(){reload()}
     private suspend fun recoverProcessing(){memory.recover();relationship.recover()}
     fun foreground(){if(ready)viewModelScope.launch{runCatching{recoverProcessing()}}}
-    fun open(page: String, id: String = "") { if(this.page=="chat"&&(page!="chat"||id!=activeId))runner.cancel(activeId);if(page=="detail") detailReturn=this.page;if(page=="settings-memory")memorySettingsReturn=this.page;if(page=="processing-role")processingReturn=if(this.page=="detail")"detail" else "processing"; cancelSearch(); this.page=page; activeId=id; error="" }
-    fun back() { if(page=="chat")runner.cancel(activeId);if(page=="settings-memory")page=memorySettingsReturn else if(page=="role-prompts")page="detail" else if(page=="processing-role")page=processingReturn else if(page=="detail") page=detailReturn else { cancelSearch(); page="home" }; error="" }
+    fun open(page: String, id: String = "") { if(this.page=="chat"&&(page!="chat"||id!=activeId))runner.cancel(activeId);if(page=="detail") detailReturn=this.page;if(page=="settings-memory")memorySettingsReturn=this.page;if(page in setOf("processing-role","relationship-role"))processingReturn=if(this.page=="detail")"detail" else if(page=="relationship-role")"relationships" else "processing"; cancelSearch(); this.page=page; activeId=id; error="" }
+    fun back() { if(page=="chat")runner.cancel(activeId);if(page=="settings-memory")page=memorySettingsReturn else if(page=="role-prompts")page="detail" else if(page in setOf("processing-role","relationship-role"))page=processingReturn else if(page=="detail") page=detailReturn else { cancelSearch(); page="home" }; error="" }
     fun home() {runner.cancelAll();cancelSearch(); page="home"; error="" }
     fun startSearch() { page="search"; findAgain() }
     fun findAgain() {

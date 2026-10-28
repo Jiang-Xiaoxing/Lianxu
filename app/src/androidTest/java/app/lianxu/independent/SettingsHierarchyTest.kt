@@ -76,7 +76,7 @@ class SettingsHierarchyTest {
         shot("03-display-secondary-real-app")
         ui.onNodeWithContentDescription("返回设置").performClick();ui.onNodeWithTag("settings-home").assertIsDisplayed()
         ui.onNodeWithTag("settings-info").performClick();ui.onNodeWithTag("settings-info-page").assertIsDisplayed()
-        ui.onNodeWithTag("settings-version").assertTextContains("0.14-memory-counts-test",substring=true)
+        ui.onNodeWithTag("settings-version").assertTextContains(InstalledBuild.read(context).versionName,substring=true)
         ui.onNodeWithTag("compact-switch").assertDoesNotExist();shot("04-data-version-secondary-real-app")
         ui.onNodeWithTag("settings-back").performClick();ui.onNodeWithTag("settings-home").assertIsDisplayed()
         listOf(0,3,1,2).forEach{i->ui.onNodeWithTag("tab-$i").performClick();ui.onNodeWithTag("tab-$i").assertIsSelected()}

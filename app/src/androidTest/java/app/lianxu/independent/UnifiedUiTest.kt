@@ -51,10 +51,10 @@ class UnifiedUiTest {
         ui.onNodeWithText("资料").performClick();shot("04-friend-detail");ui.onNodeWithTag("back").performClick()
         ui.onNodeWithTag("message-input").assertTextContains("好，想再和你聊一会儿。",substring=true)
         ui.onNodeWithTag("back").performClick();ui.onNodeWithTag("tab-0").performClick()
-        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("添加AI").performClick()
+        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("创建角色").performClick()
         ui.onNodeWithTag("friend-name").performTextInput("合成新朋友");ui.onNodeWithTag("friend-bio").performTextInput("喜欢分享生活里的小事。")
         shot("05-add-friend");ui.onNodeWithTag("back").performClick()
-        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("搜索AI").performClick();shot("06-radar")
+        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("寻找角色").performClick();shot("06-radar")
         ui.waitUntil(10000){app().candidates.size==3}
         val ids=app().candidates.map{it.id};ui.onNodeWithTag("candidate-${ids[0]}").performClick();ui.onNodeWithTag("candidate-${ids[1]}").performClick()
         assertEquals(2,app().selected.size);shot("07-candidates");ui.onNodeWithTag("back").performClick()
@@ -66,8 +66,8 @@ class UnifiedUiTest {
         ui.onNodeWithTag("config-model").performScrollTo().performTextInput("synthetic-model")
         hideKeyboard();ui.onNodeWithTag("config-name").performScrollTo();shot("11-model-editor")
         ui.onNodeWithTag("config-back").performClick();ui.onNodeWithTag("config-back").performClick()
-        ui.onNodeWithTag("settings-display").performClick();shot("12-display");ui.onNodeWithTag("settings-back").performClick()
-        ui.onNodeWithTag("settings-info").performClick();shot("13-data-version");ui.onNodeWithTag("settings-back").performClick()
+        ui.onNodeWithTag("settings-display").performScrollTo().performClick();shot("12-display");ui.onNodeWithTag("settings-back").performClick()
+        ui.onNodeWithTag("settings-info").performScrollTo().performClick();shot("13-data-version");ui.onNodeWithTag("settings-back").performClick()
         ui.onNodeWithTag("tab-3").performClick();shot("14-profile")
     }
     @Test fun keyboardRotationSendAndStoredConversation(){
@@ -91,7 +91,7 @@ class UnifiedUiTest {
         ready();val store=Store(context);val original=runBlocking{store.preference("nickname","__absent__")}
         try{
             ui.onNodeWithTag("tab-3").performClick();ui.onNodeWithTag("nickname").performTextReplacement("合成体验者")
-            hideKeyboard();ui.onNodeWithText("保存昵称").performClick();ui.waitUntil(10000){!app().busy&&app().nickname=="合成体验者"}
+            hideKeyboard();ui.onNodeWithText("保存资料").performScrollTo().performClick();ui.waitUntil(10000){!app().busy&&app().nickname=="合成体验者"}
             ui.activityRule.scenario.recreate();ui.onNodeWithText("你好，合成体验者").assertExists()
             assertEquals("合成体验者",runBlocking{store.preference("nickname","")})
         }finally{if(original=="__absent__")store.writableDatabase.delete("preferences","key=?",arrayOf("nickname")) else runBlocking{store.setPreference("nickname",original)};store.close()}

@@ -39,21 +39,22 @@ internal fun taskDescription(s:ProcessingRepository.TaskStatus)=when(s.state){
     "ARCHIVED"->"导入的历史快照已归档，不恢复旧任务"
     "IDLE"->"尚未运行";"RUNNING"->"处理中";"WAITING"->"等待有界重试（第 ${s.attempt} 次）";"COMMITTED","COMPLETED"->"已完整保存";else->processingMessage(s.error)
 }
-@Composable internal fun ProcessingDirectory(vm:AppState){
+@Composable internal fun ProcessingDirectory(vm:AppState,relationships:Boolean=false){
     Column(Modifier.fillMaxSize().background(Chrome)){
-        AppTopBar("记忆与关系",{vm.back()})
+        AppTopBar(if(relationships)"关系" else "记忆",{vm.back()})
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
-            TextButton({vm.open("settings-memory")},modifier=Modifier.testTag("settings-memory-rules")){Text("记忆规则 · 轮数与条数")}
+            if(!relationships)TextButton({vm.open("settings-memory")},modifier=Modifier.testTag("settings-memory-rules")){Text("记忆规则 · 轮数与条数")}
             Text("每位AI分别保存原话、记忆和关系。模型统一在大模型配置中选择。",style=MaterialTheme.typography.bodySmall,color=Muted)
-            vm.friends.forEach{friend->Row(Modifier.fillMaxWidth().clickable{vm.open("processing-role",friend.id)}.padding(vertical=14.dp).testTag("processing-friend-${friend.id}"),verticalAlignment=Alignment.CenterVertically){Avatar(friend);Spacer(Modifier.width(14.dp));Text(friend.name,Modifier.weight(1f),style=MaterialTheme.typography.titleSmall);ControlIcon("chevron")}}
+            if(vm.friends.isEmpty())Text("先创建一位角色，再查看你们的记忆与关系。",color=Muted)
+            vm.friends.forEach{friend->Row(Modifier.fillMaxWidth().clickable{vm.open(if(relationships)"relationship-role" else "processing-role",friend.id)}.padding(vertical=14.dp).testTag("processing-friend-${friend.id}"),verticalAlignment=Alignment.CenterVertically){Avatar(friend);Spacer(Modifier.width(14.dp));Text(friend.name,Modifier.weight(1f),style=MaterialTheme.typography.titleSmall);ControlIcon("chevron")}}
         }
     }
 }
 
 private data class RelationView(val policy:ProcessingPolicy,val relation:RelationshipState,val relationTask:ProcessingRepository.TaskStatus,val pendingRelation:Int)
-@Composable internal fun ProcessingRole(vm:AppState){
+@Composable internal fun ProcessingRole(vm:AppState,startRelationship:Boolean=false){
     val friend=vm.friends.firstOrNull{it.id==vm.activeId}?:return
-    var section by rememberSaveable(friend.id){mutableIntStateOf(0)}
+    var section by rememberSaveable(friend.id,startRelationship){mutableIntStateOf(if(startRelationship)1 else 0)}
     if(section==0){MemoryExperience(vm,friend){section=1};return}
     val repo=vm.processing;val relations=vm.relationship.repository;val scope=rememberCoroutineScope()
     var view by remember{mutableStateOf<RelationView?>(null)};var busy by remember{mutableStateOf(false)};var error by remember{mutableStateOf("")}

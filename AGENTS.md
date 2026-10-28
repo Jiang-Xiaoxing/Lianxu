@@ -2,7 +2,7 @@
 
 开发环境、构建及测试命令见 `README.md`；模块说明见 `docs/ARCHITECTURE.md` 和 `docs/MEMORY-PORT.md`。使用JDK21完整开发包、Android SDK37和仓库Gradle wrapper，不提交个人路径、密钥、本机配置、数据库或聊天数据。
 
-UI遵循 `docs/UI-DESIGN.md`：原生Material3/Compose、简约白灰绿、圆润线性图标、统一字号和留白。复用 `AppTheme.kt`、`UiComponents.kt`、`UiSpace`及现有语义色和类型角色。行楷仅用于已有授权的“恋叙”字标；正文和功能文字使用统一清晰字体。底栏顺序为聊天、通讯录、设置、我的；大模型配置保留设置一级入口。
+UI遵循 `docs/UI-DESIGN.md`：原生Material3/Compose、暖黄星月配色、圆润线性图标、统一字号和留白。复用 `AppTheme.kt`、`UiComponents.kt`、`UiSpace`及现有语义色和类型角色。行楷仅用于已有授权的“恋叙”字标；正文和功能文字使用统一清晰字体。底栏顺序为聊天、通讯录、设置、我的；大模型配置保留设置一级入口。
 
 默认近期40轮、每批整理20轮、相关记忆15条且核心独立。有证据的关联最多2跳，评分后8入口，评分采用百分制。保留来源与版本校验、人工和锁定保护，以及失败或取消时的事务保护。旧数据迁移暂停，不批量重解释旧记录。
 

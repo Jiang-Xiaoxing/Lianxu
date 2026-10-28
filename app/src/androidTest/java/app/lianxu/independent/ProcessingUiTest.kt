@@ -41,14 +41,14 @@ class ProcessingUiTest {
         ui.waitUntil(15000){vm().ready}
         val vault=ModelVault(context,mock.namespace)
         for(p in listOf(ModelPurpose.MEMORY,ModelPurpose.RELATIONSHIP)){val c=ModelConfig(p.key,p.title,"custom","https://example.invalid/v1",p.key,contextTokens=32000);vault.save(c,"synthetic-key-only");vault.setPurpose(p,c.id)}
-        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("添加AI").performClick();ui.onNodeWithTag("friend-name").performTextInput("合成·运行验收");ui.onNodeWithTag("friend-bio").performTextInput("喜欢植物与日常聊天，本机合成测试。")
+        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("创建角色").performClick();ui.onNodeWithTag("friend-name").performTextInput("合成·运行验收");ui.onNodeWithTag("friend-bio").performTextInput("喜欢植物与日常聊天，本机合成测试。")
         ui.onNodeWithTag("create-friend").performScrollTo().performClick();ui.waitUntil(10000){vm().page=="chat"};val id=vm().activeId
         ui.onNodeWithTag("message-input").performTextInput("我喜欢安静的花园，也喜欢散步。");ui.onNodeWithTag("send-message").performClick();ui.waitUntil(10000){vm().turns.any{it.friendId==id&&it.state==TurnState.COMPLETED}}
         shot("05-real-chat-mock-only")
         ui.onNodeWithText("资料").performClick();ui.onNodeWithTag("role-processing-open").performScrollTo().performClick()
         ui.onNodeWithTag("memory-add").performClick();ui.onNodeWithTag("memory-text").performTextInput("喜欢安静的花园");hideIme();ui.onNodeWithTag("memory-core").performClick();ui.onNodeWithTag("memory-save").performClick()
         ui.waitUntil(10000){runBlocking{vm().processing.memories(id).size==1}};ui.activityRule.scenario.recreate()
-        ui.onNodeWithText("喜欢安静的花园").assertExists();ui.onNodeWithTag("memory-maintenance").performClick();ui.onNodeWithTag("memory-retry").performScrollTo().performTouchInput{doubleClick(delayMillis=40)}
+        ui.onNodeWithTag("memory-list").performScrollToNode(hasText("喜欢安静的花园"));ui.onNodeWithText("喜欢安静的花园").assertExists();ui.onNodeWithTag("memory-maintenance").performClick();ui.onNodeWithTag("memory-retry").performScrollTo().performTouchInput{doubleClick(delayMillis=40)}
         ui.waitUntil(10000){runBlocking{vm().processing.candidates(id).size==1}};assertEquals(1,memoryCalls.get())
         ui.onNodeWithTag("memory-task-status").performScrollTo();shot("03-memory-status-real-app")
         ui.onNodeWithTag("back").performClick();ui.onNodeWithTag("memory-candidates").performClick();ui.onNodeWithText("采用并人工确认").performScrollTo();shot("03b-memory-conflict-real-app")

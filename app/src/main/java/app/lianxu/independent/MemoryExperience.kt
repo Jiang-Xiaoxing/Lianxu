@@ -20,16 +20,23 @@ import kotlinx.coroutines.launch
 @Composable internal fun MemoryExperience(vm:AppState,friend:Friend,onRelationship:()->Unit){
     val repo=vm.processing;val scope=rememberCoroutineScope()
     val summaryRoles by repo.store.memorySummary.roles.collectAsState();val summarizing=friend.id in summaryRoles
-    var memories by remember{mutableStateOf(emptyList<StoredMemory>())};var candidates by remember{mutableStateOf(emptyList<ProcessingRepository.Candidate>())}
-    var reviews by remember{mutableStateOf(emptyList<MemoryBatchRepository.Review>())};var budget by remember{mutableStateOf<CoreBudgetState?>(null)}
-    var task by remember{mutableStateOf(ProcessingRepository.TaskStatus())};var policy by remember{mutableStateOf(ProcessingPolicy())}
+    var memories by remember(friend.id){mutableStateOf(emptyList<StoredMemory>())};var candidates by remember(friend.id){mutableStateOf(emptyList<ProcessingRepository.Candidate>())}
+    var reviews by remember(friend.id){mutableStateOf(emptyList<MemoryBatchRepository.Review>())};var budget by remember(friend.id){mutableStateOf<CoreBudgetState?>(null)}
+    var task by remember(friend.id){mutableStateOf(ProcessingRepository.TaskStatus())};var policy by remember(friend.id){mutableStateOf(ProcessingPolicy())}
     var category by rememberSaveable(friend.id){mutableStateOf<MemoryCategory?>(null)};var about by rememberSaveable(friend.id){mutableStateOf<MemoryAbout?>(null)}
     var query by rememberSaveable(friend.id){mutableStateOf("")};var tag by rememberSaveable(friend.id){mutableStateOf<String?>(null)}
     var detailId by rememberSaveable(friend.id){mutableStateOf<String?>(null)};var mode by rememberSaveable(friend.id){mutableStateOf("browse")}
-    var editing by remember{mutableStateOf(false)};var busy by remember{mutableStateOf(false)};var error by remember{mutableStateOf("")}
-    var versions by remember{mutableStateOf<List<StoredMemory>?>(null)};var evidence by remember{mutableStateOf<StoredMemory?>(null)}
-    var sourceRows by remember{mutableStateOf<List<SourceDialogue>?>(null)};var sourceEdit by remember{mutableStateOf<SourceDialogue?>(null)};var demote by remember{mutableStateOf<StoredMemory?>(null)}
-    var coreGoal by rememberSaveable{mutableStateOf("")}
+    var editing by remember(friend.id){mutableStateOf(false)};var busy by remember(friend.id){mutableStateOf(false)};var error by remember(friend.id){mutableStateOf("")}
+    var versions by remember(friend.id){mutableStateOf<List<StoredMemory>?>(null)};var evidence by remember(friend.id){mutableStateOf<StoredMemory?>(null)}
+    var sourceRows by remember(friend.id){mutableStateOf<List<SourceDialogue>?>(null)};var sourceEdit by remember(friend.id){mutableStateOf<SourceDialogue?>(null)};var demote by remember(friend.id){mutableStateOf<StoredMemory?>(null)}
+    var coreGoal by rememberSaveable(friend.id){mutableStateOf("")}
+    var skyEdges by remember(friend.id){mutableStateOf(emptyList<MemoryRecall.Edge>())}
+    LaunchedEffect(friend.id,memories){
+        skyEdges=emptyList()
+        try{skyEdges=repo.read{db->MemoryAssociations(repo).verified(db,friend.id,memories.filter{it.valid&&it.life!=MemoryLife.RETRACTED})}}
+        catch(e:CancellationException){throw e}
+        catch(_:Exception){error="关联暂时无法读取，已隐藏连线；记忆列表仍可查看。"}
+    }
     LaunchedEffect(friend.id,vm.processingRevision){memories=repo.memories(friend.id);candidates=repo.candidates(friend.id);reviews=MemoryBatchRepository(repo).reviews(friend.id);budget=repo.coreBudget(friend.id);task=repo.memoryStatus(friend.id);policy=repo.policy(friend.id).first;if(coreGoal.isEmpty())coreGoal=policy.coreGoal.toString()}
     fun action(block:suspend()->Unit){if(busy)return;busy=true;error="";scope.launch{try{block();vm.refreshProcessing()}catch(e:CancellationException){throw e}catch(e:Exception){error=processingMessage((e as? ProcessingRejected)?.code?:"FORMAT")}finally{busy=false}}}
     fun back(){if(detailId!=null)detailId=null else if(mode!="browse")mode="browse" else vm.back()}
@@ -94,6 +101,7 @@ import kotlinx.coroutines.launch
                 val tags=memories.flatMap{it.tags}.distinct();if(tags.isNotEmpty())Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal=UiSpace.page)){tags.forEach{t->TextButton({tag=if(tag==t)null else t},modifier=Modifier.testTag("memory-tag-$t")){Text((if(tag==t)"✓ " else "#")+t)}}}
                 Row(Modifier.fillMaxWidth().padding(horizontal=UiSpace.page),verticalAlignment=Alignment.CenterVertically){Text("${shown.size} 条记忆",Modifier.weight(1f),style=MaterialTheme.typography.labelLarge,color=Muted);if(candidates.isNotEmpty())TextButton({mode="candidates"},modifier=Modifier.testTag("memory-candidates")){Text("待核对 ${candidates.count{it.valid}}")};TextButton({mode="maintenance"},modifier=Modifier.testTag("memory-maintenance")){Text(if(reviews.any{!it.acknowledged}||budget?.overGoal==true)"有内容需核对" else "总结记忆")}}
                 LazyColumn(Modifier.weight(1f).testTag("memory-list"),contentPadding=PaddingValues(horizontal=UiSpace.page,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(2.dp)){
+                    item("sky"){MemorySky(shown,skyEdges,category){detailId=it}}
                     if(shown.isEmpty())item{Text(if(memories.isEmpty())"从一件想记住的小事开始。" else "没有匹配的内容，试试其他筛选。",Modifier.padding(vertical=36.dp),style=MaterialTheme.typography.bodyLarge,color=Muted)}
                     items(shown,key={it.id}){m->Column(Modifier.fillMaxWidth().clickable{detailId=m.id}.padding(vertical=18.dp).testTag("memory-${m.id}"),verticalArrangement=Arrangement.spacedBy(8.dp)){
                         Text(m.text,style=MaterialTheme.typography.bodyLarge,maxLines=3,overflow=TextOverflow.Ellipsis)
