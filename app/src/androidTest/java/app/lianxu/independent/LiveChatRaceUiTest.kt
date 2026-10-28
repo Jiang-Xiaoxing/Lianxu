@@ -22,7 +22,7 @@ class LiveChatRaceUiTest {
     private fun app():AppState {lateinit var value:AppState;ui.activityRule.scenario.onActivity{value=ViewModelProvider(it)[AppState::class.java]};return value}
     @Test fun doubleSendImmediateCancelRetryFailureAndLateCallback(){
         ui.waitUntil(15000){app().ready}
-        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("添加AI").performClick()
+        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("创建角色").performClick()
         ui.onNodeWithTag("friend-name").performTextInput("合成·取消测试");ui.onNodeWithTag("friend-bio").performTextInput("仅供自动测试")
         ui.onNodeWithTag("create-friend").performScrollTo().performClick();ui.waitUntil(10000){app().page=="chat"}
         val late=client.queue();ui.onNodeWithTag("message-input").performTextInput("唯一用户消息");ui.onNodeWithTag("send-message").performTouchInput{doubleClick(delayMillis=40)}

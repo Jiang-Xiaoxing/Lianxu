@@ -36,7 +36,7 @@ class LiveChatUiTest {
         assertEquals(0,server.calls.get());assertEquals(setOf("embedding","chat","memory","aux-vision","relationship"),ModelPurpose.entries.map{it.key}.toSet())
         ui.onNodeWithTag("purpose-select-chat").performScrollTo();shot("01-global-purposes-mock-only")
         ui.onNodeWithTag("config-back").performClick();ui.onNodeWithTag("tab-0").performClick()
-        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("添加AI").performClick()
+        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("创建角色").performClick()
         ui.onNodeWithTag("friend-name").performTextInput("合成·新角色");ui.onNodeWithTag("friend-bio").performTextInput("喜欢安静的小事，仅供本机测试。")
         ui.onNodeWithTag("create-friend").performScrollTo().performClick();ui.waitUntil(10000){ui.onAllNodesWithTag("message-input").fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithText("资料").performClick();ui.onNodeWithTag("role-prompts-open").performScrollTo().performClick()

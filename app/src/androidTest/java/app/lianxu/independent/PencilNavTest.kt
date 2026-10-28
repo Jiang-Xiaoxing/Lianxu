@@ -16,7 +16,7 @@ class NavigationIconTest {
         val dir=File(instrumentation.targetContext.getExternalFilesDir(null),"evidence-unified-ui/navigation").apply{mkdirs()}
         labels.forEachIndexed { selected,_ ->
             ui.onNodeWithTag("tab-$selected").performClick()
-            if(selected==0){ui.onNodeWithTag("home-title").assertTextEquals("恋叙");ui.onNodeWithContentDescription("添加AI").assertHasClickAction()}
+            if(selected==0){ui.onNodeWithTag("home-title").assertTextEquals("恋叙");ui.onNodeWithContentDescription("创建角色").assertHasClickAction()}
             labels.forEachIndexed {i,label->
                 val node=ui.onNodeWithTag("tab-$i");node.assertIsDisplayed().assertHasClickAction().assert(hasText(label))
                 if(i==selected)node.assertIsSelected() else node.assertIsNotSelected()

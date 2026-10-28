@@ -90,6 +90,7 @@ class ModelVault(context:Context,private val namespace:String="model-configs",pr
         val generation=java.util.UUID.randomUUID().toString();val dir=File(root,"generations/$generation")
         val old=list();val aliases=mutableListOf<String>()
         try {
+            check(dir.isDirectory||dir.mkdirs()){ "无法创建模型恢复暂存目录" }
             val restored=incoming.map{row->
                 val match=old.firstOrNull{it.id==row.config.id&&it.providerId==row.config.providerId&&it.baseUrl==row.config.baseUrl}
                 BackupModel(row.config,if(includeKeys)row.secret.orEmpty() else match?.let{secret(it.id)}.orEmpty())
