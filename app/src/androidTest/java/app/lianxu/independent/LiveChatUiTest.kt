@@ -10,13 +10,19 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
+import org.json.JSONArray
 import org.junit.*
 import org.junit.Assert.*
 import java.io.File
 
 /** Full UI -> real loopback TLS POST -> durable reply. No service-provider credentials. */
 class LiveChatUiTest {
-    private val server=TextTlsMock()
+    private val server=TextTlsMock(maxRequests=3,responder={raw->
+        val messages=JSONObject(raw).getJSONArray("messages")
+        val request=TextChatRequest((0 until messages.length()).map{i->messages.getJSONObject(i).let{WireMessage(it.getString("role"),it.getString("content"))}})
+        val text=(syntheticCompanionStage(request) as? TextChatResult.Success)?.text?:"【Mock HTTP】合成回复"
+        JSONObject().put("choices",JSONArray().put(JSONObject().put("finish_reason","stop").put("message",JSONObject().put("content",text)))).toString()
+    })
     @get:Rule(order=0) val mock=MockChatFixture({server.client()},server.base)
     @get:Rule(order=1) val ui=createAndroidComposeRule<MainActivity>()
     private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
@@ -30,16 +36,23 @@ class LiveChatUiTest {
         for(p in ModelPurpose.entries){
             ui.waitUntil(30000){ui.onAllNodes(hasTestTag("purpose-select-${p.key}") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
             ui.onNodeWithTag("purpose-select-${p.key}").performScrollTo().performClick()
+            if(p==ModelPurpose.EMBEDDING){
+                ui.onNodeWithTag("purpose-option-embedding-fixture").assertDoesNotExist()
+                ui.onNodeWithTag("purpose-unknown-embedding").performClick()
+            }
             ui.waitUntil(30000){ui.onAllNodesWithTag("purpose-option-${p.key}-fixture").fetchSemanticsNodes().isNotEmpty()}
             ui.onNodeWithTag("purpose-option-${p.key}-fixture").performClick();ui.waitUntil(10000){vault.purposeId(p)=="fixture"}
         }
-        assertEquals(0,server.calls.get());assertEquals(setOf("embedding","chat","memory","aux-vision","relationship"),ModelPurpose.entries.map{it.key}.toSet())
+        assertEquals(0,server.calls.get());assertEquals(setOf("embedding","chat","memory","aux-vision"),ModelPurpose.entries.map{it.key}.toSet())
+        // Selection is covered above; this text-chat test does not provide an embedding endpoint.
+        ui.onNodeWithTag("purpose-select-embedding").performScrollTo().performClick();ui.onNodeWithTag("purpose-clear-embedding").performClick()
+        ui.waitUntil(10000){vault.purposeId(ModelPurpose.EMBEDDING).isEmpty()}
         ui.onNodeWithTag("purpose-select-chat").performScrollTo();shot("01-global-purposes-mock-only")
         ui.onNodeWithTag("config-back").performClick();ui.onNodeWithTag("tab-0").performClick()
         ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("创建角色").performClick()
         ui.onNodeWithTag("friend-name").performTextInput("合成·新角色");ui.onNodeWithTag("friend-bio").performTextInput("喜欢安静的小事，仅供本机测试。")
         ui.onNodeWithTag("create-friend").performScrollTo().performClick();ui.waitUntil(10000){ui.onAllNodesWithTag("message-input").fetchSemanticsNodes().isNotEmpty()}
-        ui.onNodeWithText("资料").performClick();ui.onNodeWithTag("role-prompts-open").performScrollTo().performClick()
+        ui.onNodeWithTag("chat-role-detail").performClick();ui.onNodeWithTag("role-prompts-open").performScrollTo().performClick()
         ui.onNodeWithTag("role-expression").performScrollTo().performTextInput("用自然表达回应 {{character}}，不要机械反问。")
         hideIme();ui.activityRule.scenario.recreate();ui.onNodeWithTag("role-expression").assertTextContains("{{character}}",substring=true)
         ui.onNodeWithTag("config-save").performClick();ui.waitUntil(10000){ui.onAllNodesWithTag("role-prompts-open").fetchSemanticsNodes().isNotEmpty()};ui.onNodeWithTag("back").performClick()
@@ -49,7 +62,9 @@ class LiveChatUiTest {
         assertEquals(1,server.calls.get());assertEquals("",ui.onNodeWithTag("message-input").fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
         val messages=JSONObject(server.body).getJSONArray("messages")
         assertTrue(messages.getJSONObject(0).getString("content").contains("用自然表达回应 合成·新角色"))
-        assertEquals("你好，这是本机合成测试。",messages.getJSONObject(messages.length()-2).getString("content"));assertEquals("system",messages.getJSONObject(messages.length()-1).getString("role"))
+        val latestUser=(0 until messages.length()).map{messages.getJSONObject(it)}.last{it.getString("role")=="user"}
+        assertEquals("你好，这是本机合成测试。",latestUser.getString("content").removeSuffix("\n\n"+CompanionPrompt.THINKING_REMINDER))
+        assertFalse(server.body.contains(CompanionRecord.NAME))
         assertFalse(server.body.contains("【演示开场】"));assertFalse(server.body.contains("synthetic-key-only"))
         shot("02-new-role-real-http-mock-reply")
         runBlocking{

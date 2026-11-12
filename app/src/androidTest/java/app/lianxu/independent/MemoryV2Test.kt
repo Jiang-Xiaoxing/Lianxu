@@ -22,7 +22,16 @@ class MemoryV2Test {
     }
     @Test fun tagsRecallAcrossCategoriesAndBothNeverSharesAcrossRoles()=runBlocking{
         repo.manualSave("a",null,"First content",MemoryCategory.STATE_FACT,false,true,MemoryAbout.BOTH,listOf("telescope"));repo.manualSave("a",null,"Second content",MemoryCategory.PREFERENCE_BOUNDARY,false,true,MemoryAbout.CHARACTER,listOf("telescope"));repo.manualSave("b",null,"OTHER ROLE SECRET",MemoryCategory.STATE_FACT,true,true,MemoryAbout.BOTH,listOf("telescope"))
-        val refs=repo.references("a","telescope",99).valid;assertEquals(2,refs.size);assertTrue(refs.all{"OTHER ROLE" !in it.text});assertTrue(refs.any{"关于双方" in it.text});assertTrue(refs.any{"关于角色" in it.text})
+        val refs=repo.references("a","telescope",99).valid;assertEquals(2,refs.size);assertTrue(refs.all{"OTHER ROLE" !in it.text});assertTrue(refs.any{"现状与事实 · 双方：First content" in it.text});assertTrue(refs.any{"偏好与边界 · 角色：Second content" in it.text})
+    }
+    @Test fun savedMemoryReachesThePromptOnlyThroughMatchingWords()=runBlocking{
+        // E6 probe: a memory that really landed must be usable; short unrelated input has no lexical hit.
+        // A lone memory can still be chosen as a core row, so the relevance gate is asserted directly.
+        repo.manualSave("a",null,"旅人明天上班还得加班",MemoryCategory.STATE_FACT,false,true,MemoryAbout.BOTH,listOf("加班"))
+        val saved=repo.memories("a").single()
+        assertTrue("unrelated short input has no lexical hit",MemoryRecall.select("a","哎",listOf(saved),emptyList(),1).isEmpty())
+        assertTrue("related words produce a hit",MemoryRecall.select("a","明天还要加班吗",listOf(saved),emptyList(),1).isNotEmpty())
+        assertTrue("the related round really reaches the prompt",repo.references("a","明天还要加班吗",97).valid.any{"加班" in it.text})
     }
     @Test fun structuredOperationsKeepSubjectTagsHistoryAndExplicitLifecycle()=runBlocking{
         val s=repo.sources("a").single();val b=MemoryBatchRepository(repo);val w=b.prepare("a",listOf(s),"mock");b.beginAttempt(w,"test");val add=op(s).put("due_expression","2000-01-01");val id=b.apply(w,add);assertEquals("2000-01-01",repo.memories("a").single().dueDate);assertEquals(MemoryLife.ACTIVE,repo.memories("a").single().life)

@@ -85,7 +85,13 @@ class MemorySummaryGuardAndroidTest {
         val job=scope.async{e.ensureRoom("a",forceOne=true)};withTimeout(5000){entered.await()}
         withTimeout(5000){while("a" in store.memorySummary.roles.value)delay(20)}
         repo.manualSave("a",null,"after deadline",MemoryCategory.STATE_FACT,false,true,MemoryAbout.USER)
-        release.complete(Unit);assertEquals("SUMMARY_TIMEOUT",job.await().code);assertEquals("CANCELLED",(late.await() as ProcessingRejected).code);assertEquals(listOf("after deadline"),repo.memories("a").map{it.text})
+        release.complete(Unit);assertEquals("SUMMARY_TIMEOUT",job.await().code)
+        // The voided attempt's full JSON document arrives late: it is discarded as a whole, logged once, and never written.
+        assertEquals("LATE_DISCARDED",(late.await() as ProcessingRejected).code);assertEquals(1,e.lateDiscards.get())
+        delay(300);assertEquals(listOf("after deadline"),repo.memories("a").map{it.text})
+        assertEquals(1,repo.recentSources("a").size);assertEquals(0L,repo.cursor("a"))
+        assertEquals(0,store.readableDatabase.rawQuery("SELECT COUNT(*) FROM memory_batches WHERE state='COMMITTED'",null).use{it.moveToFirst();it.getInt(0)})
+        assertEquals("SUMMARY_TIMEOUT",MemoryBatchRepository(repo).failure("a")?.code)
     }
     @Test fun concurrentDuplicateIsBusyAndDoesNotCancelTheOwner()=runBlocking {
         val entered=CompletableDeferred<Unit>();val release=CompletableDeferred<Unit>()

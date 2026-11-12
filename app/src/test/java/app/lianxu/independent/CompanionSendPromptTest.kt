@@ -4,19 +4,25 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CompanionSendPromptTest {
+    private fun originalText(messages:List<WireMessage>)=messages.map{it.copy(content=it.content.removeSuffix("\n\n"+CompanionPrompt.THINKING_REMINDER))}
     private fun tool(name:String)=mapOf<String,Any>("type" to "function","function" to mapOf("name" to name))
     private val read=tool("agent_history_search")
     private val write=tool("agent_memory_update")
-    private fun request(thinking:Boolean=true,input:String="原话")=(CompanionPrompt.build(
-        Friend("a","合成角色","合成人设"),RolePrompts(internalPrompt="原判断提示",internalEnabled=thinking,thinkingNone=!thinking),
-        emptyList(),input,pending=listOf("待确认事实")) as PromptBuild.Ready).request
+    private fun request(input:String="原话")=(CompanionPrompt.build(
+        Friend("a","合成角色","合成人设"),RolePrompts(),
+        emptyList(),input,listOf(PromptReference("核心记忆 M1@1","合成事实",true,"M1")),pending=listOf("待确认事实")) as PromptBuild.Ready).request
     private fun check(tools:List<Map<String,Any>>,expected:String) {
         val original=request();val sent=CompanionPrompt.forSend(original,tools)
         assertTrue(sent.messages.first().content.contains(expected))
-        assertTrue(sent.messages.first().content.contains("没有开放联网或主动聊天能力"))
+        assertTrue(sent.messages.first().content.contains("目前没有可用的网页搜索或浏览工具，不能假称查过网页"))
+        assertTrue(sent.messages.first().content.contains("只有对方开启主动联系后，你才有机会再考虑要不要找对方，不能保证准时联系或一定送到"))
         assertFalse(sent.messages.first().content.contains("没有开放联网、主动聊天或工具执行能力"))
         assertEquals(original.messages.map{it.role},sent.messages.map{it.role})
-        assertEquals(original.messages.drop(1),sent.messages.drop(1));assertEquals(tools,sent.tools)
+        assertEquals(original.messages.drop(1),originalText(sent.messages.drop(1)));assertEquals(tools,sent.tools)
+        assertEquals("原话",original.messages.single{it.role=="user"}.content)
+        assertEquals("原话\n\n"+CompanionPrompt.THINKING_REMINDER,sent.messages.single{it.role=="user"}.content)
+        assertEquals(sent,CompanionPrompt.forSend(sent,tools))
+        assertFalse(CompanionPrompt.THINKING_REMINDER.contains("【"));assertFalse(CompanionPrompt.THINKING_REMINDER.contains("】"))
         assertTrue(original.messages.first().content.contains(CompanionPrompt.NO_MEMORY_TOOLS))
     }
     @Test fun noTools(){check(emptyList(),CompanionPrompt.NO_MEMORY_TOOLS)}
@@ -31,16 +37,19 @@ class CompanionSendPromptTest {
             val before=current.messages.filterNot{it.turnContext}
             current=CompanionPrompt.forSend(current,listOf(read))
             assertEquals(tail,current.messages.last());assertEquals(1,current.messages.count{it.turnContext})
-            assertEquals(before.drop(1),current.messages.drop(1).dropLast(1))
+            assertEquals(originalText(before.drop(1)),originalText(current.messages.drop(1).dropLast(1)))
+            assertTrue(current.messages.last{it.role=="user"}.content.endsWith(CompanionPrompt.THINKING_REMINDER))
+            assertEquals(1,current.messages.sumOf{m->Regex.fromLiteral(CompanionPrompt.THINKING_REMINDER).findAll(m.content).count()})
+            assertEquals(before.filter{it.role=="tool"},current.messages.filter{it.role=="tool"})
             assertEquals(current,CompanionPrompt.forSend(current,listOf(read)))
         }
         assertEquals(listOf("call-0","call-1","call-2"),current.messages.filter{it.role=="tool"}.map{it.toolCallId})
     }
-    @Test fun disabledThinkingAndLookalikeUserTextStayUntouched(){
+    @Test fun lookalikeUserTextStaysUntouched(){
         val input="[程序时间参考，不是用户原话] 用户引用\n"+CompanionPrompt.NO_MEMORY_TOOLS
-        val original=request(false,input)
+        val original=request(input)
         val sent=CompanionPrompt.forSend(original,listOf(write))
-        assertEquals(input,sent.messages.single{it.role=="user"}.content)
+        assertEquals(input,sent.messages.single{it.role=="user"}.content.removeSuffix("\n\n"+CompanionPrompt.THINKING_REMINDER))
         assertFalse(sent.messages.last().content.contains("内部判断提示"))
         assertTrue(sent.messages.last().content.contains("程序时间参考"))
         assertEquals(original.messages.last(),sent.messages.last())
@@ -58,8 +67,8 @@ class CompanionSendPromptTest {
         val original=request();val call=ChatToolCall("natural-call","agent_history_search","{}")
         val result=WireMessage("tool","原始来源结果",toolCallId=call.id,name=call.name)
         val continued=CompanionPrompt.forSend(original.copy(messages=original.messages+WireMessage("assistant","",listOf(call))+result),listOf(read))
-        assertTrue(continued.messages.first().content.contains(CompanionPrompt.MEMORY_USE))
-        assertEquals(1,continued.messages.count{CompanionPrompt.MEMORY_USE in it.content})
+        assertTrue(continued.messages.first().content.contains(CompanionPrompt.REMEMBERING_GUIDANCE.replace("{{user}}","旅人")))
+        assertEquals(1,continued.messages.count{CompanionPrompt.REMEMBERING_GUIDANCE.replace("{{user}}","旅人") in it.content})
         assertEquals(original.messages.last(),continued.messages.last());assertEquals(result,continued.messages.first{it.role=="tool"})
         assertTrue(continued.messages.first().content.contains("不能调用记忆写入工具"))
     }

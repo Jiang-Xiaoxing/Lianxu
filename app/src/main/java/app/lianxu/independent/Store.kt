@@ -8,8 +8,27 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** Own app-private database. Primary key on friend is also the unique conversation key. */
-class Store(context: Context, name: String = AppServices.databaseName) : SQLiteOpenHelper(context, name, null, 5) {
+class Store(context: Context, name: String = AppServices.databaseName) : SQLiteOpenHelper(context, name, null, 16) {
+    internal val applicationContext=context.applicationContext
     internal val memorySummary=MemorySummaryGuard()
+    /**
+     * A page reload or a test's poll can open the database while the running turn holds a write
+     * transaction; Android has no busy timeout here, so wait briefly instead of throwing at the user.
+     */
+    override fun getReadableDatabase():SQLiteDatabase{
+        var attempt=0
+        while(true){
+            try{return super.getReadableDatabase()}
+            catch(e:android.database.sqlite.SQLiteDatabaseLockedException){if(++attempt>=10)throw e;Thread.sleep(25L*attempt)}
+        }
+    }
+    override fun getWritableDatabase():SQLiteDatabase{
+        var attempt=0
+        while(true){
+            try{return super.getWritableDatabase()}
+            catch(e:android.database.sqlite.SQLiteDatabaseLockedException){if(++attempt>=10)throw e;Thread.sleep(25L*attempt)}
+        }
+    }
     override fun onConfigure(db: SQLiteDatabase) { db.setForeignKeyConstraintsEnabled(true) }
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE friends(id TEXT PRIMARY KEY, name TEXT NOT NULL, bio TEXT NOT NULL, prompt TEXT NOT NULL, tone INTEGER NOT NULL)")
@@ -18,24 +37,55 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
         db.execSQL("CREATE TABLE preferences(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         ChatLedger.createSchema(db)
         ProcessingSchema.create(db)
+        CompanionRepository.create(db)
+        ContactFailures.migrate(db)
+        createReasoningSchema(db)
+        DatabaseRelationSnapshots.create(db)
+        ChatMemoryPills.createSchema(db)
+        MemoryForgetting.migrate(db,AppServices.companionClock())
     }
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) { if(oldVersion<2)ChatLedger.createSchema(db);if(oldVersion<5)ProcessingSchema.create(db) }
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) { if(oldVersion<2)ChatLedger.createSchema(db);if(oldVersion<5)ProcessingSchema.create(db);if(oldVersion<7)CompanionRepository.create(db);if(oldVersion in 7 until 8)CompanionRepository.create(db);if(oldVersion<9)RetiredRelationshipMigration.remove(db);if(oldVersion<10)createReasoningSchema(db);if(oldVersion<11){
+        db.execSQL("ALTER TABLE companion_opportunities RENAME TO relation_old_opportunities")
+        CompanionRepository.create(db)
+        // Copy only the columns both shapes share, so a development database whose table is newer than its version number still opens.
+        val shared=columns(db,"relation_old_opportunities").filter{it in columns(db,"companion_opportunities")}.joinToString(","){"\"$it\""}
+        db.execSQL("INSERT INTO companion_opportunities($shared) SELECT $shared FROM relation_old_opportunities")
+        db.execSQL("DROP TABLE relation_old_opportunities")
+    };if(oldVersion<12)DatabaseRelationSnapshots.create(db);if(oldVersion<13)MemoryForgetting.migrate(db,AppServices.companionClock());if(oldVersion<14)ChatMemoryPills.createSchema(db);if(oldVersion<15){
+        // Databases created by an earlier build of this version already have the table but not the column.
+        ChatMemoryPills.createSchema(db)
+        if(!hasColumn(db,"memory_operations","saved"))db.execSQL("ALTER TABLE memory_operations ADD COLUMN saved INTEGER NOT NULL DEFAULT 0")
+    };if(oldVersion<16)ContactFailures.migrate(db) }
+    private fun hasColumn(db:SQLiteDatabase,table:String,column:String)=column in columns(db,table)
+    private fun columns(db:SQLiteDatabase,table:String)=db.rawQuery("PRAGMA table_info($table)",null).use{c->buildList{while(c.moveToNext())add(c.getString(1))}}
+    private fun createReasoningSchema(db:SQLiteDatabase){
+        // A display-only child of the reply: never a preference or part of source text/history.
+        db.execSQL("CREATE TABLE IF NOT EXISTS message_reasoning(message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,display_reasoning TEXT NOT NULL CHECK(length(display_reasoning)<=262144))")
+        db.execSQL("CREATE TRIGGER IF NOT EXISTS reasoning_retracted_insert AFTER INSERT ON message_state WHEN NEW.deleted=1 BEGIN DELETE FROM message_reasoning WHERE message_id=NEW.message_id; END")
+        db.execSQL("CREATE TRIGGER IF NOT EXISTS reasoning_retracted_update AFTER UPDATE OF deleted ON message_state WHEN NEW.deleted=1 BEGIN DELETE FROM message_reasoning WHERE message_id=NEW.message_id; END")
+        db.execSQL("CREATE TRIGGER IF NOT EXISTS reasoning_edited_message AFTER UPDATE OF body,mine ON messages WHEN NEW.body<>OLD.body OR NEW.mine<>OLD.mine BEGIN DELETE FROM message_reasoning WHERE message_id=NEW.id; END")
+    }
     private fun insertFriend(db: SQLiteDatabase, f: Friend): Boolean = db.insertWithOnConflict("friends", null, ContentValues().apply {
         put("id", f.id); put("name", f.name.trim()); put("bio", f.bio.trim()); put("prompt", f.prompt); put("tone", f.tone)
     }, SQLiteDatabase.CONFLICT_IGNORE) != -1L
     private fun insertMessage(db: SQLiteDatabase, id: String, text: String, mine: Boolean) {
         db.insertOrThrow("messages", null, ContentValues().apply { put("friend_id", id); put("body", text); put("mine", if (mine) 1 else 0); put("created", System.currentTimeMillis()) })
     }
+    private val messageSelect="SELECT m.id,m.friend_id,CASE WHEN COALESCE(s.deleted,0)=1 THEN '【已撤回】' ELSE m.body END,m.mine,m.created,CASE WHEN m.mine=0 AND COALESCE(s.deleted,0)=0 THEN COALESCE(r.display_reasoning,'') ELSE '' END FROM messages m LEFT JOIN message_state s ON s.message_id=m.id LEFT JOIN message_reasoning r ON r.message_id=m.id"
+    private fun readMessages(extra:String,args:Array<String>?=null):List<Message> =
+        readableDatabase.rawQuery("$messageSelect $extra",args).use { c -> buildList { while (c.moveToNext()) add(Message(c.getLong(0),c.getString(1),c.getString(2),c.getInt(3)==1,c.getLong(4),c.getString(5))) } }
     suspend fun friends(): List<Friend> = withContext(Dispatchers.IO) {
         readableDatabase.rawQuery("SELECT id,name,bio,prompt,tone FROM friends ORDER BY rowid", null).use { c -> buildList { while (c.moveToNext()) add(Friend(c.getString(0),c.getString(1),c.getString(2),c.getString(3),c.getInt(4))) } }
     }
-    suspend fun messages(): List<Message> = withContext(Dispatchers.IO) {
-        readableDatabase.rawQuery("SELECT m.id,m.friend_id,CASE WHEN COALESCE(s.deleted,0)=1 THEN '【已撤回】' ELSE m.body END,m.mine,m.created FROM messages m LEFT JOIN message_state s ON s.message_id=m.id ORDER BY m.id", null).use { c -> buildList { while (c.moveToNext()) add(Message(c.getLong(0),c.getString(1),c.getString(2),c.getInt(3)==1,c.getLong(4))) } }
+    suspend fun messages(): List<Message> = withContext(Dispatchers.IO) { readMessages("ORDER BY m.id") }
+    suspend fun messagesFor(friendId:String):List<Message> = withContext(Dispatchers.IO) { readMessages("WHERE m.friend_id=? ORDER BY m.id",arrayOf(friendId)) }
+    suspend fun messageFingerprints():Map<String,MessageFingerprint> = withContext(Dispatchers.IO) {
+        readableDatabase.rawQuery("SELECT m.friend_id,count(*),max(m.id),sum(COALESCE(s.deleted,0)),sum(COALESCE(s.revision,0)),sum(CASE WHEN m.mine=0 AND COALESCE(s.deleted,0)=0 THEN length(COALESCE(r.display_reasoning,'')) ELSE 0 END),sum(length(m.body)) FROM messages m LEFT JOIN message_state s ON s.message_id=m.id LEFT JOIN message_reasoning r ON r.message_id=m.id GROUP BY m.friend_id",null).use{c->buildMap{while(c.moveToNext())put(c.getString(0),MessageFingerprint(c.getString(0),c.getInt(1),c.getLong(2),c.getLong(3),c.getLong(4),c.getLong(5),c.getLong(6)))}}
     }
     suspend fun add(friends: List<Friend>, demoGreeting:Boolean=true) = withContext(Dispatchers.IO) {
         require(friends.all { it.id.isNotBlank() && it.name.isNotBlank() && it.bio.isNotBlank() })
         val db = writableDatabase; db.beginTransaction()
-        try { friends.forEach { if (insertFriend(db,it)) { RoleExamplesRepository.initialize(db,it.id); if(demoGreeting) insertMessage(db,it.id,"【演示开场】你好，我是${it.name}。很高兴认识你。",false) } }; db.setTransactionSuccessful() } finally { db.endTransaction() }
+        try { friends.forEach { if (insertFriend(db,it)) { if(demoGreeting) insertMessage(db,it.id,"【演示开场】你好，我是${it.name}。很高兴认识你。",false) } }; db.setTransactionSuccessful() } finally { db.endTransaction() }
     }
     suspend fun exchange(friend: Friend, input: String, reply: String) = withContext(Dispatchers.IO) {
         val db=writableDatabase; db.beginTransaction()
@@ -44,6 +94,9 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
     suspend fun preference(key: String, default: String): String = withContext(Dispatchers.IO) {
         readableDatabase.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(key)).use { if(it.moveToFirst()) it.getString(0) else default }
     }
+    suspend fun savePreference(key: String, value: String) = withContext(Dispatchers.IO) { AppMutationGate.read{
+        writableDatabase.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",key);put("value",value)},SQLiteDatabase.CONFLICT_REPLACE)
+    } }
     internal suspend fun updateRolePrompts(id:String,change:(RolePrompts)->RolePrompts)=withContext(Dispatchers.IO){AppMutationGate.read{
         val db=writableDatabase;db.beginTransaction()
         try{
@@ -77,7 +130,7 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
         require(friend.name.isNotBlank()&&friend.name.length<=30&&prompts.characterDefinition.isNotBlank()&&prompts.characterDefinition.length<=8000&&prompts.expression.length<=8000&&prompts.opening.length<=8000)
         val db=writableDatabase;db.beginTransaction()
         try{
-            check(insertFriend(db,friend));RoleExamplesRepository.initialize(db,friend.id)
+            check(insertFriend(db,friend))
             db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",RolePromptStore.key(friend.id));put("value",RolePromptStore.encode(prompts))},SQLiteDatabase.CONFLICT_REPLACE)
             seedOpening(db,friend.id,prompts.opening);db.setTransactionSuccessful()
         }finally{db.endTransaction()}
@@ -87,7 +140,7 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
         val db=writableDatabase;db.beginTransaction()
         try{
             val raw=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(RolePromptStore.key(id))).use{if(it.moveToFirst())it.getString(0)else""}
-            val p=change(RolePromptStore.decode(raw));require(p.characterDefinition.isNotBlank()&&p.initialRelationship.length<=4000&&listOf(p.characterDefinition,p.expression,p.opening,p.extra,p.internalPrompt).all{it.length<=8000})
+            val p=change(RolePromptStore.decode(raw));require(p.characterDefinition.isNotBlank()&&p.initialRelationship.length<=4000&&listOf(p.characterDefinition,p.expression,p.opening,p.extra).all{it.length<=8000})
             check(db.update("friends",ContentValues().apply{put("name",name.trim())},"id=?",arrayOf(id))==1)
             db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",RolePromptStore.key(id));put("value",RolePromptStore.encode(p))},SQLiteDatabase.CONFLICT_REPLACE)
             seedOpening(db,id,p.opening);db.setTransactionSuccessful()
@@ -97,3 +150,5 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
         writableDatabase.insertWithOnConflict("preferences",null,ContentValues().apply { put("key",key); put("value",value) },SQLiteDatabase.CONFLICT_REPLACE)
     }
 }
+
+data class MessageFingerprint(val friendId:String,val count:Int,val maxId:Long,val deletedSum:Long,val revisionSum:Long,val reasoningChars:Long,val bodyChars:Long)

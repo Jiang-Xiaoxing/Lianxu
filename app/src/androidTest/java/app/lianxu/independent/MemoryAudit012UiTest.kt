@@ -37,7 +37,7 @@ class MemoryAudit012UiTest {
             try{b.complete(work,setOf("one"),1,work.id);fail()}catch(e:ProcessingRejected){assertEquals("BATCH_REVIEW_REQUIRED",e.code)};b.fail(work,"BATCH_REVIEW_REQUIRED");v.refreshProcessing()
         }
         ui.runOnIdle{v.open("processing-role","audit-ui")}
-        ui.onNodeWithTag("memory-maintenance").performClick()
+        ui.onNodeWithText("更多",substring=true).performClick();ui.onNodeWithTag("memory-maintenance").performClick()
         ui.onNodeWithTag("batch-keep-$memoryId").performScrollTo();shot("01-batch-review-real-app")
         ui.onNodeWithTag("batch-keep-$memoryId").performClick();ui.waitUntil(10000){runBlocking{MemoryBatchRepository(repo).reviews("audit-ui").single().acknowledged}}
         assertEquals(0,calls.get());assertEquals(0L,runBlocking{repo.cursor("audit-ui")});ui.activityRule.scenario.recreate()
@@ -49,7 +49,7 @@ class MemoryAudit012UiTest {
             val p=StoredMemory("proposal","audit-ui",MemoryCategory.USER_PROFILE,"来源撤回前的旧候选",evidence=listOf(MemoryEvidence(source.source,"user",source.user.text,source.user.text,source.user.created,source.zone)))
             repo.tx{repo.candidate(it,"audit-ui",null,p,"合成旧候选","withdrawn-ui")};val changes=SourceChanges(repo);val impact=changes.preview("audit-ui",source.source.turnId,"user","",true);assertEquals(1,impact.candidates.size);changes.confirm(impact);v.refreshProcessing()
         }
-        ui.onNodeWithTag("back").performClick();ui.onNodeWithTag("memory-candidates").performClick();ui.onNodeWithTag("candidate-accept-withdrawn-ui").performScrollTo().assertIsNotEnabled();shot("03-invalid-candidate-real-app")
+        ui.onNodeWithTag("back").performClick();ui.onNodeWithText("更多",substring=true).performClick();ui.onNodeWithTag("memory-candidates").performClick();ui.onNodeWithTag("candidate-accept-withdrawn-ui").performScrollTo().assertIsNotEnabled();shot("03-invalid-candidate-real-app")
         val m=runBlocking{repo.memories("audit-ui").single()};assertTrue(m.manual&&m.locked);assertEquals("人工修正：喜欢安静的花园。",m.text);assertEquals(1,calls.get())
     }
 }

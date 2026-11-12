@@ -4,9 +4,9 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MemoryFinishTest {
-    @Test fun toolsAreIndependentAndDefaultOff() {
+    @Test fun recallDefaultsOnWhileWriteRemainsOff() {
         val defaults=MemoryRules()
-        assertFalse(defaults.proactiveRecall);assertFalse(defaults.immediateWrite)
+        assertTrue(defaults.proactiveRecall);assertFalse(defaults.immediateWrite)
         assertTrue(defaults.copy(proactiveRecall=true).valid())
         assertTrue(defaults.copy(immediateWrite=true).valid())
         assertEquals(15,defaults.relatedCount)

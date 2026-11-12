@@ -1,3 +1,5 @@
+> 历史文档：以下内容保留公开 v0.19 时的说明，不代表 1.0.0 当前行为。请先阅读根目录 README 和 1.0.0 更新说明。
+
 # 源码复用与许可状态
 
 这是现有记录和有界来源补核的整理，不是完整法律审计。来源仓库 [Jiang-Xiaoxing/Nekobot-Android](https://github.com/Jiang-Xiaoxing/Nekobot-Android) 的API许可证元数据为GPL-3.0，父仓库为asukaneko/Nekobot-Android；这不能单独证明每个用户独立新增组件均受第三方GPL权属约束。补核仅限已知用户新增日期文件、工具及相关Git作者/父版本/文件差异，没有重新移植其他源码或素材。维护者已为本项目代码选择GPL-3.0-only；第三方材料保留原许可。

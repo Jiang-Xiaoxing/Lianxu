@@ -33,7 +33,7 @@ internal class MemorySemanticDeduplicator(private val vectors:MemoryVectorIndex,
                     decisions+=MemorySemanticPlan.parse(batch,group,map,response.text)
                 }
                 val actions=MemorySemanticPlan.actions(facts,decisions)
-                Diagnostics.event("memory.semantic.judged",mapOf("character" to work.friendId,"new_old_pairs" to pairs.count{it.kind=="NEW_OLD"},"new_new_pairs" to pairs.count{it.kind=="NEW_NEW"},"judge_calls" to groups.size,"verdicts" to decisions.map{mapOf("pair" to it.pair.id,"kind" to it.pair.kind,"verdict" to it.verdict.name,"reason" to it.reason)}))
+                Diagnostics.event("memory.semantic.judged",mapOf("character" to work.friendId,"new_old_pairs" to pairs.count{it.kind=="NEW_OLD"},"new_new_pairs" to pairs.count{it.kind=="NEW_NEW"},"judge_calls" to groups.size,"verdicts" to decisions.map{mapOf("pair" to it.pair.id,"kind" to it.pair.kind,"verdict" to it.verdict.name,"reason" to Diagnostics.raw(it.reason))}))
                 Result(transform(ops,map,actions),byText)
             }
             if(result!=null)return result

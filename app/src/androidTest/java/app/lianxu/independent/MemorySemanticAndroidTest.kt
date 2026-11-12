@@ -97,11 +97,19 @@ class MemorySemanticAndroidTest {
         val candidate=repo.candidates("a").single();assertEquals("我现在喜欢喝咖啡",candidate.proposed.text);assertTrue(candidate.valid)
         repo.resolveCandidate("a",candidate.id,true,before.version);assertEquals(candidate.proposed.text,repo.memories("a").single().text)
     }
+    /**
+     * 2026-11-02 requirement change approved by 小星: when a related memory changes during the request the whole batch is
+     * invalidated and re-summarized from the latest content. Previously the run had to fail; now the stale result is
+     * still never published (the concurrent correction stays), and a fresh summary over the latest state is made.
+     */
     @Test fun lateJudgmentCannotOverwriteAConcurrentAutomaticCorrection()=runBlocking {
         val before=old();source("我不喝咖啡。");val m=Model(listOf("我不喝咖啡"));val e=Embeddings()
         m.beforeJudge={repo.tx{db->repo.saveMemory(db,before.copy(text="并发写入的正确事实",version=before.version+1))}}
-        assertFalse(engine(m,e).ensureRoom("a",forceOne=true).success)
-        assertEquals(listOf("并发写入的正确事实"),repo.memories("a").map{it.text});assertEquals(1,repo.recentSources("a").size)
+        // Fresh judgment against the latest state: the corrected memory no longer mentions 咖啡, so the fixture verdict is
+        // DIFFERENT and the new fact is added beside it; the concurrent correction itself is never overwritten.
+        val result=engine(m,e).ensureRoom("a",forceOne=true);assertTrue(result.toString(),result.success);assertEquals(2,m.summaries)
+        assertEquals("并发写入的正确事实",repo.memories("a").single{it.id==before.id}.text);assertEquals(before.version+1,repo.memories("a").single{it.id==before.id}.version)
+        assertEquals(setOf("并发写入的正确事实","我不喝咖啡"),repo.memories("a").map{it.text}.toSet());assertEquals(0,repo.recentSources("a").size)
     }
     @Test fun cancelDuringJudgmentRejectsItsLateDecisionAndReleasesManualEditing()=runBlocking {
         old();source("我不喝咖啡。");val entered=CompletableDeferred<Unit>();val release=CompletableDeferred<Unit>()

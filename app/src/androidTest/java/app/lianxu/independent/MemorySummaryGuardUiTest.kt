@@ -13,7 +13,7 @@ class MemorySummaryGuardUiTest {
     @Test fun summaryDisablesSavingPreservesDraftAndRestoresEditing(){
         ui.waitUntil(15000){app().ready};val v=app();val repo=v.processing
         runBlocking{repo.store.add(listOf(Friend("guard-ui","合成角色","测试")),false);v.refreshProcessing()}
-        ui.runOnIdle{v.open("processing-role","guard-ui")};ui.onNodeWithTag("memory-add").performClick()
+        ui.runOnIdle{v.open("processing-role","guard-ui")};ui.onNodeWithText("我写的").performClick();ui.onNodeWithTag("memory-add").performClick()
         ui.onNodeWithTag("memory-text").performTextInput("尚未保存的合成草稿")
         val ticket=repo.store.memorySummary.begin("guard-ui",ChatAttemptLease(),10000){}!!
         try{ui.waitForIdle();ui.onNodeWithTag("memory-save").assertIsNotEnabled()}

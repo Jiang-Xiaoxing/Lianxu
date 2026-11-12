@@ -6,6 +6,7 @@ import com.google.gson.JsonObject
 data class UserPersona(val name:String="",val address:String="",val introduction:String="") {
     val displayName get()=name.ifBlank{"旅人"}
     val calledName get()=address.ifBlank{name}
+    fun addressee()=calledName.ifBlank{"对方"}
     val configured get()=name.isNotBlank()||address.isNotBlank()||introduction.isNotBlank()
     fun valid()=name.length<=80&&address.length<=80&&introduction.length<=4000&&listOf(name,address).none{v->v.any{it.isISOControl()}}
     fun normalized()=copy(name=name.trim(),address=address.trim(),introduction=introduction.trim()).also{require(it.valid())}

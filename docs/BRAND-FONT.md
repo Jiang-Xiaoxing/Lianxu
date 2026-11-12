@@ -1,3 +1,5 @@
+> 历史文档：以下内容保留公开 v0.19 时的说明，不代表 1.0.0 当前行为。请先阅读根目录 README 和 1.0.0 更新说明。
+
 # 品牌字体来源
 
 左上“恋叙”使用Google Fonts的Ma Shan Zheng两字子集，文件为 `app/src/main/res/font/lianxu_brand.ttf`。正文与功能文字保持系统字体。

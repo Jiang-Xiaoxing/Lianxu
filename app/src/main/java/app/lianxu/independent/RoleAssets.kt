@@ -1,6 +1,9 @@
 package app.lianxu.independent
 
 import android.content.ContentValues
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import java.io.ByteArrayOutputStream
 
 /** Minimal persistent owned resources for portable backups, not attachment sending or image understanding. */
 internal class RoleAssets(private val repo:ProcessingRepository){
@@ -24,4 +27,29 @@ internal class RoleAssets(private val repo:ProcessingRepository){
         Unit
     }
     suspend fun list(id:String)=repo.read{db->db.rawQuery("SELECT path,kind,mime,length(data) FROM role_assets WHERE friend_id=? ORDER BY path",arrayOf(id)).use{c->buildList{while(c.moveToNext())add(Asset(c.getString(0),c.getString(1),c.getString(2),read(db,id,c.getString(0),c.getInt(3))))}}}
+    suspend fun avatar(id:String)=repo.read{db->db.rawQuery("SELECT path,kind,mime,length(data) FROM role_assets WHERE friend_id=? AND kind=? ORDER BY path LIMIT 1",arrayOf(id,"avatar")).use{c->if(c.moveToFirst())Asset(c.getString(0),c.getString(1),c.getString(2),read(db,id,c.getString(0),c.getInt(3))) else null}}
+}
+
+/** Downscale a picked photo so the avatar stays small enough to store with the role. */
+internal fun prepareRoleAvatar(bytes:ByteArray):Pair<String,ByteArray>{
+    require(bytes.isNotEmpty()){"无法识别这张图片"}
+    val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+    BitmapFactory.decodeByteArray(bytes,0,bytes.size,bounds)
+    require(bounds.outWidth>0&&bounds.outHeight>0){"无法识别这张图片"}
+    val maxSide=512
+    val longest=maxOf(bounds.outWidth,bounds.outHeight)
+    val sample=maxOf(1,longest/maxSide)
+    val bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.size,BitmapFactory.Options().apply{inSampleSize=sample})?:error("无法识别这张图片")
+    val scaled=if(maxOf(bitmap.width,bitmap.height)>maxSide){
+        val ratio=maxSide.toFloat()/maxOf(bitmap.width,bitmap.height)
+        val w=(bitmap.width*ratio).toInt().coerceAtLeast(1)
+        val h=(bitmap.height*ratio).toInt().coerceAtLeast(1)
+        Bitmap.createScaledBitmap(bitmap,w,h,true).also{if(it!==bitmap)bitmap.recycle()}
+    }else bitmap
+    val out=ByteArrayOutputStream()
+    check(scaled.compress(Bitmap.CompressFormat.JPEG,90,out)){"无法保存这张图片"}
+    if(scaled!==bitmap)scaled.recycle() else scaled.recycle()
+    val data=out.toByteArray()
+    require(data.size in 1..BackupArchive.MAX_FILE){"图片太大，请换一张较小的"}
+    return "image/jpeg" to data
 }

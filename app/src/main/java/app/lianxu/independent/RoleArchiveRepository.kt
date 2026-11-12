@@ -26,7 +26,7 @@ internal class RoleArchiveRepository(private val store:Store) {
     }
     private fun exists(db:SQLiteDatabase,id:String)=db.rawQuery("SELECT 1 FROM friends WHERE id=?",arrayOf(id)).use{it.moveToFirst()}
     private fun idle(db:SQLiteDatabase,id:String){
-        listOf("chat_turns" to "PENDING","memory_batches" to "RUNNING","relationship_jobs" to "RUNNING").forEach{(table,state)->
+        listOf("chat_turns" to "PENDING","memory_batches" to "RUNNING").forEach{(table,state)->
             require(!db.rawQuery("SELECT 1 FROM $table WHERE friend_id=? AND state=? LIMIT 1",arrayOf(id,state)).use{it.moveToFirst()}){"角色仍有进行中的任务，请先停止或等待完成，再重新预览"}
         }
     }
@@ -46,8 +46,8 @@ internal class RoleArchiveRepository(private val store:Store) {
         else {idle(db,target);val old=snapshot(db,target,true);val f=old["character"].asJsonObject
             val counts=old["records"].asJsonObject
             Preview(archive,target,RoleArchive.hash(old.toString().toByteArray()),if(archive.scope=="role")
-                "覆盖「${f["name"].asString}」的名字、介绍、角色提示和表达设置。保留聊天、记忆、关系记录；取消该角色旧评估任务。"
-                else "覆盖「${f["name"].asString}」全部角色资料及记录：本地聊天 ${counts["messages"].asJsonArray.size()} 条、记忆 ${counts["memory_current"].asJsonArray.size()} 条、关系历史 ${counts["relationship_history"].asJsonArray.size()} 版将由包内资料替换。旧任务与派生缓存会清理，无法在此撤销，请先导出备份。\n${archive.summary}")
+                "覆盖「${f["name"].asString}」的名字、介绍、角色提示和表达设置。保留聊天和记忆记录；关系性格和起点保持不变；取消该角色旧处理任务。"
+                else "覆盖「${f["name"].asString}」全部角色资料及记录：本地聊天 ${counts["messages"].asJsonArray.size()} 条、记忆 ${counts["memory_current"].asJsonArray.size()} 条将由包内资料替换。旧任务与派生缓存会清理，无法在此撤销，请先导出备份。\n${archive.summary}")
         }
     }
     suspend fun commit(preview:Preview,confirmOverwrite:Boolean=false,lease:ChatAttemptLease=ChatAttemptLease(),checkpoint:()->Unit={}):String=atomic(mutation=true){db->
@@ -68,6 +68,10 @@ internal class RoleArchiveRepository(private val store:Store) {
         checkpoint()
         val prompts=root["prompts"].asJsonObject.deepCopy().apply {
             addProperty("examplesEnabled",false);addProperty("examplesClosed",true)
+            if(target!=null){
+                val old=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(RolePromptStore.key(id))).use{if(it.moveToFirst())RolePromptStore.decode(it.getString(0))else RolePrompts()}
+                addProperty("relationTemplate",old.relationTemplate);addProperty("relationStart",old.relationStart)
+            }
         }
         putPreference(db,RolePromptStore.key(id),prompts.toString())
         // Retain imported example text, but never resume selection or activate historical dialogue.
@@ -81,9 +85,20 @@ internal class RoleArchiveRepository(private val store:Store) {
     }
     private fun clearJobs(db:SQLiteDatabase,id:String){
         listOf("memory_operations","memory_batch_reviews").forEach{db.delete(it,"batch_id IN (SELECT id FROM memory_batches WHERE friend_id=?)",arrayOf(id))}
-        db.delete("memory_batches","friend_id=?",arrayOf(id));db.delete("relationship_jobs","friend_id=?",arrayOf(id))
+        db.delete("memory_batches","friend_id=?",arrayOf(id))
     }
     private fun clearRecords(db:SQLiteDatabase,id:String){
+        val view=CompanionRepository(store).relationship(db,id)
+        val turns=db.rawQuery("SELECT id FROM chat_turns WHERE friend_id=?",arrayOf(id)).use{c->buildList{while(c.moveToNext())add(c.getString(0))}}
+        val transientKeys=db.rawQuery("SELECT key FROM preferences",null).use{c->buildList{while(c.moveToNext()){val key=c.getString(0)
+            if(key==ReplyAccountingQueue.batchKey(id)||turns.any{key=="memory-recall-usage:$it"||key.startsWith("memory-tools:$it:")||key==ChatLedger.errorKey(it)||key==ReplyAccountingQueue.key(it)||key==ReplyAccountingQueue.readsKey(it)})add(key)}}}
+        transientKeys.forEach{db.delete("preferences","key=?",arrayOf(it))}
+        listOf("companion_action_learning","companion_receipts","companion_opportunities","companion_uses","companion_blocks","companion_sources","companion_vectors","companion_state").forEach{db.delete(it,"role=?",arrayOf(id))}
+        db.delete("relationship_snapshots","role=?",arrayOf(id))
+        db.delete("memory_recall_state","friend_id=?",arrayOf(id))
+        listOf(RelationStorage.key(id),"relationship-cache:$id",RelationFeeling.key(id),"memory-core-set:$id","memory-batch-failure:$id").forEach{db.delete("preferences","key=?",arrayOf(it))}
+        // No old message IDs: a baseline at epoch zero preserves the effective personality for all imported records.
+        RelationStorage.write(db,id,RelationHistory(changes=listOf(RelationChange(0,view.parameters,view.parameters,view.label))))
         clearJobs(db,id)
         db.delete("candidate_injections","friend_id=?",arrayOf(id))
         for(table in order.reversed()){
@@ -105,10 +120,6 @@ internal class RoleArchiveRepository(private val store:Store) {
             val m=StoredMemory.from(JSONObject(raw))
             return m.copy(id=newMemory(m.id),friendId=id,evidence=m.evidence.map{e->e.copy(source=e.source.copy(characterId=id,turnId=msg(e.source.turnId)))}).json().toString()
         }
-        fun relation(raw:String):String {
-            val s=RelationshipState.from(JSONObject(raw))
-            return s.copy(cursor=msg(s.cursor),feeling=s.feeling?.let{f->f.copy(source=f.source.copy(characterId=id,turnId=msg(f.source.turnId)))}).json().toString()
-        }
         for(table in order){for(raw in data[table].asJsonArray){checkpoint();val row=raw.asJsonObject.deepCopy()
             if(row.has("friend_id"))row.addProperty("friend_id",id)
             when(table){
@@ -120,8 +131,6 @@ internal class RoleArchiveRepository(private val store:Store) {
                 "memory_candidates"->{row.addProperty("id",UUID.randomUUID().toString());if(!row["target_id"].isJsonNull)row.addProperty("target_id",newMemory(row["target_id"].asString));val j=JSONObject(row["json"].asString);j.put("proposed",JSONObject(memory(j.getJSONObject("proposed").toString())));row.addProperty("json",j.toString())}
                 "memory_retired"->{row.addProperty("source_user_id",msg(row["source_user_id"].asLong));row.addProperty("batch_id","archive-"+UUID.randomUUID())}
                 "memory_progress"->row.addProperty("cursor",msg(row["cursor"].asLong))
-                "relationship_state"->{row.addProperty("cursor",msg(row["cursor"].asLong));row.addProperty("json",relation(row["json"].asString))}
-                "relationship_history"->{row.addProperty("boundary",msg(row["boundary"].asLong));row.addProperty("json",relation(row["json"].asString))}
             }
             db.insertOrThrow(table,null,values(row))
         }}
@@ -151,12 +160,12 @@ internal class RoleArchiveRepository(private val store:Store) {
         turns.forEach{(u,t)->require(messages[u]?.get("mine")?.asLong==1L&&t["source_revision"].asLong>0)
             java.time.ZoneId.of(t["source_zone"].asString)
             require(t["attempt"].asLong in 1..100000 && (t["error_code"].isJsonNull || ChatFailure.entries.any{it.name==t["error_code"].asString})){"聊天状态无效"}
-            require(t["state"].asString in setOf("COMPLETED","FAILED","CANCELLED","INTERRUPTED")){"不导入进行中的聊天任务"}
+            require(t["state"].asString in setOf("COMPLETED","FAILED","CANCELLED","INTERRUPTED","SUPERSEDED")){"不导入进行中的聊天任务"}
             require(t["config_id"].asString.isEmpty()&&t["owner_session"].asString.isEmpty()){"包内不能恢复模型配置或任务"}
-            if(t["state"].asString=="COMPLETED"){val a=t["assistant_message_id"].asLong;require(messages[a]?.get("mine")?.asLong==0L&&a>u&&assistants.add(a))}
+            if(t["state"].asString=="COMPLETED"||!t["assistant_message_id"].isJsonNull){val a=t["assistant_message_id"].asLong;require(messages[a]?.get("mine")?.asLong==0L&&a>u&&assistants.add(a))}
             else require(t["assistant_message_id"].isJsonNull)
         }
-        fun source(ref:SourceRef,current:Boolean=false){val t=turns[ref.turnId]?:error("来源原话不在包内");require(ref.characterId==id&&ref.version>0&&ref.version<=t["source_revision"].asLong){"来源归属或版本无效"};if(current)require(t["state"].asString=="COMPLETED"&&ref.version==t["source_revision"].asLong&&listOf(ref.turnId,t["assistant_message_id"].asLong).none{states[it]?.get("deleted")?.asLong==1L}){"有效来源已经变化"}}
+        fun source(ref:SourceRef,current:Boolean=false){val t=turns[ref.turnId]?:error("来源原话不在包内");require(ref.characterId==id&&ref.version>0&&ref.version<=t["source_revision"].asLong){"来源归属或版本无效"};if(current)require(t["state"].asString in setOf("COMPLETED","SUPERSEDED")&&ref.version==t["source_revision"].asLong&&listOfNotNull(ref.turnId,t["assistant_message_id"].takeUnless{it.isJsonNull}?.asLong).none{states[it]?.get("deleted")?.asLong==1L}){"有效来源已经变化"}}
         fun memory(raw:String,checkCurrent:Boolean=false):StoredMemory {RoleArchive.parse(raw.toByteArray());val m=StoredMemory.from(JSONObject(raw));require(m.friendId==id&&m.version>0&&m.text.length in 1..8000)
             m.evidence.forEach{e->source(e.source,checkCurrent&&m.valid);require(e.side in setOf("user","assistant")&&e.quote.isNotBlank()&&e.quote in e.snapshot);java.time.ZoneId.of(e.zone)
                 val t=turns.getValue(e.source.turnId);val mid=if(e.side=="user")e.source.turnId else t["assistant_message_id"].asLong
@@ -172,8 +181,7 @@ internal class RoleArchiveRepository(private val store:Store) {
         fun cursor(n:Long){require(n==0L||n in turns){"记录游标不在包内"}}
         records.getValue("memory_progress").forEach{cursor(it["cursor"].asLong)}
         records.getValue("memory_retired").forEach{r->source(SourceRef(id,r["source_user_id"].asLong,r["source_version"].asLong))}
-        for(table in listOf("relationship_state","relationship_history"))records.getValue(table).forEach{r->val s=RelationshipState.from(JSONObject(r["json"].asString));require(s.version==r["version"].asInt&&s.version>=0);cursor(s.cursor);require(s.cursor==r[if(table=="relationship_state")"cursor" else "boundary"].asLong);s.values.values.forEach{require(it.score in 0..100&&it.statement.length in 1..500)};s.feeling?.let{source(it.source)}}
-        require(records.getValue("memory_progress").size<=1&&records.getValue("relationship_state").size<=1)
+        require(records.getValue("memory_progress").size<=1)
     }
     private fun values(row:JsonObject)=ContentValues().apply{row.entrySet().forEach{(key,v)->when{v.isJsonNull->putNull(key);v.asJsonPrimitive.isNumber->put(key,RoleArchive.integer(v));else->put(key,v.asString)}}}
     private fun putPreference(db:SQLiteDatabase,key:String,value:String){db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",key);put("value",value)},SQLiteDatabase.CONFLICT_REPLACE)}

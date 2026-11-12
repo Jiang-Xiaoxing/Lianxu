@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="360" viewBox="0 0 1080 360">
+<rect width="1080" height="360" rx="20" fill="#f8f5ee"/>
+<g font-family="sans-serif" fill="#2d3439">
+<text x="32" y="48" font-size="25" font-weight="700">以后：整理成条目，再按话题找回来</text>
+<text x="32" y="80" font-size="16" fill="#626b70">虚构例子 · 当前工作副本静态核对 · 真实模型效果未验收</text>
+<rect x="30" y="112" width="320" height="190" rx="15" fill="#ffffff" stroke="#d8d4c9"/>
+<text x="48" y="152" font-size="23" font-weight="700">4 · 整理较早对话</text>
+<text x="48" y="202" font-size="19">手动总结，或超过40完整轮</text>
+<text x="48" y="245" font-size="16" fill="#626b70">默认每批最早20轮；原聊天保留</text>
+<path d="M356 205h18m-7-7 7 7-7 7" fill="none" stroke="#9a7849" stroke-width="3"/>
+<rect x="380" y="112" width="320" height="190" rx="15" fill="#ffffff" stroke="#d8d4c9"/>
+<text x="398" y="152" font-size="23" font-weight="700">5 · 提取并校验</text>
+<text x="398" y="202" font-size="19">可能保存“不喝咖啡”偏好</text>
+<text x="398" y="245" font-size="16" fill="#626b70">来源、版本、人工/锁定保护</text>
+<path d="M706 205h18m-7-7 7 7-7 7" fill="none" stroke="#9a7849" stroke-width="3"/>
+<rect x="730" y="112" width="320" height="190" rx="15" fill="#ffffff" stroke="#d8d4c9"/>
+<text x="748" y="152" font-size="23" font-weight="700">6 · 下次问饮品</text>
+<text x="748" y="202" font-size="19">相关时选中这条记忆</text>
+<text x="748" y="245" font-size="16" fill="#626b70">交给提示词参考；不保证每次命中</text>
+</g></svg>

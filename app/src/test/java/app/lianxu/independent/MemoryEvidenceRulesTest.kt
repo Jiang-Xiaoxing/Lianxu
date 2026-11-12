@@ -6,6 +6,17 @@ import org.junit.Test
 class MemoryEvidenceRulesTest {
     private fun proof(turn:Long=1,side:String="user",quote:String="coffee",snapshot:String="coffee and tea")=MemoryEvidence(SourceRef("a",turn,1),side,quote,snapshot,100,"UTC")
     private fun fact(text:String="No coffee",e:List<MemoryEvidence> = listOf(proof()))=StoredMemory("one","a",MemoryCategory.PREFERENCE_BOUNDARY,text,evidence=e,about=MemoryAbout.USER)
+    @Test fun retryDedupUsesSourceMessageVersionAndContentHash(){
+        val old=fact();val retried=old.copy(id="retry-id",version=1)
+        assertEquals(MemoryEvidenceRules.dedupKeys(old),MemoryEvidenceRules.dedupKeys(retried))
+        assertTrue(MemoryEvidenceRules.sameSourceContent(old,retried,retried.evidence))
+        // Same text from an edited source version or with different content is not a duplicate.
+        val edited=listOf(MemoryEvidence(SourceRef("a",1,2),"user","coffee","coffee and tea",100,"UTC"))
+        assertFalse(MemoryEvidenceRules.sameSourceContent(old,retried.copy(evidence=edited),edited))
+        assertFalse(MemoryEvidenceRules.sameSourceContent(old,fact("No tea"),listOf(proof())))
+        assertNotEquals(MemoryEvidenceRules.contentHash(old),MemoryEvidenceRules.contentHash(fact("No tea")))
+        assertEquals(MemoryEvidenceRules.contentHash(old),MemoryEvidenceRules.contentHash(fact("  No   coffee ")))
+    }
     @Test fun sameSourceAndFactCannotBeStrengthenedByAnotherIdCoreOrTopic(){
         val old=fact();val repeated=old.copy(id="another",version=2,core=true,tags=listOf("new topic"))
         assertTrue(MemoryEvidenceRules.repeated(old,repeated,listOf(proof(quote="tea"))))

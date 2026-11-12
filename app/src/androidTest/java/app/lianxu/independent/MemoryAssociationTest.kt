@@ -27,15 +27,19 @@ class MemoryAssociationTest {
         .put("reason","garden walk was rearranged because of rain").put("quote",source.user.text).put("target_quote",target.text)
     private suspend fun work():Pair<MemoryBatchRepository,MemoryWork>{val b=MemoryBatchRepository(repo);val w=b.prepare("a",listOf(source),"mock",associationIds=setOf(old.id));b.beginAttempt(w,"test");return b to w}
     private suspend fun graph()=repo.read{MemoryAssociations(repo).read(it,"a")}
+    private suspend fun references(role:String,query:String,turn:Long):ProcessingRepository.References {
+        seedRecallOnlyMemories(repo,role)
+        return repo.references(role,query,turn)
+    }
     private suspend fun count(db:SQLiteDatabase,table:String)=db.rawQuery("SELECT COUNT(*) FROM $table",null).use{it.moveToFirst();it.getInt(0)}
     @Test fun receiptPublishesOnceAndRestartKeepsEvidenceAndRecall()=runBlocking{
         val(b,w)=work();val operation=op().put("links",JSONArray().put(link()));val id=b.apply(w,operation)
         assertTrue(graph().isEmpty());assertEquals(id,b.apply(w,JSONObject(operation.toString())));assertEquals(1,repo.history("a",id).size)
         assertTrue(b.complete(w,setOf("one"),1,w.id));assertEquals(1,graph().size);assertEquals(1,graph().single().sourceVersion)
         assertEquals(source.user.text,graph().single().quote);assertEquals(old.text,graph().single().targetQuote)
-        assertTrue(repo.references("a","garden",99).valid.any{it.memoryId==id&&it.label.startsWith("关联")})
+        assertTrue(references("a","garden",99).valid.any{it.memoryId==id&&it.label.startsWith("关联")})
         store.close();store=Store(c,name);repo=ProcessingRepository(store);assertEquals(1,graph().size)
-        assertEquals(2,repo.references("a","garden",100).valid.count{it.related});assertEquals(2,store.messages().count{it.friendId=="a"})
+        assertEquals(2,references("a","garden",100).valid.count{it.related});assertEquals(2,store.messages().count{it.friendId=="a"})
     }
     @Test fun failedIncompleteSummaryKeepsRawAndRetryDoesNotDuplicate()=runBlocking{
         val(b,w)=work();val operation=op().put("links",JSONArray().put(link()));val id=b.apply(w,operation);b.fail(w,"INCOMPLETE")
@@ -57,20 +61,32 @@ class MemoryAssociationTest {
     @Test fun editingTargetInvalidatesVersionedLinksAndDoesNotRewriteHistory()=runBlocking{
         val(b,w)=work();val id=b.apply(w,op().put("links",JSONArray().put(link())));b.complete(w,setOf("one"),1,w.id)
         repo.manualSave("a",old.id,"garden walk rescheduled",old.category,false,true,MemoryAbout.BOTH)
-        assertFalse(repo.references("a","garden",99).valid.any{it.memoryId==id});assertEquals(2,repo.history("a",old.id).size)
+        assertFalse(references("a","garden",99).valid.any{it.memoryId==id});assertEquals(2,repo.history("a",old.id).size)
         assertEquals(1,graph().single().targetVersion)
     }
     @Test fun withdrawnSourceAndDisputedTargetAreExcluded()=runBlocking{
         val(b,w)=work();val id=b.apply(w,op().put("links",JSONArray().put(link())));b.complete(w,setOf("one"),1,w.id)
         val changes=SourceChanges(repo);changes.confirm(changes.preview("a",source.source.turnId,"user","",true))
-        assertFalse(repo.references("a","garden",99).valid.any{it.memoryId==id});assertTrue(repo.references("b","garden",99).valid.isEmpty())
+        assertFalse(references("a","garden",99).valid.any{it.memoryId==id});assertTrue(references("b","garden",99).valid.isEmpty())
         repo.tx{repo.candidate(it,"a",old.id,old.copy(version=2),"Pending synthetic confirmation","synthetic-pending")}
-        assertFalse(repo.references("a","garden",100).valid.any{it.memoryId==old.id})
+        assertFalse(references("a","garden",100).valid.any{it.memoryId==old.id})
     }
-    @Test fun changedTargetDuringSummarySkipsAssociationWithoutLosingSummary()=runBlocking{
-        val(b,w)=work();b.apply(w,op().put("links",JSONArray().put(link())))
+    /**
+     * 2026-11-02 requirement change approved by 小星 (not a loosened check): a batch whose captured association
+     * target changed during the summary is rejected as a whole and re-summarized from the latest content.
+     * The previous expectation (summary saved, only the link skipped) belonged to per-item commits, which were removed.
+     */
+    @Test fun changedTargetDuringSummaryInvalidatesWholeBatchThenResummarizesLatest()=runBlocking{
+        val(b,w)=work()
         repo.manualSave("a",old.id,"garden walk moved",old.category,false,true,MemoryAbout.BOTH)
-        assertTrue(b.complete(w,setOf("one"),1,w.id));assertTrue(graph().isEmpty());assertEquals(2,repo.memories("a").size)
+        val e=runCatching{b.applyDocument(w,listOf(op().put("links",JSONArray().put(link()))),1,w.id,{true},ChatAttemptLease())}.exceptionOrNull()
+        assertEquals("SOURCE_CHANGED",(e as? ProcessingRejected)?.code);assertEquals("MEMORY_CHANGED",b.invalidation(w))
+        assertTrue(graph().isEmpty());assertEquals(1,repo.memories("a").size);assertEquals(1,repo.recentSources("a").size);assertEquals(0L,repo.cursor("a"))
+        b.invalidate(w,"MEMORY_CHANGED")
+        val fresh=repo.memories("a").single{it.id==old.id}
+        val next=b.prepare("a",repo.recentSources("a"),"mock",associationIds=setOf(old.id));b.beginAttempt(next,"retry")
+        b.applyDocument(next,listOf(op().put("links",JSONArray().put(link(fresh)))),1,next.id,{true},ChatAttemptLease())
+        assertEquals(1,graph().size);assertEquals(fresh.version,graph().single().targetVersion);assertEquals(2,repo.memories("a").size);assertTrue(repo.recentSources("a").isEmpty())
     }
     private suspend fun twoHopChain():Pair<String,String>{
         val(b,w)=work();val bridge=b.apply(w,op().put("links",JSONArray().put(link())));b.complete(w,setOf("one"),1,w.id)
@@ -83,21 +99,21 @@ class MemoryAssociationTest {
     }
     @Test fun persistedTwoHopEvidenceWorksAndWithdrawnBridgeCannotBeTraversed()=runBlocking{
         val first=source;val(bridge,deep)=twoHopChain()
-        assertEquals(2,graph().size);assertTrue(repo.references("a","garden",99).valid.any{it.memoryId==deep})
-        assertTrue(repo.references("b","garden",99).valid.isEmpty())
+        assertEquals(2,graph().size);assertTrue(references("a","garden",99).valid.any{it.memoryId==deep})
+        assertTrue(references("b","garden",99).valid.isEmpty())
         val changes=SourceChanges(repo);changes.confirm(changes.preview("a",first.source.turnId,"user","",true))
-        val refs=repo.references("a","garden",100).valid;assertFalse(refs.any{it.memoryId==bridge||it.memoryId==deep})
+        val refs=references("a","garden",100).valid;assertFalse(refs.any{it.memoryId==bridge||it.memoryId==deep})
     }
     @Test fun editedBridgeVersionStopsSecondHop()=runBlocking{
         val(bridge,deep)=twoHopChain();val m=repo.memories("a").first{it.id==bridge}
         repo.manualSave("a",bridge,"Updated plans",m.category,false,true,MemoryAbout.BOTH)
-        assertFalse(repo.references("a","garden",100).valid.any{it.memoryId==deep})
+        assertFalse(references("a","garden",100).valid.any{it.memoryId==deep})
     }
     @Test fun secondEdgeMustPassOriginalEvidenceCheck()=runBlocking{
         val(_,deep)=twoHopChain()
         repo.tx{db->val graph=MemoryAssociations(repo);val a=JSONArray(graph.raw(db,"a"));for(i in 0 until a.length()){val e=a.getJSONObject(i);if(e.getString("source")==deep)e.put("quote","not in the actual source")}
             db.execSQL("UPDATE preferences SET value=? WHERE key=?",arrayOf(a.toString(),MemoryAssociations.key("a")))}
-        assertFalse(repo.references("a","garden",100).valid.any{it.memoryId==deep})
+        assertFalse(references("a","garden",100).valid.any{it.memoryId==deep})
     }
     @Test fun oneSummaryRequestHasBoundedScoredCandidatesAndNoExtraModelCall()=runBlocking{
         repeat(130){repo.manualSave("a",null,"garden "+"filler ".repeat(10),MemoryCategory.STATE_FACT,false,true,MemoryAbout.BOTH)}

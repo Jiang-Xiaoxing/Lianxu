@@ -1,0 +1,34 @@
+﻿[
+    {
+        "model":  "go-deepseek-v4-1-flash",
+        "variant":  "after",
+        "script":  "T3",
+        "tool":  "companion_record",
+        "arguments":  "{\"experience\":{\"quote\":\"记一下，我下周三要去杭州出差\",\"memory\":\"她下周三要去杭州出差\",\"emotion\":\"unknown\",\"valence\":0,\"relationship\":\"none\",\"claimKind\":\"plan\",\"controlIntent\":\"none\",\"requestQuote\":\"\"},\"appraisal\":{\"event\":\"用户告知下周三要去杭州出差\",\"meaning\":\"她的行程安排，之后几天的相处节奏可能会受影响\",\"certainty\":\"reported\",\"relevance\":\"回应当前交流\",\"attribution\":\"user_report\",\"situation\":\"daily_chat\",\"eventRelation\":\"new_event\",\"uncertainty\":[\"出差几天、什么时候回还不清楚\"],\"evidence\":[{\"source\":1,\"layer\":\"fact\"}]},\"feelings\":[{\"kind\":\"care\",\"degree\":\"mild\",\"object\":\"她这趟出差\",\"reason\":\"要跑一趟外地，想知道她安排得顺不顺\",\"evidence\":[{\"source\":1,\"layer\":\"fact\"}]}],\"goal\":{\"description\":\"记下她的行程，顺口问一句细节\",\"origin\":\"current_request\",\"state\":\"active\",\"reason\":\"她让我记一下出差的事\",\"evidence\":[{\"source\":1,\"layer\":\"fact\"}]},\"choices\":[{\"id\":\"respond\",\"action\":\"acknowledge\",\"reason\":\"她只是让我记行程，回一句再问细节就好\",\"evidence\":[{\"source\":1,\"layer\":\"fact\"}]}],\"selected\":\"respond\",\"judgment\":{\"position\":\"只是行程告知，别的不用多猜\",\"kind\":\"evidence_based\",\"evidence\":[{\"source\":1,\"layer\":\"fact\"}]},\"feedback\":[],\"usedLearningIds\":[],\"consideredLearningIds\":[],\"future\":{\"kind\":\"follow_up\",\"reason\":\"等她出差回来，问问这趟怎么样\",\"notBefore\":1795133924038,\"expiresAt\":1795479524038,\"evidence\":[{\"source\":1,\"layer\":\"fact\"}]},\"relationship\":\"{\\\"消息\\\": \\\"1\\\", \\\"信息类别\\\": \\\"关于她\\\", \\\"P\\\": \\\"无\\\", \\\"C\\\": \\\"无\\\", \\\"V\\\": \\\"无\\\", \\\"B\\\": \\\"无\\\"}\"}",
+        "result":  "{\"success\":false,\"error\":\"invalid_arguments\"}"
+    },
+    {
+        "model":  "go-glm-5-3-flash",
+        "variant":  "after",
+        "script":  "C1",
+        "tool":  "companion_record",
+        "arguments":  "{\"appraisal\": {\"attribution\": \"user_report\", \"certainty\": \"reported\", \"event\": \"用户说今天加班到十点，很累\", \"eventRelation\": \"new_event\", \"evidence\": [{\"layer\": \"fact\", \"source\": 1}], \"meaning\": \"对方忙了一天还没歇上，现在最需要的是被接住、被体谅\", \"relevance\": \"回应当前交流\", \"situation\": \"daily_chat\", \"uncertainty\": []}, \"choices\": [{\"action\": \"acknowledge\", \"evidence\": [{\"layer\": \"fact\", \"source\": 1}], \"id\": \"respond\", \"reason\": \"先接住这一天的疲惫，不急着给建议\"}], \"experience\": {\"claimKind\": \"reported_event\", \"control\": \"none\", \"controlIntent\": \"none\", \"emotion\": \"unknown\", \"memory\": \"用户今天加班到十点，说好累\", \"quote\": \"今天加班到十点，好累啊\", \"relationship\": \"none\", \"reconsider\": null, \"targets\": [], \"valence\": 0}, \"feelings\": [{\"degree\": \"moderate\", \"evidence\": [{\"layer\": \"fact\", \"source\": 1}], \"kind\": \"care\", \"object\": \"旅人\", \"reason\": \"对方忙到很晚才下班，看着就让人心疼\"}], \"goal\": {\"description\": \"回应并关心加班晚归的对方\", \"evidence\": [{\"layer\": \"fact\", \"source\": 1}], \"origin\": \"current_request\", \"reason\": \"对方这轮说了今天的辛苦，需要被回应\", \"state\": \"active\"}, \"judgment\": {\"evidence\": [{\"layer\": \"fact\", \"source\": 1}], \"kind\": \"evidence_based\", \"position\": \"对方今天确实忙到很晚，此刻以体谅和陪伴为先\"}, \"关系输入\": {\"B\": \"无\", \"C\": \"无\", \"P\": \"无\", \"V\": \"无\", \"消息\": \"1\", \"信息类别\": \"关于她\"}, \"selected\": \"respond\"}",
+        "result":  "{\"success\":false,\"error\":\"invalid_arguments\"}"
+    },
+    {
+        "model":  "go-minimax-m3-1-flash",
+        "variant":  "after",
+        "script":  "C1",
+        "tool":  "companion_record",
+        "arguments":  "{\"experience\": {\"quote\": \"今天加班到十点，好累啊\", \"memory\": \"用户今天加班到晚上十点，说很累。\", \"emotion\": \"calm\", \"valence\": \"-1\", \"relationship\": \"none\", \"claimKind\": \"reported_event\", \"controlIntent\": \"none\"}, \"appraisal\": {\"event\": \"用户今天加班到晚上十点，表示很累\", \"meaning\": \"用户当天工作强度大、疲惫，需要被关心和被理解\", \"certainty\": \"reported\", \"relevance\": \"回应当前交流\", \"attribution\": \"user_report\", \"situation\": \"daily_chat\", \"eventRelation\": \"new_event\", \"uncertainty\": \"\", \"evidence\": [{\"source\": \"1\", \"layer\": \"fact\"}]}, \"feelings\": [{\"kind\": \"care\", \"degree\": \"mild\", \"object\": \"用户\", \"reason\": \"用户加班到很晚、语气疲惫\", \"evidence\": [{\"source\": \"1\", \"layer\": \"fact\"}]}], \"goal\": {\"description\": \"回应用户加班后的疲惫，表示关心并给一点轻松的下一步\", \"origin\": \"current_request\", \"state\": \"active\", \"reason\": \"当前输入需要回应\", \"evidence\": [{\"source\": \"1\", \"layer\": \"fact\"}]}, \"choices\": [{\"id\": \"acknowledge\", \"action\": \"acknowledge\", \"reason\": \"先接住疲惫，再问吃了没、到家没\", \"evidence\": [{\"source\": \"1\", \"layer\": \"fact\"}]}], \"selected\": \"acknowledge\", \"judgment\": {\"position\": \"只依据用户本轮原话，不补编细节\", \"kind\": \"evidence_based\", \"evidence\": [{\"source\": \"1\", \"layer\": \"fact\"}]}, \"relationship\": \"\", \"关系输入\": {\"消息\": \"1\", \"信息类别\": \"关于她\", \"P\": \"无\", \"C\": \"无\", \"V\": \"无\", \"B\": \"无\"}}",
+        "result":  "{\"success\":false,\"error\":\"invalid_arguments\"}"
+    },
+    {
+        "model":  "go-glm-5-3-flash",
+        "variant":  "after",
+        "script":  "T3",
+        "tool":  "agent_memory_update",
+        "arguments":  "{\"content\": \"我下周三要去杭州出差。\", \"date_type\": \"day\", \"evidence\": [\"S1\"], \"gist\": \"下周三要去杭州出差\", \"importance\": \"NORMAL\", \"op\": \"add\", \"tags\": [\"出差\", \"杭州\"], \"time_text\": \"下周三\"}",
+        "result":  "{\"success\":false,\"error\":\"invalid_arguments\"}"
+    }
+]

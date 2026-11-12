@@ -3,14 +3,15 @@ package app.lianxu.independent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -33,7 +34,19 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity:ComponentActivity(){
-    override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);enableEdgeToEdge();setContent{LianxuTheme{Lianxu()}}}
+    private var notificationIntent by mutableStateOf<android.content.Intent?>(null)
+    private fun consumeNotification(value:android.content.Intent):android.content.Intent? {
+        val request=android.content.Intent(value)
+        value.removeExtra(CompanionNotifications.ROLE);value.removeExtra(CompanionNotifications.MESSAGE)
+        if(value.data?.scheme=="lianxu")value.data=null
+        return request.takeIf{!it.getStringExtra(CompanionNotifications.ROLE).isNullOrBlank()&&it.getLongExtra(CompanionNotifications.MESSAGE,0)>0}
+    }
+    override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);notificationIntent=consumeNotification(intent);enableEdgeToEdge();setContent{LianxuTheme{
+        val vm:AppState=viewModel()
+        LaunchedEffect(vm.ready,notificationIntent){if(vm.ready){notificationIntent?.let{i->val role=i.getStringExtra(CompanionNotifications.ROLE);val id=i.getLongExtra(CompanionNotifications.MESSAGE,0);if(role!=null&&id>0)vm.notificationOpen(role,id)};notificationIntent=null}}
+        Lianxu(vm)
+    }}}
+    override fun onNewIntent(intent:android.content.Intent){super.onNewIntent(intent);notificationIntent=consumeNotification(intent)}
 }
 @Composable fun Lianxu(vm:AppState=viewModel()){
     LocalUpdateNotice(vm)
@@ -46,9 +59,10 @@ class MainActivity:ComponentActivity(){
         (known-live).forEach{chatState.removeState("chat-$it")}
         rememberedChatIds=known.intersect(live).toList()
     }}
-    DisposableEffect(lifecycle){val observer=LifecycleEventObserver{_,event->if(event==Lifecycle.Event.ON_STOP){if(vm.searching)vm.cancelSearch();vm.cancelChats()}else if(event==Lifecycle.Event.ON_START)vm.foreground()};lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}}
+    // Role generation belongs to the ViewModel; backgrounding only pauses its animation.
+    DisposableEffect(lifecycle){val observer=LifecycleEventObserver{_,event->if(event==Lifecycle.Event.ON_START)vm.foreground()};lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}}
     BackHandler(vm.page!="home"){vm.back()}
-    Surface(Modifier.fillMaxSize(),color=Paper){Column(Modifier.safeDrawingPadding().imePadding()){
+    CompositionLocalProvider(LocalRoleAvatars provides vm.roleAvatars){Surface(Modifier.fillMaxSize(),color=Chrome){Column(Modifier.safeDrawingPadding().imePadding()){
         if(vm.error.isNotEmpty())Text(vm.error,Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer).padding(12.dp),style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onErrorContainer)
         if(!vm.ready)Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()}
         else when(vm.page){
@@ -56,20 +70,22 @@ class MainActivity:ComponentActivity(){
             "chat"->chatState.SaveableStateProvider("chat-${vm.activeId}"){Chat(vm)}
             "detail"->Detail(vm)
             "role-prompts"->RolePromptsScreen(vm)
+            "role-learning"->LearningRecordsScreen(vm)
+            "role-relationship"->RelationshipScreen(vm)
+            "role-companion"->CompanionSettingsScreen(vm)
             "create"->Create(vm)
             "role-archive"->RoleArchiveScreen(vm)
-            "search"->Search(vm)
+            "search"->RoleSearch(vm)
+            "search-detail"->GeneratedRoleDetail(vm)
             "models"->ModelConfigScreen({vm.back()})
             "processing"->ProcessingDirectory(vm)
-            "relationships"->ProcessingDirectory(vm,true)
             "processing-role"->ProcessingRole(vm)
-            "relationship-role"->ProcessingRole(vm,true)
             "settings-memory"->MemoryRulesScreen(vm)
             "settings-display"->DisplaySettings(vm)
             "settings-info"->DataAndVersion({vm.back()})
             "settings-updates"->UpdatesScreen({vm.back()})
         }
-    }}
+    }}}
 }
 @Composable private fun Home(vm:AppState){
     var menu by remember{mutableStateOf(false)}
@@ -89,64 +105,98 @@ class MainActivity:ComponentActivity(){
     val time=remember{SimpleDateFormat("HH:mm",Locale.getDefault())}
     Column(Modifier.fillMaxSize()){
         if(removalError.isNotEmpty())Text(removalError,Modifier.padding(UiSpace.page).testTag("role-delete-error"),color=MaterialTheme.colorScheme.error)
-        Row(Modifier.fillMaxWidth().heightIn(min=80.dp).padding(start=20.dp,end=8.dp,top=12.dp,bottom=12.dp),verticalAlignment=Alignment.CenterVertically){
-            Column(Modifier.weight(1f)){
-                Text(labels[vm.tab].let{if(vm.tab==0)"恋叙" else it},Modifier.testTag("home-title"),style=if(vm.tab==0)BrandStyle else MaterialTheme.typography.titleLarge)
+        Row(Modifier.fillMaxWidth().heightIn(min=80.dp).background(Chrome).padding(start=24.dp,end=12.dp,top=8.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically){
+            Row(Modifier.weight(1f),verticalAlignment=Alignment.CenterVertically){
+                Text(labels[vm.tab].let{if(vm.tab==0)"恋叙" else it},Modifier.testTag("home-title"),style=BrandStyle)
+                if(vm.tab==0){Spacer(Modifier.width(2.dp));CompanionBirds(Modifier.weight(1f,fill=false).widthIn(max=104.dp))}
             }
-            if(vm.tab==0)MoonCompanion()
             if(vm.tab<=1)Box{
-                IconButton(onClick={menu=true},modifier=Modifier.size(UiSpace.action).testTag("add-menu").semantics{contentDescription="创建角色"}){ControlIcon("add")}
+                val addBg=if(isSystemInDarkTheme())Paper else GreenText
+                val addOn=if(isSystemInDarkTheme())GreenText else MaterialTheme.colorScheme.onPrimary
+                FilledTonalIconButton(onClick={menu=true},modifier=Modifier.size(UiSpace.action).testTag("add-menu").semantics{contentDescription="添加角色"},colors=IconButtonDefaults.filledTonalIconButtonColors(containerColor=addBg,contentColor=addOn)){ControlIcon("add",addOn)}
                 DropdownMenu(menu,{menu=false}){
                     DropdownMenuItem(text={Text("寻找角色")},leadingIcon={ControlIcon("search")},onClick={menu=false;vm.startSearch()})
                     DropdownMenuItem(text={Text("创建角色")},leadingIcon={ControlIcon("add")},onClick={menu=false;vm.open("create")})
                 }
             }
         }
-        Box(Modifier.weight(1f)){when(vm.tab){
+        Box(Modifier.weight(1f).background(Paper)){when(vm.tab){
             0->LazyColumn(Modifier.fillMaxSize().testTag("chat-list")){
-                if(vm.friends.isEmpty())item{Text("还没有角色，点右上角＋添加你自己的角色。",Modifier.padding(UiSpace.page).testTag("roles-empty-chat"),style=MaterialTheme.typography.bodyMedium,color=Muted)}
-                items(vm.friends,key={it.id}){friend->val message=vm.messages.lastOrNull{it.friendId==friend.id};FriendRow(friend,message?.text?:"开始聊天",vm.compact,message?.let{time.format(Date(it.created))}.orEmpty(),!removing,{askDelete(friend)}){vm.open("chat",friend.id)}}
+                item{SectionLabel("最近对话",Modifier.padding(horizontal=UiSpace.page,vertical=8.dp))}
+                if(vm.friends.isEmpty())item{EmptyRoles("roles-empty-chat"){vm.open("create")}}
+                items(vm.friends,key={it.id}){friend->val message=vm.messages.lastOrNull{it.friendId==friend.id};FriendRow(friend,message?.text?:"开始聊天",message?.let{time.format(Date(it.created))}.orEmpty(),!removing,{askDelete(friend)}){vm.open("chat",friend.id)}}
             }
             1->LazyColumn(Modifier.fillMaxSize().testTag("contacts-list")){
-                item{Text("${vm.friends.size} 位角色",Modifier.padding(horizontal=UiSpace.page,vertical=8.dp),style=MaterialTheme.typography.bodySmall,color=Muted)}
-                if(vm.friends.isEmpty())item{Text("还没有角色，点右上角＋添加你自己的角色。",Modifier.padding(UiSpace.page).testTag("roles-empty-contacts"),style=MaterialTheme.typography.bodyMedium,color=Muted)}
-                items(vm.friends,key={it.id}){friend->FriendRow(friend,friend.bio,vm.compact,"",!removing,{askDelete(friend)}){vm.open("detail",friend.id)}}
+                item{SectionLabel("全部角色 · ${vm.friends.size} 位",Modifier.padding(horizontal=UiSpace.page,vertical=8.dp))}
+                if(vm.friends.isEmpty())item{EmptyRoles("roles-empty-contacts"){vm.open("create")}}
+                items(vm.friends,key={it.id}){friend->FriendRow(friend,friend.bio,"",!removing,{askDelete(friend)},2){vm.open("detail",friend.id)}}
             }
             2->SettingsDirectory(vm)
             3->Profile(vm)
         }}
         HorizontalDivider(color=Line,thickness=.5.dp)
-        Row(Modifier.fillMaxWidth().height(72.dp).background(Chrome)){labels.forEachIndexed{index,label->
-            Column(Modifier.weight(1f).fillMaxHeight().selectable(index==vm.tab,role=Role.Tab,onClick={vm.tab=index}).testTag("tab-$index"),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
-                NavigationIcon(index,index==vm.tab);Text(label,Modifier.padding(top=4.dp),style=MaterialTheme.typography.labelMedium,color=if(index==vm.tab)GreenText else Muted,maxLines=1)
-            }
+        NavigationBar(containerColor=Chrome,tonalElevation=0.dp,windowInsets=WindowInsets(0,0,0,0)){labels.forEachIndexed{index,label->
+            NavigationBarItem(selected=index==vm.tab,onClick={vm.tab=index},icon={NavigationIcon(index,index==vm.tab)},label={Text(label,style=MaterialTheme.typography.labelMedium,maxLines=1)},modifier=Modifier.testTag("tab-$index"),colors=NavigationBarItemDefaults.colors(selectedIconColor=GreenText,selectedTextColor=GreenText,indicatorColor=SelectedBackground,unselectedIconColor=Muted,unselectedTextColor=Muted))
         }}
     }
 }
-@Composable private fun FriendRow(friend:Friend,subtitle:String,compact:Boolean,meta:String,deleteEnabled:Boolean,onDelete:()->Unit,onClick:()->Unit){
-    Row(Modifier.fillMaxWidth().clickable(onClick=onClick).padding(horizontal=UiSpace.page,vertical=if(compact)12.dp else 16.dp),verticalAlignment=Alignment.CenterVertically){
-        Avatar(friend);Spacer(Modifier.width(12.dp));Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
+@Composable private fun EmptyRoles(tag:String,onCreate:()->Unit){
+    Column(Modifier.fillMaxWidth().padding(horizontal=28.dp,vertical=40.dp).testTag(tag),verticalArrangement=Arrangement.spacedBy(14.dp)){
+        Text("从认识一个人开始",style=MaterialTheme.typography.titleLarge)
+        Text("创建属于你的角色，聊天、记忆和关系会在这里慢慢留下。",style=MaterialTheme.typography.bodyMedium,color=Muted)
+        PrimaryAction("创建角色",onClick=onCreate)
+    }
+}
+@Composable private fun FriendRow(friend:Friend,subtitle:String,meta:String,deleteEnabled:Boolean,onDelete:()->Unit,subtitleLines:Int=1,onClick:()->Unit){
+    var actions by remember(friend.id){mutableStateOf(false)}
+    Row(Modifier.fillMaxWidth().clickable(onClick=onClick).padding(horizontal=UiSpace.page,vertical=16.dp),verticalAlignment=Alignment.CenterVertically){
+        Avatar(friend,52);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){
             Row(verticalAlignment=Alignment.CenterVertically){Text(friend.name,Modifier.weight(1f),style=MaterialTheme.typography.titleSmall,maxLines=1,overflow=TextOverflow.Ellipsis);if(meta.isNotEmpty())Text(meta,style=MaterialTheme.typography.labelSmall,color=Muted)}
-            Text(subtitle,style=MaterialTheme.typography.bodyMedium,color=Muted,maxLines=1,overflow=TextOverflow.Ellipsis)
+            Text(subtitle,style=MaterialTheme.typography.bodyMedium,color=Muted,maxLines=subtitleLines,overflow=TextOverflow.Ellipsis)
         }
-        TextButton(onClick=onDelete,enabled=deleteEnabled,modifier=Modifier.heightIn(min=UiSpace.action).testTag("role-delete-${friend.id}").semantics{contentDescription="删除角色${friend.name}"}){Text("删除",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
-    };HorizontalDivider(Modifier.padding(start=76.dp,end=UiSpace.page),color=Line,thickness=.5.dp)
+        Box{
+            IconButton(onClick={actions=true},enabled=deleteEnabled,modifier=Modifier.size(UiSpace.action).testTag("role-actions-${friend.id}").semantics{contentDescription="${friend.name}的更多操作"}){ControlIcon("more")}
+            DropdownMenu(actions,{actions=false}){DropdownMenuItem(text={Text("删除角色",color=MaterialTheme.colorScheme.error)},onClick={actions=false;onDelete()},modifier=Modifier.testTag("role-delete-${friend.id}"))}
+        }
+    };HorizontalDivider(Modifier.padding(start=86.dp,end=UiSpace.page),color=Line,thickness=.5.dp)
 }
 @Composable private fun Detail(vm:AppState){
     val friend=vm.friends.find{it.id==vm.activeId}?:return
     Column(Modifier.fillMaxSize().background(Chrome)){
         Header("角色资料",{vm.back()})
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(20.dp)){
-            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){Avatar(friend,56);Column{Text(friend.name,style=MaterialTheme.typography.titleLarge);Text("AI 角色 · 本地创建",style=MaterialTheme.typography.bodySmall,color=Muted)}}
-            Text(friend.bio,style=MaterialTheme.typography.bodyLarge)
-            HorizontalDivider(color=Line)
-            Text("角色提示词",style=MaterialTheme.typography.titleSmall)
-            Text(friend.prompt.ifBlank{"温柔、自然地回应，尊重用户。不要求披露内部思考。"},style=MaterialTheme.typography.bodyMedium,color=Muted)
-            Text("文字消息、总结记忆和关系评估分别使用统一设置的用途模型；本角色的原话与状态独立保存。",style=MaterialTheme.typography.bodySmall,color=Muted)
-            TextButton(onClick={vm.open("role-prompts",friend.id)},modifier=Modifier.heightIn(min=UiSpace.action).testTag("role-prompts-open")){Text("编辑角色设定")}
-            TextButton(onClick={vm.open("processing-role",friend.id)},modifier=Modifier.heightIn(min=UiSpace.action).testTag("role-processing-open")){Text("记忆")}
-            TextButton(onClick={vm.open("relationship-role",friend.id)},modifier=Modifier.heightIn(min=UiSpace.action).testTag("role-relationship-open")){Text("关系")}
-            PrimaryAction("发消息",modifier=Modifier.align(Alignment.End)){vm.open("chat",friend.id)}
+            val hasAvatar=vm.roleAvatars[friend.id]!=null
+            val context=androidx.compose.ui.platform.LocalContext.current
+            val pickAvatar=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->
+                if(uri==null)return@rememberLauncherForActivityResult
+                val bytes=context.contentResolver.openInputStream(uri)?.use{it.readBytes()}
+                if(bytes==null||bytes.isEmpty()){return@rememberLauncherForActivityResult}
+                val mime=context.contentResolver.getType(uri)?:"image/jpeg"
+                vm.setRoleAvatar(friend.id,mime,bytes)
+            }
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper).padding(20.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){
+                // 点头像本身就能换头像，旁边不再放绿色文字链接。
+                Box(Modifier.clickable(role=androidx.compose.ui.semantics.Role.Button){pickAvatar.launch("image/*")}.testTag("role-avatar").semantics{contentDescription=if(hasAvatar)"更换头像"else"给她选张头像"}){Avatar(friend,64)}
+                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){
+                    Text(friend.name,style=MaterialTheme.typography.titleLarge)
+                    Text("AI 角色 · 本地创建",style=MaterialTheme.typography.bodySmall,color=Muted)
+                }
+            }
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper).padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+                Text("角色介绍",style=MaterialTheme.typography.titleSmall)
+                Text(friend.bio,style=MaterialTheme.typography.bodyLarge)
+                HorizontalDivider(color=Line)
+                Text("角色提示词",style=MaterialTheme.typography.titleSmall)
+                Text(friend.prompt.ifBlank{"温柔、自然地回应，尊重用户。不要求披露内部思考。"},style=MaterialTheme.typography.bodyMedium,color=Muted)
+            }
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper)){
+                DirectoryRow("edit","编辑角色设定","名字、说话方式与开场白","role-prompts-open",iconColor=ProfileIconColors.edit){vm.open("role-prompts",friend.id)}
+                DirectoryRow("memory","记忆","记住的内容与原话来源","role-processing-open",iconColor=ProfileIconColors.memory){vm.open("processing-role",friend.id)}
+                DirectoryRow("list","学习记录","看法、兴趣与相处习惯","role-learning-open",iconColor=ProfileIconColors.learning){vm.open("role-learning",friend.id)}
+                DirectoryRow("heart","我们的相处","她现在的心情、信任和放在心上的事","role-relationship-open",iconColor=ProfileIconColors.relationship){vm.open("role-relationship",friend.id)}
+                DirectoryRow("chat","陪伴与消息","主动联系与通知","role-companion-open",iconColor=ProfileIconColors.companion){vm.open("role-companion",friend.id)}
+            }
+            PrimaryAction("发消息",modifier=Modifier.fillMaxWidth()){vm.open("chat",friend.id)}
         }
     }
 }
@@ -167,55 +217,18 @@ class MainActivity:ComponentActivity(){
         }
     }
 }
-@Composable private fun Search(vm:AppState){
-    Column(Modifier.fillMaxSize().background(Chrome)){
-        Header("寻找角色",{vm.back()})
-        if(vm.searching){
-            Column(Modifier.weight(1f).fillMaxWidth(),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
-                Radar();Text("正在寻找角色",Modifier.padding(top=16.dp),style=MaterialTheme.typography.titleLarge)
-                Text("演示生成器 · 无需定位",Modifier.padding(top=8.dp),style=MaterialTheme.typography.bodySmall,color=Muted)
-            }
-            TextButton(onClick={vm.home()},modifier=Modifier.align(Alignment.CenterHorizontally).padding(bottom=16.dp).heightIn(min=UiSpace.action).testTag("search-cancel")){Text("取消")}
-        }else if(vm.candidates.isNotEmpty()){
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(12.dp)){
-                Text("认识新角色",style=MaterialTheme.typography.titleLarge)
-                Text("演示候选 · 可选择一位或多位",style=MaterialTheme.typography.bodySmall,color=Muted)
-                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){TextButton(onClick={vm.all()},modifier=Modifier.heightIn(min=UiSpace.action)){Text("全选 3 位")};TextButton(onClick={vm.none()},modifier=Modifier.heightIn(min=UiSpace.action)){Text("不选")}}
-                vm.candidates.forEach{friend->val selected=friend.id in vm.selected
-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(if(selected)SelectedBackground else Paper).border(1.dp,if(selected)GreenText else Line,RoundedCornerShape(UiSpace.radius)).toggleable(selected,role=Role.Checkbox,onValueChange={vm.toggle(friend.id)}).padding(16.dp).testTag("candidate-${friend.id}"),verticalAlignment=Alignment.CenterVertically){
-                        Avatar(friend);Spacer(Modifier.width(12.dp));Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
-                            Text(friend.name,style=MaterialTheme.typography.titleSmall)
-                            Text(friend.bio,style=MaterialTheme.typography.bodyMedium,color=Muted)
-                            if(vm.friends.any{it.id==friend.id})Text("已在通讯录",style=MaterialTheme.typography.labelSmall,color=GreenText)
-                        };Checkbox(selected,null,colors=CheckboxDefaults.colors(checkedColor=Accent,checkmarkColor=MaterialTheme.colorScheme.onSecondaryContainer))
-                    }
-                }
-                Text("候选来自本地演示生成器。",style=MaterialTheme.typography.bodySmall,color=Muted)
-            }
-            Row(Modifier.fillMaxWidth().background(Paper).padding(UiSpace.page),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                OutlinedButton(onClick={vm.findAgain()},enabled=!vm.busy,modifier=Modifier.weight(1f).heightIn(min=UiSpace.action),shape=RoundedCornerShape(16.dp),contentPadding=PaddingValues(12.dp)){Text("重新寻找")}
-                PrimaryAction("添加已选（${vm.selected.size}）",enabled=vm.selected.isNotEmpty()&&!vm.busy,modifier=Modifier.weight(1f)){vm.addSelected()}
-            }
-        }else Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
-            Text("寻找已停止",style=MaterialTheme.typography.titleLarge)
-            Text("可以重新开始认识新角色。",Modifier.padding(vertical=16.dp),style=MaterialTheme.typography.bodyMedium,color=Muted)
-            PrimaryAction("重新寻找"){vm.findAgain()}
-        }
-    }
-}
 @Composable private fun Profile(vm:AppState){
     var name by rememberSaveable(vm.persona){mutableStateOf(vm.persona.name)}
     var address by rememberSaveable(vm.persona){mutableStateOf(vm.persona.address)}
     var introduction by rememberSaveable(vm.persona){mutableStateOf(vm.persona.introduction)}
     Column(Modifier.fillMaxSize().background(Chrome).verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(UiSpace.group)){
-        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){Avatar(Friend("self",vm.nickname,""),56);Column{Text("你好，${vm.nickname}",style=MaterialTheme.typography.titleLarge);Text("这是属于你的本地空间。",style=MaterialTheme.typography.bodySmall,color=Muted)}}
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper).padding(20.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){Avatar(Friend("self",vm.nickname,""),64);Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){Text(vm.nickname,style=MaterialTheme.typography.titleLarge);Text("${vm.friends.size} 位角色 · ${vm.messages.count{it.mine}} 条已发送消息",style=MaterialTheme.typography.bodySmall,color=Muted)}}
+        SectionLabel("聊天中的你")
         AppField(name,{name=it.take(80)},"我的名字","nickname",singleLine=true)
         AppField(address,{address=it.take(80)},"希望被怎样称呼","persona-address",singleLine=true)
         AppField(introduction,{introduction=it.take(4000)},"自我介绍","persona-introduction",minLines=4)
         Text("这些资料会用于聊天，让角色更了解你。请只填写愿意发送给所选模型服务的信息。",style=MaterialTheme.typography.bodySmall,color=Muted)
-        PrimaryAction("保存资料",enabled=!vm.busy,modifier=Modifier.align(Alignment.End)){vm.savePersona(UserPersona(name,address,introduction))}
-        HorizontalDivider(color=Line)
-        Text("${vm.friends.size} 位角色，累计 ${vm.messages.count{it.mine}} 条已发送消息",style=MaterialTheme.typography.bodyMedium,color=Muted)
+        PrimaryAction("保存资料",enabled=!vm.busy,modifier=Modifier.fillMaxWidth()){vm.savePersona(UserPersona(name,address,introduction))}
         Text("资料保存在本机 · 无需注册",style=MaterialTheme.typography.bodySmall,color=Muted)
     }
 }

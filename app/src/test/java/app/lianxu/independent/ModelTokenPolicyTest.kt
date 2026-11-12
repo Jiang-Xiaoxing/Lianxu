@@ -7,9 +7,10 @@ import org.junit.Test
 class ModelTokenPolicyTest {
     private fun config(provider:String="mimo",base:String="https://api.xiaomimimo.com/v1",model:String="mimo-v2.6-pro")=ModelConfig("synthetic","合成配置",provider,base,model)
     @Test fun ordinaryAndReasoningHaveDifferentPurposeDefaults(){
-        assertEquals(ModelTokenDefaults(128000,4096,8192),ModelTokenPolicy.defaults("openai","https://api.openai.com/v1","gpt-4o-mini"))
-        assertEquals(ModelTokenDefaults(1000000,16384,32768),ModelTokenPolicy.defaults("mimo","https://api.xiaomimimo.com/v1","mimo-v2.6-pro"))
-        assertEquals(ModelTokenDefaults(400000,16384,32768),ModelTokenPolicy.defaults("openai","https://api.openai.com/v1","gpt-5-mini-2025-08-07"))
+        // 2026-11-06: the reply budget follows 64K (capped by each checked model), not 4K/16K.
+        assertEquals(ModelTokenDefaults(128000,16384,16384),ModelTokenPolicy.defaults("openai","https://api.openai.com/v1","gpt-4o-mini"))
+        assertEquals(ModelTokenDefaults(1000000,65536,32768),ModelTokenPolicy.defaults("mimo","https://api.xiaomimimo.com/v1","mimo-v2.6-pro"))
+        assertEquals(ModelTokenDefaults(400000,65536,32768),ModelTokenPolicy.defaults("openai","https://api.openai.com/v1","gpt-5-mini-2025-08-07"))
     }
     @Test fun neverInferCapacityFromSimilarNameOrDifferentEndpoint(){
         for(c in listOf(config(model="mimo-v2.6-pro-unverified"),config(base="https://example.com/v1"),config(provider="custom"),config(base="https://api.xiaomimimo.com.attacker.example/v1"),config(base="https://api.xiaomimimo.com/v1/other"))){
@@ -39,7 +40,7 @@ class ModelTokenPolicyTest {
     @Test fun explicitPurposeLimitsSurviveSerializationWithoutChangingChat(){
         val c=config().copy(contextTokens=1000000,outputTokens=16384,memoryOutputTokens=32768)
         assertEquals(c,Gson().fromJson(Gson().toJson(c),ModelConfig::class.java));assertEquals(32768,c.memoryOutputLimit());assertEquals(16384,c.outputTokens)
-        assertEquals(2048,config().memoryOutputLimit())
+        assertEquals(65536,config().memoryOutputLimit())
     }
     @Test fun freshDraftTracksModelButManualOrSavedDraftNeverDoes(){
         val fresh=ModelBudgetDraft().forModel("mimo","https://api.xiaomimimo.com/v1","mimo-v2.6-pro")
@@ -48,12 +49,20 @@ class ModelTokenPolicyTest {
         val manual=fresh.manual(chat="7777")
         assertEquals(manual,manual.forModel("openai","https://api.openai.com/v1","gpt-4o-mini"))
         val old=ModelBudgetDraft.existing(config())
-        assertEquals("16384",old.context)
+        assertEquals("1048576",old.context)
         assertEquals("1000000",old.apply("mimo","https://api.xiaomimimo.com/v1","mimo-v2.6-pro").context)
+    }
+    @Test fun untouchedLegacyPairIsLiftedPerModelButEditedValuesAreKept(){
+        // 16384/2048 was the old pre-filled default: lift it, capped by a checked model's real ceiling.
+        assertEquals(1048576 to 65536,ModelTokenPolicy.liftLegacy(16384,2048,"custom","https://example.com/v1","manual"))
+        assertEquals(128000 to 16384,ModelTokenPolicy.liftLegacy(16384,2048,"openai","https://api.openai.com/v1","gpt-4o-mini"))
+        // Anything the user changed stays exactly as saved.
+        assertEquals(16000 to 2000,ModelTokenPolicy.liftLegacy(16000,2000,"custom","https://example.com/v1","manual"))
+        assertEquals(65536 to 3000,ModelTokenPolicy.liftLegacy(65536,3000,"mimo","https://api.xiaomimimo.com/v1","mimo-v2.6-pro"))
     }
     @Test fun outputRequestAndValidationRejectOverflows(){
         assertTrue(runCatching{TextChatRequest(listOf(WireMessage("user","test")),outputLimit=32768)}.isSuccess)
         assertTrue(runCatching{TextChatRequest(listOf(WireMessage("user","test")),outputLimit=Int.MAX_VALUE)}.isFailure)
-        assertFalse(ModelTokenPolicy.acceptsRequest(config(),16384))
+        assertFalse(ModelTokenPolicy.acceptsRequest(config().copy(contextTokens=16000),16384))
     }
 }

@@ -41,6 +41,7 @@ class SettingsHierarchyTest {
             app=ViewModelProvider(activity)[AppState::class.java]
         }
         ui.waitUntil(15000){models.configs.size==2&&app.ready}
+        if(runBlocking{LocalUpdateRepository(app.processing.store).pending(InstalledBuild.read(context).versionCode)}!=null){ui.waitUntil(10000){ui.onAllNodesWithText("知道了").fetchSemanticsNodes().isNotEmpty()};ui.onNodeWithText("知道了").performClick();ui.waitUntil(10000){ui.onAllNodesWithText("知道了").fetchSemanticsNodes().isEmpty()}}
         ui.onNodeWithTag("tab-2").performClick();ui.onNodeWithTag("settings-home").assertIsDisplayed()
     }
     @After fun cleanup(){
@@ -66,21 +67,39 @@ class SettingsHierarchyTest {
         ui.onNodeWithTag("config-name").assertDoesNotExist();ui.onNodeWithTag("compact-switch").assertDoesNotExist()
         ui.onNodeWithText("紧凑列表").assertDoesNotExist();shot("01-settings-home-real-app")
         ui.onNodeWithTag("settings-display").performClick();ui.onNodeWithTag("settings-display-page").assertIsDisplayed()
-        val old=app.compact;ui.onNodeWithTag("compact-switch").performClick()
-        ui.waitUntil(10000){app.compact!=old&&!app.busy}
+        ui.onNodeWithTag("compact-switch").assertDoesNotExist()
+        ui.onNodeWithText("紧凑列表").assertDoesNotExist()
+        val preserved=Store(context).let{store->try{runBlocking{store.preference("compact","__absent__")}}finally{store.close()}}
+        assertEquals(originalCompact,preserved)
         ui.activityRule.scenario.onActivity{it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE}
         ui.waitUntil(15000){ui.activity.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE}
-        ui.onNodeWithTag("settings-display-page").assertIsDisplayed();assertEquals(!old,app.compact)
+        ui.onNodeWithTag("settings-display-page").assertIsDisplayed();ui.onNodeWithTag("compact-switch").assertDoesNotExist()
         ui.activityRule.scenario.onActivity{it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}
         ui.waitUntil(15000){ui.activity.resources.configuration.orientation==Configuration.ORIENTATION_PORTRAIT}
         shot("03-display-secondary-real-app")
         ui.onNodeWithContentDescription("返回设置").performClick();ui.onNodeWithTag("settings-home").assertIsDisplayed()
-        ui.onNodeWithTag("settings-info").performClick();ui.onNodeWithTag("settings-info-page").assertIsDisplayed()
+        ui.onNodeWithTag("settings-info").performScrollTo().performClick();ui.onNodeWithTag("settings-info-page").assertIsDisplayed()
         ui.onNodeWithTag("settings-version").assertTextContains(InstalledBuild.read(context).versionName,substring=true)
         ui.onNodeWithTag("compact-switch").assertDoesNotExist();shot("04-data-version-secondary-real-app")
         ui.onNodeWithTag("settings-back").performClick();ui.onNodeWithTag("settings-home").assertIsDisplayed()
         listOf(0,3,1,2).forEach{i->ui.onNodeWithTag("tab-$i").performClick();ui.onNodeWithTag("tab-$i").assertIsSelected()}
         ui.onNodeWithTag("settings-home").assertIsDisplayed()
+    }
+    @Test fun compactOptionRemovedWithoutDeletingLegacyPreference(){
+        Store(context).let{store->try{runBlocking{store.setPreference("compact","true")}}finally{store.close()}}
+        ui.onNodeWithTag("settings-display").performClick()
+        ui.onNodeWithTag("settings-display-page").assertIsDisplayed()
+        ui.onNodeWithTag("compact-switch").assertDoesNotExist();ui.onNodeWithText("紧凑列表").assertDoesNotExist()
+        ui.activityRule.scenario.onActivity{it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE}
+        ui.waitUntil(15000){ui.activity.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE}
+        ui.onNodeWithTag("settings-display-page").assertIsDisplayed();ui.onNodeWithTag("compact-switch").assertDoesNotExist()
+        ui.activityRule.scenario.onActivity{it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}
+        ui.waitUntil(15000){ui.activity.resources.configuration.orientation==Configuration.ORIENTATION_PORTRAIT}
+        shot("03-display-secondary-real-app")
+        val preserved=Store(context).let{store->try{runBlocking{store.preference("compact","__absent__")}}finally{store.close()}}
+        assertEquals("true",preserved)
+        ui.onNodeWithContentDescription("返回设置").performClick();ui.onNodeWithTag("settings-home").assertIsDisplayed()
+        shot("01-settings-home-real-app")
     }
     @Test fun modelDirectoryDefaultSummaryAndEditCancel(){
         ui.onNodeWithTag("settings-models").performTouchInput{doubleClick()}
@@ -104,7 +123,7 @@ class SettingsHierarchyTest {
         ui.onNodeWithTag("settings-display-page").assertIsDisplayed()
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
         ui.waitForIdle();ui.onNodeWithTag("settings-home").assertIsDisplayed()
-        ui.onNodeWithTag("settings-info").performTouchInput{doubleClick()}
+        ui.onNodeWithTag("settings-info").performScrollTo().performTouchInput{doubleClick()}
         ui.onNodeWithTag("settings-info-page").assertIsDisplayed()
         ui.onNodeWithTag("settings-back").performClick();ui.onNodeWithTag("settings-home").assertIsDisplayed()
     }

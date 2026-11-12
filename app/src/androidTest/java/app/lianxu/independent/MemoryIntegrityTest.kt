@@ -76,7 +76,7 @@ class MemoryIntegrityTest {
     @Test fun failedSourceCorrectionLeavesOriginalAndHistoryConsistent()=runBlocking {
         val s=source();val b=MemoryBatchRepository(repo);val w=work(b,s);val id=b.apply(w,op(s));b.complete(w,setOf("one"),1,w.id)
         val changes=SourceChanges(repo);val preview=changes.preview("a",s.source.turnId,"user","corrected",false)
-        repo.tx{it.execSQL("CREATE TEMP TRIGGER integrity_failure BEFORE UPDATE ON memory_current BEGIN SELECT RAISE(ABORT,'synthetic rollback'); END")}
+        repo.tx{it.execSQL("CREATE TEMP TRIGGER integrity_failure BEFORE INSERT ON memory_current BEGIN SELECT RAISE(ABORT,'synthetic rollback'); END")}
         assertTrue(runCatching{changes.confirm(preview)}.isFailure);repo.tx{it.execSQL("DROP TRIGGER integrity_failure")}
         assertEquals(s,repo.sources("a").single());assertEquals(1,repo.history("a",id).size);assertTrue(repo.memories("a").single().valid)
     }

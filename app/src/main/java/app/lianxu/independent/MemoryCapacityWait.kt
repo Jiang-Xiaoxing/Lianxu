@@ -4,6 +4,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 
+/** The one reason a chat turn waits for a summary: the context truly overflows by tokens and a summary can shrink it. */
+internal fun PromptBuild.waitsForSummary()=this is PromptBuild.Blocked&&reason==ChatFailure.CONTEXT_NEEDS_MEMORY
+
 /** Chat can wait for background ownership; duplicate manual starts still return BUSY. */
 internal suspend fun awaitMemoryCapacity(friendId:String,guard:MemorySummaryGuard,timeoutMillis:Long=300000,ensureRoom:suspend()->ProcessingRun):ProcessingRun {
     val deadline=System.nanoTime()/1_000_000+timeoutMillis

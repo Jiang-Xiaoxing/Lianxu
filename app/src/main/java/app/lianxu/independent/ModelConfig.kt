@@ -2,10 +2,10 @@ package app.lianxu.independent
 
 import java.net.URI
 
-data class ProviderPreset(val id:String,val label:String,val base:String,val hint:String,val modelsPath:String?=null,val testPath:String?=modelsPath,val authHeader:String="Authorization",val modelsHint:String="本版尚未适配此服务的模型列表，请手动填写模型 ID。")
+data class ProviderPreset(val id:String,val label:String,val base:String,val hint:String,val modelsPath:String?=null,val testPath:String?=modelsPath,val authHeader:String="Authorization",val modelsHint:String="本版尚未适配此服务的模型列表，请手动填写模型 ID。",val modelsUrl:String?=null,val openAiChatModelsOnly:Boolean=false)
 object ProviderPresets {
     val all=listOf(
-        ProviderPreset("silicon-cn","硅基流动 · 中国大陆","https://api.siliconflow.cn/v1","大陆账户；不要混用国际站 Key。","models?sub_type=chat"),
+        ProviderPreset("silicon-cn","硅基流动 · 中国大陆","https://api.siliconflow.cn/v1","大陆账户；不要混用国际站 Key。","models"),
         ProviderPreset("deepseek","DeepSeek","https://api.deepseek.com","OpenAI 兼容接口；不使用 Anthropic 地址。","models"),
         ProviderPreset("bailian-cn","阿里百炼 · 北京","https://dashscope.aliyuncs.com/compatible-mode/v1","现有北京域名仍可用。可改为控制台业务空间专属域名；新加坡等地域须使用对应 Key。当前手填模型 ID。",modelsHint="当前地址请手填模型 ID；模型列表需要业务空间专属地址，本版尚未适配。"),
         ProviderPreset("ark-cn","火山方舟 · 北京","https://ark.cn-beijing.volces.com/api/v3","填写已开通 Model ID 或推理接入点 Endpoint ID；本版不接管理面签名接口，手填模型。",modelsHint="模型目录需要管理接口鉴权，请手填 Model ID 或 Endpoint ID。"),
@@ -16,11 +16,19 @@ object ProviderPresets {
         ProviderPreset("mimo","小米 MiMo","https://api.xiaomimimo.com/v1","按量 API；Token Plan 地址/Key 另行配置。使用 api-key 鉴权。","models",authHeader="api-key"),
         ProviderPreset("minimax-cn","MiniMax · 中国大陆","https://api.minimax.cn/v1","国内按量平台；不混用国际站或订阅 Key。","models"),
         ProviderPreset("minimax-intl","MiniMax · 国际","https://api.minimax.io/v1","国际按量平台 Key，不混用国内站 Key。","models"),
+        ProviderPreset("gemini","Gemini AI Studio","https://generativelanguage.googleapis.com/v1beta/openai","Gemini API Key；使用 OpenAI 兼容接口，不是 Vertex AI。","models"),
+        ProviderPreset("tokenhub-cn","腾讯 TokenHub · 广州","https://tokenhub.tencentmaas.com/v1","广州开通的 API Key，不跨地域调用。","models"),
+        ProviderPreset("tokenhub-intl","腾讯 TokenHub · 新加坡","https://tokenhub-intl.tencentmaas.com/v1","新加坡开通的 API Key，不跨地域调用。","models"),
+        ProviderPreset("qianfan","百度千帆 V2","https://qianfan.baidubce.com/v2","千帆 V2 API Key，不使用旧 OAuth/access_token 接口。","models"),
+        ProviderPreset("stepfun-cn","阶跃星辰 · 中国大陆","https://api.stepfun.com/v1","按量开放平台 Key；不是 Step Plan 套餐地址。本轮仅核对聊天。"),
+        ProviderPreset("stepfun-intl","阶跃星辰 · 国际","https://api.stepfun.ai/v1","国际开放平台 Key；本轮仅核对聊天。"),
+        ProviderPreset("moonshot-cn","Moonshot / Kimi · 中国大陆","https://api.moonshot.cn/v1","国内开放平台 Key，不与国际站或 Kimi Code 订阅混用。","models"),
+        ProviderPreset("opencode-go","OpenCode Go","https://opencode.ai/inference/go/openai/v1","Go 是面向 coding-agent 的套餐，普通聊天流量可能被监控，请自行判断。",modelsUrl="https://opencode.ai/inference/go/v1/models",openAiChatModelsOnly=true,modelsHint="目录取自官方地址，只列出 OpenAI 兼容聊天模型；套餐权限未实测。"),
         ProviderPreset("custom","自定义 OpenAI 兼容","","仅 HTTPS；标准 Bearer 鉴权。可尝试 /models，不支持时请手填。","models")
     )
     fun get(id:String)=all.firstOrNull {it.id==id} ?: all.last()
 }
-data class ModelConfig(val id:String,val name:String,val providerId:String,val baseUrl:String,val modelId:String,val contextTokens:Int=16384,val outputTokens:Int=2048,val memoryOutputTokens:Int=0) {
+data class ModelConfig(val id:String,val name:String,val providerId:String,val baseUrl:String,val modelId:String,val contextTokens:Int=1048576,val outputTokens:Int=65536,val memoryOutputTokens:Int=0) {
     /** Missing/zero is the legacy contract: keep that saved configuration's original output. */
     fun memoryOutputLimit()=if(memoryOutputTokens==0)outputTokens else memoryOutputTokens
 }
@@ -28,7 +36,7 @@ object ConfigRules {
     fun urlError(value:String):String? = try {
         val u=URI(value)
         when {
-            u.scheme!="https" -> "Base URL 必须使用 HTTPS。"
+            !u.scheme.equals("https",ignoreCase=true) -> "Base URL 必须使用 HTTPS。"
             u.host.isNullOrBlank() || u.port==0 || u.port>65535 -> "请输入有效的服务地址。"
             u.rawUserInfo!=null || u.rawQuery!=null || u.rawFragment!=null -> "地址不能包含账号、密钥、查询参数或片段。"
             u.path.orEmpty().contains("..") || value.any {it.isWhitespace()} || value.contains('{') -> "请填写完整的服务根地址。"

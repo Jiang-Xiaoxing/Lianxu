@@ -52,24 +52,28 @@ class CloseoutAcceptanceUiTest {
     @Test fun optionalSwitchesAndQuotaValidationPersistWithoutChangingRetention() {
         val state = ready()
         ui.runOnIdle { state.open("settings-memory") }
-        ui.onNodeWithTag("rules-recall-enabled").performScrollTo().assertIsOff().performClick()
+        ui.onNodeWithTag("rules-recall-enabled").performScrollTo().assertIsOn().performClick()
+        ui.onNodeWithTag("rules-recall-enabled").assertIsOff().performClick()
         ui.onNodeWithTag("rules-write-enabled").performScrollTo().assertIsOff().performClick()
-        ui.onNodeWithTag("rules-recall-rounds").performScrollTo().performTextReplacement("4")
-        ui.onNodeWithTag("rules-recall-tokens").performScrollTo().performTextReplacement("5000")
-        ui.onNodeWithTag("rules-recall-per-call").performScrollTo().performTextReplacement("5001")
+        // Recall quotas were intentionally removed from this page. Validate the remaining
+        // retention inputs and ensure switching tools does not silently change their values.
+        ui.onNodeWithTag("rules-recall-rounds").assertDoesNotExist()
+        ui.onNodeWithTag("rules-recall-tokens").assertDoesNotExist()
+        ui.onNodeWithTag("rules-recall-per-call").assertDoesNotExist()
+        ui.onNodeWithTag("rules-summary").performScrollTo().performTextReplacement("41")
         hideIme()
         ui.onNodeWithTag("memory-rules-save").performClick()
         ui.onNodeWithTag("memory-rules-status").performScrollTo().assertTextContains("请检查", substring = true)
         assertEquals(MemoryRules(), runBlocking { state.processing.memoryRules().first })
-        ui.onNodeWithTag("rules-recall-per-call").performScrollTo().performTextReplacement("1600")
+        ui.onNodeWithTag("rules-summary").performScrollTo().performTextReplacement("20")
         hideIme()
         ui.onNodeWithTag("memory-rules-save").performClick()
-        val expected = MemoryRules(proactiveRecall = true, immediateWrite = true, recallRounds = 4, recallTokens = 5000, recallPerCall = 1600)
+        val expected = MemoryRules(proactiveRecall = true, immediateWrite = true)
         ui.waitUntil(30_000) { runBlocking { state.processing.memoryRules().first == expected } }
         ui.activityRule.scenario.recreate()
         ui.onNodeWithTag("rules-recall-enabled").performScrollTo().assertIsOn()
         ui.onNodeWithTag("rules-write-enabled").performScrollTo().assertIsOn()
-        ui.onNodeWithTag("rules-recall-per-call").performScrollTo().assertTextContains("1600")
+        ui.onNodeWithTag("rules-summary").performScrollTo().assertTextContains("20")
         screenshot("01-saved-tools-and-quotas")
         assertEquals(expected, runBlocking { app().processing.memoryRules().first })
     }
@@ -79,7 +83,7 @@ class CloseoutAcceptanceUiTest {
         val repo = state.processing
         runBlocking { repo.store.add(listOf(Friend("annual-ui", "年度日期验收", "仅合成数据")), false); state.refreshProcessing() }
         ui.runOnIdle { state.open("processing-role", "annual-ui") }
-        ui.onNodeWithTag("memory-add").performClick()
+        ui.onNodeWithText("我写的").performClick();ui.onNodeWithTag("memory-add").performClick()
         ui.onNodeWithTag("memory-text").performTextInput("生日是二月二十九日，出生年份未知。")
         ui.onNodeWithTag("memory-birthday").performScrollTo().performTextInput("02-30")
         hideIme()
@@ -94,7 +98,7 @@ class CloseoutAcceptanceUiTest {
         assertNull(saved.eventDate)
         assertEquals("02-29", saved.annualMonthDay)
         ui.onNodeWithTag("memory-${saved.id}").performClick()
-        ui.onNodeWithText("年度生日 02-29 · 出生年份未知").assertIsDisplayed()
+        ui.onNodeWithText("生日 02-29").assertIsDisplayed()
         screenshot("02-annual-birthday")
         ui.onNodeWithTag("memory-edit").performClick()
         ui.onNodeWithTag("memory-text").performTextReplacement("只修改正文，仍然不知道出生年份。")
@@ -124,7 +128,7 @@ class CloseoutAcceptanceUiTest {
             state.refreshProcessing()
         }
         ui.runOnIdle { state.open("processing-role", "source-ui") }
-        ui.onNodeWithTag("memory-maintenance").performClick()
+        ui.onNodeWithText("更多",substring=true).performClick();ui.onNodeWithTag("memory-maintenance").performClick()
         ui.onNodeWithTag("processing-sources").performScrollTo().performClick()
         ui.onNodeWithText("编辑 / 撤回 / 历史").performClick()
         ui.onNodeWithTag("source-text").performTextReplacement("修订后的合成来源原话")

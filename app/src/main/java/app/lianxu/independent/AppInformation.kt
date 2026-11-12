@@ -20,7 +20,7 @@ internal data class InstalledBuild(val packageName:String,val versionName:String
 }
 
 internal object AppInformation {
-    const val AUTHOR="江晓星"
+    const val AUTHOR="姜小星"
     const val REPOSITORY="https://github.com/Jiang-Xiaoxing/Lianxu"
     const val LICENSE="GPL-3.0-only"
     const val LICENSE_URL="$REPOSITORY/blob/main/LICENSE"

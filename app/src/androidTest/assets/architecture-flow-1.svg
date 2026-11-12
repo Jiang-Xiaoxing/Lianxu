@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="360" viewBox="0 0 1080 360">
+<rect width="1080" height="360" rx="20" fill="#f8f5ee"/>
+<g font-family="sans-serif" fill="#2d3439">
+<text x="32" y="48" font-size="25" font-weight="700">这一次：先保留原话，再准备回复</text>
+<text x="32" y="80" font-size="16" fill="#626b70">虚构例子 · 当前工作副本静态核对 · 真实模型效果未验收</text>
+<rect x="30" y="112" width="320" height="190" rx="15" fill="#ffffff" stroke="#d8d4c9"/>
+<text x="48" y="152" font-size="23" font-weight="700">1 · 你说</text>
+<text x="48" y="202" font-size="19">“我不喝咖啡。”</text>
+<text x="48" y="245" font-size="16" fill="#626b70">先保存原话与来源</text>
+<path d="M356 205h18m-7-7 7 7-7 7" fill="none" stroke="#9a7849" stroke-width="3"/>
+<rect x="380" y="112" width="320" height="190" rx="15" fill="#ffffff" stroke="#d8d4c9"/>
+<text x="398" y="152" font-size="23" font-weight="700">2 · 程序准备</text>
+<text x="398" y="202" font-size="19">近期聊天 + 有效记忆</text>
+<text x="398" y="245" font-size="16" fill="#626b70">新输入不自动等于长期记忆</text>
+<path d="M706 205h18m-7-7 7 7-7 7" fill="none" stroke="#9a7849" stroke-width="3"/>
+<rect x="730" y="112" width="320" height="190" rx="15" fill="#ffffff" stroke="#d8d4c9"/>
+<text x="748" y="152" font-size="23" font-weight="700">3 · 回复成功</text>
+<text x="748" y="202" font-size="19">校验后保存角色回复</text>
+<text x="748" y="245" font-size="16" fill="#626b70">当场写入开启时，一起提交</text>
+</g></svg>

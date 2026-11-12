@@ -56,11 +56,22 @@ private val IconStroke=Stroke(1.65f,cap=StrokeCap.Round,join=StrokeJoin.Round)
     }
 }
 
-@Composable internal fun ControlIcon(kind:String,color:Color=Muted) {
+@Composable internal fun ControlIcon(kind:String,color:Color=Muted,box:androidx.compose.ui.unit.Dp=24.dp) {
     val iconColor=color
-    Canvas(Modifier.size(24.dp)) {
+    Canvas(Modifier.size(box)) {
         withTransform({scale(size.width/24f,size.height/24f,pivot=Offset.Zero)}) {
             when(kind) {
+                "eye","eye-off"->{
+                    drawPath(Path().apply{moveTo(2f,12f);cubicTo(7f,4f,17f,4f,22f,12f);cubicTo(17f,20f,7f,20f,2f,12f);close()},iconColor,style=IconStroke)
+                    drawCircle(iconColor,3f,Offset(12f,12f),style=IconStroke)
+                    if(kind=="eye-off")drawLine(iconColor,Offset(3f,3f),Offset(21f,21f),IconStroke.width,cap=StrokeCap.Round)
+                }
+                "edit"->{drawPath(Path().apply{moveTo(4f,20f);lineTo(4.8f,16f);lineTo(15.5f,5.3f);cubicTo(16.4f,4.4f,17.8f,4.4f,18.7f,5.3f);cubicTo(19.6f,6.2f,19.6f,7.6f,18.7f,8.5f);lineTo(8f,19.2f);close()},iconColor,style=IconStroke);drawLine(iconColor,Offset(13.5f,7.3f),Offset(16.7f,10.5f),IconStroke.width,cap=StrokeCap.Round)}
+                "heart"->{drawPath(Path().apply{moveTo(12f,20f);cubicTo(5f,15f,3f,11.5f,3f,8.5f);cubicTo(3f,5.8f,5.1f,4f,7.5f,4f);cubicTo(9.4f,4f,10.9f,5.1f,12f,6.8f);cubicTo(13.1f,5.1f,14.6f,4f,16.5f,4f);cubicTo(18.9f,4f,21f,5.8f,21f,8.5f);cubicTo(21f,11.5f,19f,15f,12f,20f);close()},iconColor,style=IconStroke)}
+                "chat"->{drawPath(Path().apply{addRoundRect(androidx.compose.ui.geometry.RoundRect(Rect(4f,4.5f,20f,17f),3f,3f));moveTo(8f,17f);lineTo(7f,21f);lineTo(12f,17f)},iconColor,style=IconStroke);drawLine(iconColor,Offset(8f,9f),Offset(16f,9f),IconStroke.width,cap=StrokeCap.Round);drawLine(iconColor,Offset(8f,12.5f),Offset(13f,12.5f),IconStroke.width,cap=StrokeCap.Round)}
+                "more"->{for(x in listOf(5f,12f,19f))drawCircle(iconColor,1.5f,Offset(x,12f))}
+                "relationship"->{drawCircle(iconColor,4f,Offset(8f,11f),style=IconStroke);drawCircle(iconColor,4f,Offset(16f,13f),style=IconStroke)}
+                "memory"->{drawPath(Path().apply{moveTo(5f,4f);lineTo(19f,4f);lineTo(19f,21f);lineTo(12f,17.5f);lineTo(5f,21f);close()},iconColor,style=IconStroke);drawLine(iconColor,Offset(9f,9f),Offset(15f,9f),IconStroke.width,cap=StrokeCap.Round)}
                 "plug"->{
                     drawPath(Path().apply {moveTo(7f,7f);lineTo(17f,7f);lineTo(17f,12f);cubicTo(17f,14.76f,14.76f,17f,12f,17f);cubicTo(9.24f,17f,7f,14.76f,7f,12f);close()},iconColor,style=IconStroke)
                     for(x in listOf(9f,15f))drawLine(iconColor,Offset(x,3f),Offset(x,7f),IconStroke.width,cap=StrokeCap.Round)

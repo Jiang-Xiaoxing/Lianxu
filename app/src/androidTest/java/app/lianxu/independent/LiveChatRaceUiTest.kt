@@ -14,7 +14,10 @@ class LiveChatRaceUiTest {
     private class Replies:TextChatClient {
         val pending=ConcurrentLinkedQueue<CompletableDeferred<TextChatResult>>();val calls=AtomicInteger()
         fun queue()=CompletableDeferred<TextChatResult>().also{pending.add(it)}
-        override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{calls.incrementAndGet();return withContext(NonCancellable){checkNotNull(pending.poll()).await()}}
+        override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
+            syntheticCompanionStage(request)?.let{return it}
+            calls.incrementAndGet();return withContext(NonCancellable){checkNotNull(pending.poll()).await()}
+        }
     }
     private val client=Replies()
     @get:Rule(order=0) val mock=MockChatFixture({client})
@@ -27,14 +30,39 @@ class LiveChatRaceUiTest {
         ui.onNodeWithTag("create-friend").performScrollTo().performClick();ui.waitUntil(10000){app().page=="chat"}
         val late=client.queue();ui.onNodeWithTag("message-input").performTextInput("唯一用户消息");ui.onNodeWithTag("send-message").performTouchInput{doubleClick(delayMillis=40)}
         ui.waitUntil(10000){client.calls.get()==1&&app().turns.isNotEmpty()};val turn=app().turns.last()
-        ui.onNodeWithTag("cancel-turn-${turn.id}").performScrollTo().performClick()
-        ui.waitUntil(10000){!app().chatSending&&app().turns.last().state==TurnState.CANCELLED}
-        val failed=client.queue();ui.onNodeWithTag("retry-turn-${turn.id}").performScrollTo().performClick();ui.waitUntil(10000){client.calls.get()==2}
-        failed.complete(TextChatResult.Failure(ChatFailure.RATE_LIMIT));ui.waitUntil(10000){app().turns.last().state==TurnState.FAILED&&!app().chatSending}
-        val accepted=client.queue();ui.onNodeWithTag("retry-turn-${turn.id}").performScrollTo().performClick();ui.waitUntil(10000){client.calls.get()==3}
-        accepted.complete(TextChatResult.Success("【Mock】当前有效回复"));ui.waitUntil(10000){app().turns.last().state==TurnState.COMPLETED}
-        late.complete(TextChatResult.Success("STALE-MUST-NOT-BE-SAVED"));ui.waitForIdle();android.os.SystemClock.sleep(300)
+        lateinit var oldJob:Job
+        ui.runOnIdle{
+            val runner=AppState::class.java.getDeclaredField("runner").apply{isAccessible=true}.get(app())
+            val jobs=ConversationRunner::class.java.getDeclaredField("jobs").apply{isAccessible=true}.get(runner) as Map<*,*>
+            oldJob=requireNotNull(jobs[turn.friendId] as? Job)
+        }
+        ui.onNodeWithTag("cancel-turn-${turn.id}").performClick()
+        ui.waitUntil(10000){!app().chatSending}
+        // Stop ends this answer. A new user message can start before the old transport returns;
+        // only a genuine failed new attempt is retried.
+        val failed=client.queue()
+        ui.onNodeWithTag("message-input").performTextInput("继续这次合成测试")
+        ui.onNodeWithTag("send-message").performClick()
+        ui.waitUntil(10000){client.calls.get()==2}
+        failed.complete(TextChatResult.Failure(ChatFailure.RATE_LIMIT))
+        ui.waitUntil(10000){app().turns.last().state==TurnState.FAILED&&!app().chatSending}
+        val retry=app().turns.last();assertNotEquals(turn.id,retry.id)
+        late.complete(TextChatResult.Success("STALE-MUST-NOT-BE-SAVED"))
+        ui.waitUntil(10000){oldJob.isCompleted&&app().turns.first{it.id==turn.id}.state==TurnState.SUPERSEDED}
         ui.onNodeWithText("STALE-MUST-NOT-BE-SAVED").assertDoesNotExist()
-        runBlocking{val store=Store(InstrumentationRegistry.getInstrumentation().targetContext,mock.database);val own=store.messages().filter{it.friendId==turn.friendId};assertEquals(2,own.size);assertEquals(1,own.count{it.mine});assertEquals(3,ChatLedger(store).all().single().attempt);store.close()}
+        val accepted=client.queue();ui.onNodeWithTag("retry-turn-${retry.id}").performScrollTo().performClick()
+        ui.waitUntil(10000){client.calls.get()==3}
+        accepted.complete(TextChatResult.Success("【Mock】当前有效回复"));ui.waitUntil(10000){app().turns.last().state==TurnState.COMPLETED}
+        ui.waitForIdle();ui.onNodeWithText("STALE-MUST-NOT-BE-SAVED").assertDoesNotExist()
+        runBlocking{
+            val store=Store(InstrumentationRegistry.getInstrumentation().targetContext,mock.database)
+            try{
+                val own=store.messages().filter{it.friendId==turn.friendId}
+                assertEquals(3,own.size);assertEquals(listOf("唯一用户消息","继续这次合成测试"),own.filter{it.mine}.map{it.text})
+                val turns=ChatLedger(store).all();assertEquals(2,turns.size)
+                assertEquals(1,turns.first{it.id==turn.id}.attempt);assertEquals(2,turns.first{it.id==retry.id}.attempt)
+                assertEquals("【Mock】当前有效回复",own.single{!it.mine}.text)
+            }finally{store.close()}
+        }
     }
 }

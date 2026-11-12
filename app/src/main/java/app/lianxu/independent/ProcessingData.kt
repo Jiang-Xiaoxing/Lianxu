@@ -7,19 +7,20 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 
-data class SourceDialogue(val requestId:String,val source:SourceRef,val user:Message,val assistant:Message,val zone:String) {
-    val tokens get()=ConservativeTokens.tokens(user.text)+ConservativeTokens.tokens(assistant.text)
-    fun json()=JSONObject().put("request",requestId).put("character",source.characterId).put("turn",source.turnId).put("version",source.version).put("user_id",user.id).put("assistant_id",assistant.id).put("user",user.text).put("assistant",assistant.text).put("user_at",user.created).put("assistant_at",assistant.created).put("zone",zone)
+data class SourceDialogue(val requestId:String,val source:SourceRef,val user:Message,val assistant:Message?,val zone:String) {
+    val messages get()=listOfNotNull(user,assistant)
+    val tokens get()=messages.sumOf{ConservativeTokens.tokens(it.text)}
+    fun json()=JSONObject().put("request",requestId).put("character",source.characterId).put("turn",source.turnId).put("version",source.version).put("user_id",user.id).put("assistant_id",assistant?.id?:JSONObject.NULL).put("user",user.text).put("assistant",assistant?.text?:JSONObject.NULL).put("user_at",user.created).put("assistant_at",assistant?.created?:JSONObject.NULL).put("zone",zone)
     companion object {fun from(j:JSONObject):SourceDialogue {
         val friend=j.getString("character");val ref=SourceRef(friend,j.getLong("turn"),j.getLong("version"))
-        return SourceDialogue(j.getString("request"),ref,Message(j.getLong("user_id"),friend,j.getString("user"),true,j.getLong("user_at")),Message(j.getLong("assistant_id"),friend,j.getString("assistant"),false,j.getLong("assistant_at")),j.getString("zone"))
+        return SourceDialogue(j.getString("request"),ref,Message(j.getLong("user_id"),friend,j.getString("user"),true,j.getLong("user_at")),if(j.isNull("assistant_id"))null else Message(j.getLong("assistant_id"),friend,j.getString("assistant"),false,j.getLong("assistant_at")),j.getString("zone"))
     }}
 }
 // Live history/batch/recall counts belong to MemoryRules. Old serialized no-op budgets are ignored on read.
-data class ProcessingPolicy(val coreGoal:Int=1000,val relationshipEnabled:Boolean=false,val relationshipAutomatic:Boolean=false,val relationshipInterval:Int=5,val historyChoice:String="UNCONFIRMED") {
-    fun valid()=coreGoal in 100..10000&&relationshipInterval in 1..100&&historyChoice in setOf("UNCONFIRMED","BACKFILL","FROM_NOW")
-    fun json()=JSONObject().put("core",coreGoal).put("relationshipEnabled",relationshipEnabled).put("relationshipAutomatic",relationshipAutomatic).put("relationshipInterval",relationshipInterval).put("historyChoice",historyChoice)
-    companion object {fun from(j:JSONObject)=ProcessingPolicy(j.optInt("core",1000),j.optBoolean("relationshipEnabled"),j.optBoolean("relationshipAutomatic"),j.optInt("relationshipInterval",5),j.optString("historyChoice","UNCONFIRMED"))}
+data class ProcessingPolicy(val coreGoal:Int=1000) {
+    fun valid()=coreGoal in 100..10000
+    fun json()=JSONObject().put("core",coreGoal)
+    companion object {fun from(j:JSONObject)=ProcessingPolicy(j.optInt("core",1000))}
 }
 enum class MemoryCategory(val label:String,val modern:Boolean=false) {
     STATE_FACT("现状与事实",true),PREFERENCE_BOUNDARY("偏好与边界",true),EXPERIENCE_MEMORY("经历与回忆",true),COMMITMENT_OPEN("约定与未竟事项",true),
@@ -31,17 +32,19 @@ data class MemoryEvidence(val source:SourceRef,val side:String,val quote:String,
     fun json()=JSONObject().put("character",source.characterId).put("turn",source.turnId).put("version",source.version).put("side",side).put("quote",quote).put("snapshot",snapshot).put("at",sourceAt).put("zone",zone)
     companion object{fun from(j:JSONObject)=MemoryEvidence(SourceRef(j.getString("character"),j.getLong("turn"),j.getLong("version")),j.getString("side"),j.getString("quote"),j.getString("snapshot"),j.getLong("at"),j.getString("zone"))}
 }
-data class StoredMemory(val id:String,val friendId:String,val category:MemoryCategory,val text:String,val life:MemoryLife=MemoryLife.ACTIVE,val core:Boolean=false,val locked:Boolean=false,val manual:Boolean=false,val version:Int=1,val valid:Boolean=true,val dateExpression:String?=null,val eventDate:String?=null,val evidence:List<MemoryEvidence> = emptyList(),val about:MemoryAbout?=null,val tags:List<String> = emptyList(),val dueExpression:String?=null,val dueDate:String?=null,val expiresAt:Long?=null,val dateType:String?=null,val annualMonthDay:String?=null) {
+data class StoredMemory(val id:String,val friendId:String,val category:MemoryCategory,val text:String,val life:MemoryLife=MemoryLife.ACTIVE,val core:Boolean=false,val locked:Boolean=false,val manual:Boolean=false,val version:Int=1,val valid:Boolean=true,val dateExpression:String?=null,val eventDate:String?=null,val evidence:List<MemoryEvidence> = emptyList(),val about:MemoryAbout?=null,val tags:List<String> = emptyList(),val dueExpression:String?=null,val dueDate:String?=null,val expiresAt:Long?=null,val dateType:String?=null,val annualMonthDay:String?=null,val createdAt:Long=evidence.minOfOrNull{it.sourceAt}?:AppServices.companionClock(),val importance:MemoryImportance?=null,val gist:String?=null,val trace:String?=null,val userDeleted:Boolean=false,val deletedAt:Long?=null) {
+    var createdAtStored:Boolean=true
     // The current app has one fixed conversation per character; BOTH never widens this scope.
     val conversationId get()=friendId
     fun json()=JSONObject().put("id",id).put("character",friendId).put("category",category.name).put("text",text).put("life",life.name).put("core",core).put("locked",locked).put("manual",manual).put("version",version).put("valid",valid).put("dateExpression",dateExpression?:JSONObject.NULL).put("eventDate",eventDate?:JSONObject.NULL).put("dateType",dateType?:JSONObject.NULL).put("annualMonthDay",annualMonthDay?:JSONObject.NULL).put("expiresAt",expiresAt?:JSONObject.NULL).put("evidence",JSONArray().apply{evidence.forEach{put(it.json())}}).apply{
+        put("userDeleted",userDeleted);put("deletedAt",deletedAt?:JSONObject.NULL);put("createdAt",createdAt);put("importance",importance?.name?:JSONObject.NULL);put("gist",gist?:JSONObject.NULL);put("trace",trace?:JSONObject.NULL);
         if(category.modern){put("schema",2);put("conversation",conversationId);put("about",about?.name?:JSONObject.NULL);put("tags",JSONArray(tags));put("dueExpression",dueExpression?:JSONObject.NULL);put("dueDate",dueDate?:JSONObject.NULL)}
     }
     companion object{fun from(j:JSONObject):StoredMemory {
         val a=j.optJSONArray("evidence")?:JSONArray()
         val category=MemoryCategory.valueOf(j.getString("category"));val tags=j.optJSONArray("tags")?:JSONArray()
         if(category.modern)require(j.optInt("schema",2)==2&&j.optString("conversation",j.getString("character"))==j.getString("character"))
-        return StoredMemory(j.getString("id"),j.getString("character"),category,j.getString("text"),MemoryLife.valueOf(j.optString("life","ACTIVE")),j.optBoolean("core"),j.optBoolean("locked"),j.optBoolean("manual"),j.getInt("version"),j.optBoolean("valid",true),if(j.isNull("dateExpression"))null else j.getString("dateExpression"),if(j.isNull("eventDate"))null else j.getString("eventDate"),(0 until a.length()).map{MemoryEvidence.from(a.getJSONObject(it))},if(category.modern)MemoryAbout.valueOf(j.getString("about")) else null,if(category.modern)(0 until tags.length()).map{tags.getString(it)} else emptyList(),if(category.modern&&!j.isNull("dueExpression"))j.getString("dueExpression") else null,if(category.modern&&!j.isNull("dueDate"))j.getString("dueDate") else null,if(j.has("expiresAt")&&!j.isNull("expiresAt"))j.getLong("expiresAt") else null,if(j.isNull("dateType"))null else j.getString("dateType"),if(j.isNull("annualMonthDay"))null else MemoryDates.monthDay(j.getString("annualMonthDay")))
+        return StoredMemory(j.getString("id"),j.getString("character"),category,j.getString("text"),MemoryLife.valueOf(j.optString("life","ACTIVE")),j.optBoolean("core"),j.optBoolean("locked"),j.optBoolean("manual"),j.getInt("version"),j.optBoolean("valid",true),if(j.isNull("dateExpression"))null else j.getString("dateExpression"),if(j.isNull("eventDate"))null else j.getString("eventDate"),(0 until a.length()).map{MemoryEvidence.from(a.getJSONObject(it))},if(category.modern)MemoryAbout.valueOf(j.getString("about")) else null,if(category.modern)(0 until tags.length()).map{tags.getString(it)} else emptyList(),if(category.modern&&!j.isNull("dueExpression"))j.getString("dueExpression") else null,if(category.modern&&!j.isNull("dueDate"))j.getString("dueDate") else null,if(j.has("expiresAt")&&!j.isNull("expiresAt"))j.getLong("expiresAt") else null,if(j.isNull("dateType"))null else j.getString("dateType"),if(j.isNull("annualMonthDay"))null else MemoryDates.monthDay(j.getString("annualMonthDay")),createdAt=if(j.has("createdAt"))j.getLong("createdAt")else (0 until a.length()).map{a.getJSONObject(it).getLong("at")}.minOrNull()?:AppServices.companionClock(),importance=runCatching{MemoryImportance.valueOf(j.optString("importance"))}.getOrNull(),gist=j.optString("gist").takeIf{it.isNotBlank()&&it!="null"}?.take(40),trace=j.optString("trace").takeIf{it.isNotBlank()&&it!="null"}?.take(8),userDeleted=j.optBoolean("userDeleted",false),deletedAt=if(j.isNull("deletedAt"))null else j.getLong("deletedAt")).also{it.createdAtStored=j.has("createdAt")}
     }}
 }
 internal fun stableDigest(text:String)=MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString(""){"%02x".format(it)}
@@ -70,6 +73,16 @@ object MemoryDates {
         }.getOrNull()
     }
     // Reused from our CompanionPromptLanguage.memory; dates remain separate from the saved body.
+    /** Rough recency word for a saved exchange. Only says how long ago it was, never invents a date. */
+    fun relative(at:Long,now:Long,zone:String=ZoneId.systemDefault().id):String {
+        val day=runCatching{Instant.ofEpochMilli(at).atZone(ZoneId.of(zone)).toLocalDate()}.getOrNull()?:return "时间未知"
+        val today=Instant.ofEpochMilli(now).atZone(ZoneId.of(zone)).toLocalDate()
+        val days=java.time.temporal.ChronoUnit.DAYS.between(day,today)
+        return when {
+            days<=0L->"今天"; days==1L->"昨天"; days==2L->"前天"; days<=7L->"${days}天前"
+            days<=31L->"${days}天前"; else->"${day.monthValue}月${day.dayOfMonth}日"
+        }
+    }
     fun display(content:String,eventDate:String?,today:LocalDate=LocalDate.now()):String {
         val date=eventDate?.let{runCatching{LocalDate.parse(it)}.getOrNull()}
         val prefix=date?.let { when(it) {

@@ -18,13 +18,11 @@ class ProcessingEngineTest {
         name="processing-${System.nanoTime()}.db";store=Store(context,name);repo=ProcessingRepository(store);ledger=ChatLedger(store)
         store.add(listOf(Friend("a","合成甲","独立角色甲"),Friend("b","合成乙","独立角色乙")),false)
         vault=ModelVault(context,"processing-${System.nanoTime()}");scope=CoroutineScope(SupervisorJob()+Dispatchers.Main)
-        listOf(ModelPurpose.CHAT,ModelPurpose.MEMORY,ModelPurpose.RELATIONSHIP).forEach{p->val c=ModelConfig(p.key,p.title,"custom","https://example.invalid/v1",p.key,contextTokens=32000,outputTokens=2048);vault.save(c,"synthetic-key-only");vault.setPurpose(p,c.id)}
+        listOf(ModelPurpose.CHAT,ModelPurpose.MEMORY).forEach{p->val c=ModelConfig(p.key,p.title,"custom","https://example.invalid/v1",p.key,contextTokens=32000,outputTokens=2048);vault.save(c,"synthetic-key-only");vault.setPurpose(p,c.id)}
     }
     @After fun close(){scope.cancel();vault.list().forEach{vault.delete(it.id)};store.close();context.deleteDatabase(name)}
     private suspend fun turn(id:String="a",text:String="合成原话",reply:String="合成回复"):ChatTurn {val t=ledger.begin(id,text,"chat");assertTrue(ledger.finish(t.id,t.attempt,reply));return ledger.all().first{it.id==t.id}}
     private fun op(s:SourceDialogue,id:String="one",target:String="new:one",kind:String="ADD",text:String="用户喜欢合成花园")=JSONObject().put("id",id).put("target",target).put("op",kind).put("category","STATE_FACT").put("about","USER").put("tags",JSONArray()).put("text",text).put("core",true).put("date_expression",JSONObject.NULL).put("evidence",JSONArray().put(JSONObject().put("turn",s.source.turnId).put("version",s.source.version).put("side","user").put("quote",s.user.text)))
-    private fun relation(work:RelationshipWork,values:JSONObject)=JSONObject().put("task_id",work.id).put("character_id",work.friendId).put("dimensions",values).put("complete",true)
-    private fun dim(score:Int,statement:String)=JSONObject().put("score",score).put("statement",statement)
     private suspend fun await(test:suspend()->Boolean){withTimeout(10000){while(!test())delay(10)}}
 
     @Test fun partialReceiptRetryIsDurableAndOnlyWholeBatchRetires()=runBlocking{
@@ -57,12 +55,18 @@ class ProcessingEngineTest {
         assertEquals(s.user.text,source.history("a",s.user.id).last().body)
         assertEquals("人工原文",repo.memories("a").single().text)
     }
+    /**
+     * 2026-11-02 requirement change approved by 小星: an invalid item rejects the whole batch, nothing is saved, and the
+     * same batch is re-sent with the specific validation errors. Previously the two valid items were saved item by item
+     * and the resend listed them under already_saved_operations (expected 2); now that list is empty and the feedback names "bad".
+     */
     @Test fun engineResendsSameBatchAfterPartialValidationAndKeepsOtherRoleSeparate()=runBlocking{
         repo.saveMemoryRules(MemoryRules(2,1,15));repeat(3){turn(text="x".repeat(290),reply="y".repeat(90))};turn("b","x".repeat(290),"y".repeat(90))
         val calls=AtomicInteger();var batchId=""
         val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {
             assertEquals("memory",config.modelId);val data=JSONObject(request.messages.last().content);val n=calls.incrementAndGet()
-            if(n==1)batchId=data.getString("batch_id") else{assertEquals(batchId,data.getString("batch_id"));assertEquals(2,data.getJSONArray("already_saved_operations").length())}
+            if(n==1)batchId=data.getString("batch_id") else{assertEquals(batchId,data.getString("batch_id"));assertEquals(0,data.getJSONArray("already_saved_operations").length())
+                assertTrue(data.getJSONObject("validation_feedback").getJSONArray("errors").toString().contains("bad"));assertTrue(repo.memories("a").isEmpty())}
             val s=SourceDialogue.from(data.getJSONArray("target_dialogue").getJSONObject(0));val ops=JSONArray().put(op(s)).put(op(s,"two","new:two",text="另一条合成事实"))
             if(n==1)ops.put(JSONObject().put("id","bad"))
             return TextChatResult.Success(JSONObject().put("batch_id",batchId).put("character_id","a").put("operations",ops).put("operation_count",ops.length()).put("complete",true).put("end_marker",batchId).toString())
@@ -72,18 +76,11 @@ class ProcessingEngineTest {
         assertEquals(2,repo.recentSources("a").size);assertEquals(1,repo.recentSources("b").size);assertTrue(repo.memories("b").isEmpty())
         assertEquals(6,store.messages().count{it.friendId=="a"})
     }
-    @Test fun relationshipFiveRoundBoundaryLimitsOmissionsAndRecovery()=runBlocking{
-        val r=RelationshipRepository(repo);r.setEnabled("a",true,null,true);turn();var w=r.begin("a","init","synthetic","process",true)!!
-        r.complete(w,relation(w,JSONObject().put("TRUST",dim(50,"原信任")).put("FAMILIARITY",dim(80,"原熟悉"))),{true},ChatAttemptLease())
-        assertEquals(0,r.state("a").values.getValue(RelationshipDimension.JEALOUSY).score)
-        r.setAutomatic("a",true,true);repeat(4){turn()};val failed=ledger.begin("a","合成失败轮次","chat");ledger.fail(failed.id,failed.attempt,ChatFailure.TIMEOUT);assertNull(r.begin("a","four","synthetic","process",false));turn()
-        w=r.begin("a","five","synthetic","process",false)!!;assertEquals(5,w.targets.size);repeat(2){turn()}
-        r.complete(w,relation(w,JSONObject().put("TRUST",dim(99,"新信任")).put("FAMILIARITY",dim(100,"新熟悉"))),{true},ChatAttemptLease())
-        val state=r.state("a");assertEquals(53,state.values.getValue(RelationshipDimension.TRUST).score);assertEquals(82,state.values.getValue(RelationshipDimension.FAMILIARITY).score)
-        assertEquals(2,repo.sources("a",state.cursor).size);assertTrue(r.state("b").values.isEmpty())
-        val interrupted=r.begin("a","interrupted","synthetic","dead-process",true)!!;turn();r.recoverAbandoned("restarted-process")
-        val resumed=r.resume("a","resumed","synthetic","restarted-process")!!;assertEquals(interrupted.targets,resumed.targets);assertEquals(2,resumed.targets.size)
-    }
+    /**
+     * 2026-11-02 requirement change approved by 小星 (whole-batch atomic commit): a stream that drops before the end
+     * receipt saves nothing. Previously the two streamed rows were kept and the retry only sent the receipt
+     * (already_saved_operations=2, memories=2 before retry); now the retry sees 0 saved, re-sends both rows plus the receipt.
+     */
     @Test fun actualTlsStreamDisconnectKeepsTwoValidRowsAndRetriesSameReceipt()=runBlocking{
         turn(text="我喜欢合成花园和合成茶。");val source=repo.sources("a").single();val work=MemoryBatchRepository(repo).prepare("a",listOf(source),"before-real-tls")
         fun line(op:JSONObject)=JSONObject().put("type","operation").put("batch_id",work.id).put("character_id","a").put("operation",op).toString()+"\n"
@@ -96,23 +93,15 @@ class ProcessingEngineTest {
                 override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult=error("stream only")
                 override suspend fun stream(config:ModelConfig,key:String,request:TextChatRequest,onChunk:suspend(String)->Unit):TextChatResult {
                     if(calls.incrementAndGet()==1)return server.client().stream(config,key,request,onChunk)
-                    assertEquals(2,repo.memories("a").size);assertEquals(0L,repo.cursor("a"));assertEquals(1,repo.recentSources("a").size)
-                    val data=JSONObject(request.messages.last().content);assertEquals(work.id,data.getString("batch_id"));assertEquals(2,data.getJSONArray("already_saved_operations").length())
+                    assertEquals(0,repo.memories("a").size);assertEquals(0L,repo.cursor("a"));assertEquals(1,repo.recentSources("a").size)
+                    val data=JSONObject(request.messages.last().content);assertEquals(work.id,data.getString("batch_id"));assertEquals(0,data.getJSONArray("already_saved_operations").length())
                     val end=JSONObject().put("type","complete").put("batch_id",work.id).put("character_id","a").put("operation_count",2).put("complete",true).put("end_marker",work.id)
-                    onChunk(end.toString()+"\n");return TextChatResult.Success("mock-receipt")
+                    onChunk(line(op(source)));onChunk(line(op(source,"two","new:two",text="喜欢合成茶")));onChunk(end.toString()+"\n");return TextChatResult.Success("mock-receipt")
                 }
             }
             val result=MemoryEngine(scope,repo,ModelAccess(vault),client,{}).ensureRoom("a",forceOne=true)
             assertTrue(result.toString(),result.success);assertEquals(2,calls.get());assertEquals(1,server.calls.get());assertEquals(2,repo.memories("a").size);assertTrue(repo.recentSources("a").isEmpty())
         }
-    }
-    @Test fun relationTimeoutAndCancelledLateResultNeverAdvanceOrLoop()=runBlocking{
-        val r=RelationshipRepository(repo);r.setEnabled("a",true,null,true);turn();val calls=AtomicInteger();val reply=CompletableDeferred<TextChatResult>()
-        val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {assertEquals(300000,request.timeoutMillis);return if(calls.incrementAndGet()==1)TextChatResult.Failure(ChatFailure.TIMEOUT) else withContext(NonCancellable){reply.await()}}}
-        val engine=RelationshipEngine(scope,repo,ModelAccess(vault),client,{})
-        engine.evaluate("a")!!.join();delay(100);assertEquals(1,calls.get());assertEquals(0L,r.state("a").cursor);assertEquals("MODEL_TIMEOUT",repo.relationshipStatus("a").error)
-        val job=engine.evaluate("a")!!;await{calls.get()==2};engine.cancel("a");reply.complete(TextChatResult.Success("{}"));job.join();assertEquals(0L,r.state("a").cursor);assertEquals("FAILED",repo.relationshipStatus("a").state)
-        try{r.setAutomatic("a",true,true);fail()}catch(e:ProcessingRejected){assertEquals("HISTORY_CONFIRMATION",e.code)}
     }
     @Test fun sourceRetractionInvalidatesLockedEvidenceAndPreservesSnapshotHistory()=runBlocking{
         turn(text="那年我去过合成花园。");val source=repo.sources("a").single();val batches=MemoryBatchRepository(repo);val work=batches.prepare("a",listOf(source),"synthetic")
@@ -124,32 +113,32 @@ class ProcessingEngineTest {
         assertEquals("【已撤回】",store.messages().first{it.id==source.user.id}.text);assertEquals(source.user.text,changes.history("a",source.user.id).last().body)
         assertEquals(3,repo.history("a",id).size)
     }
-    @Test fun changedModelSourceAndAutoOffCannotCommitOrRecoverRelationship()=runBlocking{
-        val r=RelationshipRepository(repo);r.setEnabled("a",true,null,true);turn();r.setAutomatic("a",true,true,"BACKFILL")
-        val work=r.begin("a","original","config","dead",true)!!;val response=relation(work,JSONObject().put("TRUST",dim(70,"合成自述")))
-        try{r.complete(work,response,{false},ChatAttemptLease());fail()}catch(e:ProcessingRejected){assertEquals("SOURCE_CHANGED",e.code)}
-        assertEquals(0L,r.state("a").cursor);assertTrue(r.history("a").isEmpty())
-        val source=SourceChanges(repo);source.confirm(source.preview("a",work.targets.single().source.turnId,"user","来源已编辑",false))
-        try{r.complete(work,response,{true},ChatAttemptLease());fail()}catch(e:ProcessingRejected){assertEquals("SOURCE_CHANGED",e.code)}
-        r.recoverAbandoned("new-process");r.setAutomatic("a",false,false);assertNull(r.resume("a","next","config","new-process"));assertEquals(0L,r.state("a").cursor)
-    }
     @Test fun runnerUsesMemoryBeforeChatAndInjectsSavedFactsOnlyForOwner()=runBlocking{
-        repo.saveMemoryRules(MemoryRules(1,1,15));repeat(2){turn(text="u".repeat(300),reply="a".repeat(100))}
+        repo.saveMemoryRules(MemoryRules(1,1,15));repeat(2){turn(text="合成原话".repeat(400),reply="合成旧回复".repeat(1800))}
+        vault.list().single{it.modelId=="memory"}.let{vault.save(it.copy(contextTokens=64000),"synthetic-key-only")}
         val input="新用户原话"+"z".repeat(240)
-        var sawMemory=false;var sawChat=false
+        var sawMemory=false;var sawChat=false;var structuredCalls=0;var schema=0
+        var replyRequest:TextChatRequest?=null;var replyModel="";var memoryBeforeReply=false
         val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {
+            syntheticCompanionStage(request)?.let{structuredCalls++;return it}
             if(config.modelId=="memory"){
-                sawMemory=true;val data=JSONObject(request.messages.last().content);assertEquals(2,data.getInt("memory_schema"));val s=SourceDialogue.from(data.getJSONArray("target_dialogue").getJSONObject(0));val id=data.getString("batch_id")
+                sawMemory=true;val data=JSONObject(request.messages.last().content);schema=data.getInt("memory_schema");val s=SourceDialogue.from(data.getJSONArray("target_dialogue").getJSONObject(0));val id=data.getString("batch_id")
                 return TextChatResult.Success(JSONObject().put("batch_id",id).put("character_id","a").put("operations",JSONArray().put(op(s))).put("operation_count",1).put("complete",true).put("end_marker",id).toString())
             }
-            assertEquals("chat",config.modelId);assertTrue(sawMemory);assertTrue(request.messages.any{"现状与事实 · 关于用户：用户喜欢合成花园" in it.content});assertEquals(1,request.messages.count{it.content==input});sawChat=true
+            replyModel=config.modelId;memoryBeforeReply=sawMemory;replyRequest=request;sawChat=true
             return TextChatResult.Success("合成客户端真实链路回复")
         }}
-        val access=ModelAccess(vault);val memory=MemoryEngine(scope,repo,access,client,{});val relationship=RelationshipEngine(scope,repo,access,client,{})
-        val runner=ConversationRunner(scope,store,vault,client,repo,memory,relationship,{},{});
-        // Two completed rounds exceed the configured one-round window; current input is separate.
+        val access=ModelAccess(vault);val memory=MemoryEngine(scope,repo,access,client,{})
+        val runner=ConversationRunner(scope,store,vault,client,repo,memory,{},{});
+        // Overflow actual request capacity: merely exceeding the preferred round count no longer
+        // blocks a reply that can carry the original history intact.
         withContext(Dispatchers.Main){assertTrue(runner.send("a",input,{}))}
         await{val rows=ledger.all();rows.size==3&&rows.last().state!=TurnState.PENDING};assertTrue(ledger.all().last().toString(),sawChat);assertEquals(TurnState.COMPLETED,ledger.all().last().state)
+        assertEquals(0,structuredCalls);assertEquals(2,schema);assertEquals("chat",replyModel);assertTrue(memoryBeforeReply)
+        assertFalse(CompanionRecord.NAME in replyRequest!!.tools.toString())
+        assertTrue(replyRequest!!.messages.any{"用户喜欢合成花园" in it.content})
+        assertEquals(input,replyRequest!!.latestUserText())
+        assertEquals(1,replyRequest!!.messages.count{it.role=="user"&&it.content.startsWith(input)})
         assertTrue(repo.memories("b").isEmpty());assertTrue(ledger.completedMessages("b").isEmpty())
         assertEquals("2024-12-25",MemoryDates.resolve("去年圣诞节",Instant.parse("2025-01-01T00:00:00Z").toEpochMilli(),"Asia/Shanghai"));assertNull(MemoryDates.resolve("那年",0,"UTC"))
     }

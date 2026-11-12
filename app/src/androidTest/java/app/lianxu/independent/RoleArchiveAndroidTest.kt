@@ -19,14 +19,11 @@ class RoleArchiveAndroidTest {
     private suspend fun seed(){val ledger=ChatLedger(store);val t=ledger.begin("a","Synthetic preference: low sugar","unused-config");check(ledger.finish(t.id,1,"Synthetic reply"));val source=repo.sources("a").single()
         val m=StoredMemory("m1","a",MemoryCategory.PREFERENCE_BOUNDARY,"Synthetic low sugar",core=true,locked=true,about=MemoryAbout.USER,evidence=listOf(MemoryEvidence(source.source,"user",source.user.text,source.user.text,source.user.created,source.zone)))
         repo.tx{db->repo.saveMemory(db,m);repo.candidate(db,"a","m1",m,"Synthetic question","candidate1")
-            val state=RelationshipState(mapOf(RelationshipDimension.TRUST to RelationshipValue(51,"我愿意慢慢了解。")),ObservedFeeling("平静",null,null,source.assistant.created,source.source),1,source.source.turnId)
-            db.insertOrThrow("relationship_state",null,ContentValues().apply{put("friend_id","a");put("json",state.json().toString());put("version",1);put("cursor",state.cursor)})
-            db.insertOrThrow("relationship_history",null,ContentValues().apply{put("friend_id","a");put("json",state.json().toString());put("version",1);put("boundary",state.cursor);put("created",1)})
         }
     }
-    @Test fun roundTripAddsIsolatedCopyWithSourcesAndRelationships()=runBlocking{seed();val oldB=transfer.export("b",true);val source=repo.sources("a").single();val p=pack(transfer.export("a",true));val id=transfer.commit(transfer.preview(p,null))
+    @Test fun roundTripAddsIsolatedCopyWithSourcesAndMemory()=runBlocking{seed();val oldB=transfer.export("b",true);val source=repo.sources("a").single();val p=pack(transfer.export("a",true));val id=transfer.commit(transfer.preview(p,null))
         assertNotEquals("a",id);val copied=repo.memories(id).single();assertNotEquals("m1",copied.id);assertTrue(copied.locked);assertTrue(copied.core);assertEquals(id,copied.friendId);assertNotEquals(source.source.turnId,copied.evidence.single().source.turnId);assertTrue(repo.read{repo.sourceValid(it,copied.evidence.single().source)})
-        assertEquals(51,RelationshipRepository(repo).state(id).values.getValue(RelationshipDimension.TRUST).score);assertEquals(1,repo.candidates(id).size);assertEquals(oldB,transfer.export("b",true));assertEquals(1,repo.memories("a").size);assertFalse(repo.policy(id).first.relationshipEnabled)
+        assertEquals(1,repo.candidates(id).size);assertEquals(oldB,transfer.export("b",true));assertEquals(1,repo.memories("a").size)
     }
     @Test fun overwriteNeedsConfirmationAndPreservesUnrelatedRole()=runBlocking{seed();val p=pack(transfer.export("a",true));val before=transfer.export("b",true);val plan=transfer.preview(p,"b");assertTrue(plan.impact.contains("覆盖"));assertTrue(runCatching{transfer.commit(plan)}.isFailure);assertEquals(before,transfer.export("b",true));transfer.commit(plan,true);assertEquals(1,repo.memories("b").size);assertEquals(1,repo.memories("a").size)}
     @Test fun failedTransactionRestoresEverythingAfterPartialWrites()=runBlocking{seed();val p=pack(transfer.export("a",true));val before=transfer.export("b",true);val plan=transfer.preview(p,"b");var n=0;assertTrue(runCatching{transfer.commit(plan,true){if(++n==4)error("synthetic interruption")}}.isFailure);assertEquals(before,transfer.export("b",true));assertEquals(1,repo.memories("a").size)}
@@ -37,7 +34,7 @@ class RoleArchiveAndroidTest {
     @Test fun editedSourceHistoryAndInvalidMemoryRemainReadable()=runBlocking{seed();val source=repo.sources("a").single();val changes=SourceChanges(repo);changes.confirm(changes.preview("a",source.source.turnId,"user","Synthetic correction",false));val p=pack(transfer.export("a",true));val id=transfer.commit(transfer.preview(p,null));assertEquals(1,repo.memories(id).size);assertFalse(repo.memories(id).single().valid);assertTrue(repo.read{repo.usableMemories(it,id)}.isEmpty())}
     @Test fun deliveredLinchePackageParsesAndImportsWithoutSeededRecords()=runBlocking{
         val testContext=InstrumentationRegistry.getInstrumentation().context
-        val p=testContext.assets.open("linche.lianxu.zip").use(RoleArchive::read);assertEquals("林澈",p.name);val id=transfer.commit(transfer.preview(p,null));assertTrue(repo.memories(id).isEmpty());assertTrue(repo.sources(id).isEmpty());assertTrue(RelationshipRepository(repo).state(id).values.isEmpty());assertFalse(repo.policy(id).first.relationshipEnabled)
+        val p=testContext.assets.open("linche.lianxu.zip").use(RoleArchive::read);assertEquals("林澈",p.name);val id=transfer.commit(transfer.preview(p,null));assertTrue(repo.memories(id).isEmpty());assertTrue(repo.sources(id).isEmpty())
     }
     @Test fun noModelSettingsExportedOrChanged()=runBlocking{store.setPreference("model-secret-synthetic","NOT_A_REAL_SECRET");val p=pack(transfer.export("a",false));assertFalse(p.raw.contains("NOT_A_REAL_SECRET"));transfer.commit(transfer.preview(p,null));assertEquals("NOT_A_REAL_SECRET",store.preference("model-secret-synthetic",""))}
 }
