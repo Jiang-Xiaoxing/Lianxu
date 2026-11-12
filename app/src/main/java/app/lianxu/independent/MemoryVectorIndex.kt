@@ -21,6 +21,7 @@ internal class HttpsMemoryEmbeddingClient(private val factory:HttpsConnectionFac
     override suspend fun embed(credential:ModelCredential,texts:List<String>,timeout:Int):List<DoubleArray> = withContext(Dispatchers.IO+Diagnostics.context("embedding")){
         Diagnostics.registerSecret(credential.key);val start=System.nanoTime()
         Diagnostics.event("embedding.http.request",mapOf("endpoint" to credential.config.baseUrl,"provider" to credential.config.providerId,"model" to credential.config.modelId,"input_count" to texts.size,"input_chars" to texts.map{it.length},"timeout_ms" to timeout),secrets=listOf(credential.key))
+        require(ProviderCatalog.modelKind(credential.config)!=ProviderModelKind.OTHER_PROTOCOL){"embedding_protocol_not_adapted"}
         require(ConfigRules.validate(credential.config,credential.key)==null&&texts.size in 1..2048)
         val c=try{factory.open(URL(credential.config.baseUrl.trimEnd('/')+"/embeddings"))}catch(e:Exception){Diagnostics.failure("embedding.http.open_failed",e,secrets=listOf(credential.key));throw e}
         try{
@@ -95,7 +96,7 @@ internal class MemoryVectorIndex(private val repo:ProcessingRepository,private v
         }}.also{if(it==null)Diagnostics.event("embedding.index.timeout",mapOf("character" to friend))}}catch(e:CancellationException){Diagnostics.event("embedding.index.cancelled",mapOf("character" to friend));throw e}catch(e:Exception){Diagnostics.failure("embedding.index.fallback",e,mapOf("character" to friend))/* Rebuildable cache. Raw dialogue and memory transactions are unaffected. */}
     }
     /** Foreground: cached documents only; one query embedding at most; no fallback provider. */
-    suspend fun scores(friend:String,query:String):Map<String,Double> {
+    suspend fun scores(friend:String,query:String,queryCache:QueryEmbeddingCache?=null):Map<String,Double> {
         if(query.isBlank())return emptyMap()
         return try{withTimeoutOrNull(1500){
             val credentials=access.credential(ModelPurpose.EMBEDDING)?:run{Diagnostics.event("embedding.query.fallback",mapOf("character" to friend,"reason" to "not_configured"));return@withTimeoutOrNull emptyMap()}
@@ -104,7 +105,8 @@ internal class MemoryVectorIndex(private val repo:ProcessingRepository,private v
                 if(row.optString("model")!=credentials.stamp||row.optString("fingerprint")!=fingerprint(m))return@mapNotNull null
                 decode(row.optJSONArray("vector"))?.let{m to it}}
             if(cached.isEmpty()){Diagnostics.event("embedding.query.fallback",mapOf("character" to friend,"reason" to "no_valid_cache"));return@withTimeoutOrNull emptyMap()}
-            val q=client.embed(credentials,listOf(query.take(8000)),1000).single();require(valid(q))
+            val text=query.take(8000)
+            val q=queryCache?.vector(credentials,text,1000,client)?:client.embed(credentials,listOf(text),1000).single();require(valid(q))
             if(!access.current(ModelPurpose.EMBEDDING,credentials.stamp))return@withTimeoutOrNull emptyMap()
             cached.filter{it.second.size==q.size}.associate{(m,v)->"${m.id}@${m.version}" to cosine(q,v).coerceIn(0.0,1.0)}.also{Diagnostics.event("embedding.query.scored",mapOf("character" to friend,"score_count" to it.size))}
         }.also{if(it==null)Diagnostics.event("embedding.query.fallback",mapOf("character" to friend,"reason" to "timeout"))}?:emptyMap()}catch(e:CancellationException){Diagnostics.event("embedding.query.cancelled",mapOf("character" to friend));throw e}catch(e:Exception){Diagnostics.failure("embedding.query.fallback",e,mapOf("character" to friend));emptyMap()}

@@ -26,7 +26,9 @@ class RoleDeletionUiTest {
             @Suppress("UNCHECKED_CAST")override fun <T:androidx.lifecycle.ViewModel> create(modelClass:Class<T>):T =
                 AppState(ui.activity.application,object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult=error("No request is authorized in this synthetic UI test")},"no-vault-$name") as T
         })[AppState::class.java]}
-        ui.waitUntil(15000){vm.ready};ui.setContent{LianxuTheme{Lianxu(vm)}}
+        ui.waitUntil(15000){vm.ready}
+        runBlocking{LocalUpdateRepository(vm.processing.store).acknowledge(InstalledBuild.read(context).versionCode)}
+        ui.setContent{LianxuTheme{Lianxu(vm)}}
     }
     private fun add(vararg friends:Friend)=runBlocking{vm.processing.store.add(friends.toList(),false);vm.refreshProcessing()}
     @Test fun freshUiHasNoDemoRolesInEitherTab(){
@@ -37,11 +39,11 @@ class RoleDeletionUiTest {
     @Test fun cancelPreservesRoleAndConfirmedDeletionRefreshesChatsAndContacts(){
         val a=Friend("a","合成甲","测试角色甲");val b=Friend("b","合成乙","测试角色乙");add(a,b)
         runBlocking{vm.processing.store.exchange(a,"合成原话","合成回答");vm.refreshProcessing()}
-        ui.onNodeWithTag("role-delete-a").performClick();ui.onNodeWithText("删除「合成甲」？").assertIsDisplayed()
+        ui.onNodeWithTag("role-actions-a").performClick();ui.onNodeWithTag("role-delete-a").performClick();ui.onNodeWithText("删除「合成甲」？").assertIsDisplayed()
         ui.onNodeWithText("将从聊天和通讯录同时移除",substring=true).assertExists()
         ui.onNodeWithTag("role-delete-cancel").performClick();assertEquals(2,vm.friends.size)
         ui.onNodeWithTag("tab-1").performClick();ui.onNodeWithText("合成甲").assertExists()
-        ui.onNodeWithTag("tab-0").performClick();ui.onNodeWithTag("role-delete-a").performClick();ui.onNodeWithTag("role-delete-confirm").performClick()
+        ui.onNodeWithTag("tab-0").performClick();ui.onNodeWithTag("role-actions-a").performClick();ui.onNodeWithTag("role-delete-a").performClick();ui.onNodeWithTag("role-delete-confirm").performClick()
         ui.waitUntil(15000){vm.friends.none{it.id==a.id}}
         ui.onNodeWithText("合成甲").assertDoesNotExist();ui.onNodeWithText("合成乙").assertExists()
         ui.onNodeWithTag("tab-1").performClick();ui.onNodeWithText("合成甲").assertDoesNotExist();ui.onNodeWithText("合成乙").assertExists()
@@ -49,7 +51,7 @@ class RoleDeletionUiTest {
     }
     @Test fun deletingLastRoleShowsBothEmptyStatesWithoutRecreatingIt(){
         add(Friend("only","合成唯一角色","仅测试"))
-        ui.onNodeWithTag("role-delete-only").performClick();ui.onNodeWithTag("role-delete-confirm").performClick()
+        ui.onNodeWithTag("role-actions-only").performClick();ui.onNodeWithTag("role-delete-only").performClick();ui.onNodeWithTag("role-delete-confirm").performClick()
         ui.waitUntil(15000){vm.friends.isEmpty()};ui.onNodeWithTag("roles-empty-chat").assertIsDisplayed()
         ui.onNodeWithTag("tab-1").performClick();ui.onNodeWithTag("roles-empty-contacts").assertIsDisplayed()
         runBlocking{Store(context,name).use{assertTrue(it.friends().isEmpty())}}

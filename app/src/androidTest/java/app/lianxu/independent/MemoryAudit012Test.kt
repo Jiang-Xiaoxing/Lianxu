@@ -67,29 +67,43 @@ class MemoryAudit012Test {
     @Test fun pendingReviewMakesNoRequestThenReceiptAndHumanCoreChoiceRestoreChat()=runBlocking{
         val s=repo.sources("a").single();val batches=MemoryBatchRepository(repo);val work=batches.prepare("a",listOf(s),"mock");batches.beginAttempt(work,"test");val id=batches.apply(work,op(s));repo.setLock("a",id,true);batches.fail(work,"BATCH_REVIEW_REQUIRED")
         val vault=ModelVault(context,"audit-pipeline-${System.nanoTime()}");val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main)
-        val chat=ModelConfig("c","mock","custom","https://example.invalid/v1","chat",contextTokens=4096,outputTokens=1024);vault.save(chat,"synthetic-key-only");vault.save(chat.copy(id="m",modelId="memory",contextTokens=32000),"synthetic-key-only");vault.setPurpose(ModelPurpose.MEMORY,"m")
-        var calls=0
+        val chat=ModelConfig("c","mock","custom","https://example.invalid/v1","chat",contextTokens=16000,outputTokens=2000);vault.save(chat,"synthetic-key-only");vault.setPurpose(ModelPurpose.CHAT,"c");vault.save(chat.copy(id="m",modelId="memory",contextTokens=32000,outputTokens=4096),"synthetic-key-only");vault.setPurpose(ModelPurpose.MEMORY,"m")
+        var calls=0;var structuredCalls=0;var replyCalls=0
         try{
-            val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{calls++;if(config.modelId=="chat")return TextChatResult.Success("Chat mock response");val j=JSONObject(request.messages.last().content);return TextChatResult.Success(JSONObject().put("batch_id",j.getString("batch_id")).put("character_id","a").put("operations",JSONArray()).put("operation_count",1).put("complete",true).put("end_marker",j.getString("batch_id")).toString())}}
+            val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
+                calls++;syntheticCompanionStage(request)?.let{structuredCalls++;return it}
+                if(config.modelId=="chat"){replyCalls++;return TextChatResult.Success("Chat mock response")}
+                val j=JSONObject(request.messages.last().content);return TextChatResult.Success(JSONObject().put("batch_id",j.getString("batch_id")).put("character_id","a").put("operations",JSONArray()).put("operation_count",1).put("complete",true).put("end_marker",j.getString("batch_id")).toString())}}
             val access=ModelAccess(vault);val memory=MemoryEngine(scope,repo,access,client,{})
             assertEquals("BATCH_REVIEW_REQUIRED",memory.ensureRoom("a",forceOne=true,manualRetry=true).code);assertEquals(0,calls)
             batches.keepCurrent("a",work.id,id,2);assertTrue(memory.ensureRoom("a",forceOne=true,manualRetry=true).success);assertEquals(1,calls)
-            val huge=repo.manualSave("a",null,"z".repeat(7000),MemoryCategory.PROMISE,true,true)
-            val ledger=ChatLedger(store);val runner=ConversationRunner(scope,store,vault,client,repo,memory,RelationshipEngine(scope,repo,access,client,{}),{},{})
+            // Leave room for the current interpretation/appraisal contract, but make the protected
+            // core itself exceed the reply context. Nothing may silently truncate or demote it.
+            val huge=repo.manualSave("a",null,"忆".repeat(7000),MemoryCategory.PROMISE,true,true)
+            val another=repo.manualSave("a",null,"记".repeat(7000),MemoryCategory.PROMISE,true,true)
+            val ledger=ChatLedger(store);val runner=ConversationRunner(scope,store,vault,client,repo,memory,{},{})
             withContext(Dispatchers.Main){assertTrue(runner.send("a","Hi",{}))}
             withTimeout(10000){while(ledger.all().size<2||ledger.all().last().state==TurnState.PENDING)delay(10)}
-            assertEquals(ChatFailure.CORE_CAPACITY,ledger.all().last().failure);assertEquals(1,calls);assertEquals(huge,repo.memories("a").first{it.id==huge.id})
-            repo.chooseCore("a",huge.id,huge.version,false);withContext(Dispatchers.Main){runner.retry(ledger.all().last())}
-            withTimeout(10000){while(ledger.all().last().state!=TurnState.COMPLETED)delay(10)}
-            assertEquals(2,calls);assertTrue(repo.memories("a").first{it.id==huge.id}.locked);assertEquals(huge.text,repo.memories("a").first{it.id==huge.id}.text)
+            assertEquals(ChatFailure.CORE_CAPACITY,ledger.all().last().failure);assertEquals(1,calls);assertEquals(0,structuredCalls);assertEquals(0,replyCalls);assertEquals(huge,repo.memories("a").first{it.id==huge.id})
+            assertEquals(another,repo.memories("a").first{it.id==another.id})
+            withContext(Dispatchers.Main){runner.retry(ledger.all().last())}
+            withTimeout(10000){while(ledger.all().last().attempt<2||ledger.all().last().state==TurnState.PENDING)delay(10)}
+            assertEquals(ChatFailure.CORE_CAPACITY,ledger.all().last().failure);assertEquals(1,calls);assertEquals(0,replyCalls)
+            assertEquals(huge,repo.memories("a").first{it.id==huge.id});assertEquals(another,repo.memories("a").first{it.id==another.id})
+            repo.chooseCore("a",huge.id,huge.version,false);repo.chooseCore("a",another.id,another.version,false)
+            withContext(Dispatchers.Main){runner.retry(ledger.all().last())}
+            withTimeout(10000){while(ledger.all().last().attempt<3||ledger.all().last().state==TurnState.PENDING)delay(10)}
+            assertEquals(ledger.all().last().toString(),TurnState.COMPLETED,ledger.all().last().state)
+            assertEquals(2,calls);assertEquals(0,structuredCalls);assertEquals(1,replyCalls);assertTrue(repo.memories("a").first{it.id==huge.id}.locked);assertEquals(huge.text,repo.memories("a").first{it.id==huge.id}.text)
+            assertTrue(repo.memories("a").first{it.id==another.id}.locked);assertEquals(another.text,repo.memories("a").first{it.id==another.id}.text)
         }finally{scope.cancel();vault.list().forEach{vault.delete(it.id)}}
     }
     @Test fun coreMaintenanceDemotesOnlyAutomaticAndSuppliesTargetToModel()=runBlocking{
         repo.savePolicy("a",ProcessingPolicy(coreGoal=100));val s=repo.sources("a").single();val proof=proposed(s).evidence
-        repo.tx{db->repo.saveMemory(db,StoredMemory("auto","a",MemoryCategory.USER_PROFILE,"Automatic core ".repeat(30),core=true,evidence=proof));repo.saveMemory(db,StoredMemory("locked","a",MemoryCategory.USER_PROFILE,"Locked core ".repeat(30),core=true,locked=true,evidence=proof))}
+        repo.tx{db->repo.saveMemory(db,StoredMemory("auto","a",MemoryCategory.EXPERIENCE_MEMORY,"Automatic core ".repeat(30),core=true,evidence=proof,about=MemoryAbout.USER));repo.saveMemory(db,StoredMemory("locked","a",MemoryCategory.USER_PROFILE,"Locked core ".repeat(30),core=true,locked=true,evidence=proof))}
         val manual=repo.manualSave("a",null,"Manual core ".repeat(50),MemoryCategory.PROMISE,true,true);val before=repo.memories("a").filter{it.id!="auto"}
-        val status=repo.maintainCore("a");assertTrue(status.overGoal);assertFalse(repo.memories("a").first{it.id=="auto"}.core);assertEquals(before,repo.memories("a").filter{it.id!="auto"});assertEquals(2,repo.history("a","auto").size)
-        val ns="core012-${System.nanoTime()}";val vault=ModelVault(context,ns);val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main);val c=ModelConfig("m","mock","custom","https://example.invalid/v1","memory",contextTokens=32000);vault.save(c,"synthetic-key-only");vault.setPurpose(ModelPurpose.MEMORY,"m")
+        val status=repo.maintainCore("a");assertTrue(status.overGoal);assertTrue(repo.memories("a").first{it.id=="auto"}.core);assertEquals(before,repo.memories("a").filter{it.id!="auto"});assertEquals(1,repo.history("a","auto").size)
+        val ns="core012-${System.nanoTime()}";val vault=ModelVault(context,ns);val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main);val c=ModelConfig("m","mock","custom","https://example.invalid/v1","memory",contextTokens=32000,outputTokens=4096);vault.save(c,"synthetic-key-only");vault.setPurpose(ModelPurpose.MEMORY,"m")
         var requested=false
         try{val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{val j=JSONObject(request.messages.last().content);val core=j.getJSONObject("core_maintenance");assertEquals(100,core.getInt("goal_tokens"));assertTrue(core.getInt("protected_tokens")>100);assertTrue(core.getJSONArray("protected_ids").toString().contains(manual.id));requested=true;return TextChatResult.Success(JSONObject().put("batch_id",j.getString("batch_id")).put("character_id","a").put("operations",JSONArray()).put("operation_count",0).put("complete",true).put("end_marker",j.getString("batch_id")).toString())}}
             assertTrue(MemoryEngine(scope,repo,ModelAccess(vault),client,{}).ensureRoom("a",forceOne=true).success);assertTrue(requested);assertEquals(before,repo.memories("a").filter{it.id!="auto"})

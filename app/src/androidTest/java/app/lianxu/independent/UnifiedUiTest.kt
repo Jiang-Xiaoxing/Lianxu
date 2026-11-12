@@ -48,16 +48,15 @@ class UnifiedUiTest {
         ui.onNodeWithTag("message-input").performTextInput("好，想再和你聊一会儿。")
         shot("03-chat-detail")
         ui.onNodeWithTag("chat-attach").performClick();ui.onNodeWithText("附件暂未接入").assertIsDisplayed();ui.onNodeWithTag("close-attachment-info").performClick()
-        ui.onNodeWithText("资料").performClick();shot("04-friend-detail");ui.onNodeWithTag("back").performClick()
+        ui.onNodeWithTag("chat-role-detail").performClick();shot("04-friend-detail");ui.onNodeWithTag("back").performClick()
         ui.onNodeWithTag("message-input").assertTextContains("好，想再和你聊一会儿。",substring=true)
         ui.onNodeWithTag("back").performClick();ui.onNodeWithTag("tab-0").performClick()
         ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("创建角色").performClick()
         ui.onNodeWithTag("friend-name").performTextInput("合成新朋友");ui.onNodeWithTag("friend-bio").performTextInput("喜欢分享生活里的小事。")
         shot("05-add-friend");ui.onNodeWithTag("back").performClick()
-        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("寻找角色").performClick();shot("06-radar")
-        ui.waitUntil(10000){app().candidates.size==3}
-        val ids=app().candidates.map{it.id};ui.onNodeWithTag("candidate-${ids[0]}").performClick();ui.onNodeWithTag("candidate-${ids[1]}").performClick()
-        assertEquals(2,app().selected.size);shot("07-candidates");ui.onNodeWithTag("back").performClick()
+        ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("寻找角色").performClick();shot("06-role-requirements")
+        ui.onNodeWithTag("role-requirements").assertIsDisplayed()
+        assertTrue(app().candidates.isEmpty());ui.onNodeWithTag("back").performClick()
         ui.onNodeWithTag("tab-2").performClick();shot("08-settings")
         ui.onNodeWithTag("settings-models").performClick();shot("09-models")
         ui.onNodeWithTag("config-add-top").performClick();shot("10-providers")
@@ -92,7 +91,7 @@ class UnifiedUiTest {
         try{
             ui.onNodeWithTag("tab-3").performClick();ui.onNodeWithTag("nickname").performTextReplacement("合成体验者")
             hideKeyboard();ui.onNodeWithText("保存资料").performScrollTo().performClick();ui.waitUntil(10000){!app().busy&&app().nickname=="合成体验者"}
-            ui.activityRule.scenario.recreate();ui.onNodeWithText("你好，合成体验者").assertExists()
+            ui.activityRule.scenario.recreate();ui.onNodeWithTag("nickname").assertTextContains("合成体验者")
             assertEquals("合成体验者",runBlocking{store.preference("nickname","")})
         }finally{if(original=="__absent__")store.writableDatabase.delete("preferences","key=?",arrayOf("nickname")) else runBlocking{store.setPreference("nickname",original)};store.close()}
     }

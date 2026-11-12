@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="360" viewBox="0 0 1080 360">
+<rect width="1080" height="360" rx="20" fill="#f8f5ee"/>
+<g font-family="sans-serif" fill="#2d3439">
+<text x="32" y="48" font-size="25" font-weight="700">后半包材料：这次输入，再到回复</text>
+<text x="32" y="80" font-size="16" fill="#626b70">虚构例子 · 当前工作副本静态核对 · 真实模型效果未验收</text>
+<rect x="30" y="112" width="320" height="190" rx="15" fill="#ffffff" stroke="#d8d4c9"/>
+<text x="48" y="152" font-size="23" font-weight="700">4 · 你的新消息</text>
+<text x="48" y="202" font-size="19">可选工具规则 → 当前原文</text>
+<text x="48" y="245" font-size="16" fill="#626b70">最后放程序时间与可选内部提示</text>
+<path d="M356 205h18m-7-7 7 7-7 7" fill="none" stroke="#9a7849" stroke-width="3"/>
+<rect x="380" y="112" width="320" height="190" rx="15" fill="#ffffff" stroke="#d8d4c9"/>
+<text x="398" y="152" font-size="23" font-weight="700">5 · 模型按需回查</text>
+<text x="398" y="202" font-size="19">资料够就答，不够可换词</text>
+<text x="398" y="245" font-size="16" fill="#626b70">反馈可续；权限、实际容量仍校验</text>
+<path d="M706 205h18m-7-7 7 7-7 7" fill="none" stroke="#9a7849" stroke-width="3"/>
+<rect x="730" y="112" width="320" height="190" rx="15" fill="#ffffff" stroke="#d8d4c9"/>
+<text x="748" y="152" font-size="23" font-weight="700">6 · 校验并保存</text>
+<text x="748" y="202" font-size="19">成功回复 + 暂存工具写入</text>
+<text x="748" y="245" font-size="16" fill="#626b70">失败/取消不提交；时间块保持唯一尾部</text>
+</g></svg>

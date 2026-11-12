@@ -5,6 +5,7 @@ import kotlinx.coroutines.withContext
 
 class ModelCredential(val config:ModelConfig,val key:String,val stamp:String) {override fun toString()="ModelCredential(redacted)"}
 class ModelAccess(private val vault:ModelVault){
+    internal val statusNamespace get()=vault.statusNamespace
     suspend fun credential(purpose:ModelPurpose):ModelCredential?=withContext(Dispatchers.IO){AppMutationGate.read{
         val id=vault.purposeId(purpose);val config=vault.list().firstOrNull{it.id==id}?:return@read null
         val key=vault.secret(id);if(key.isBlank())return@read null

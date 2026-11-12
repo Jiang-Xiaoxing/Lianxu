@@ -58,7 +58,7 @@ internal object BackupArchive {
             require(seen.add(name)&&(name=="backup.json"||assetPath.matches(name))){"备份清单路径无效或重复"}
             val bytes=entries[name]?:error("备份缺少文件")
             require(RoleArchive.integer(f["size"])==bytes.size.toLong()&&f["sha256"].asString==RoleArchive.hash(bytes)){"备份校验失败"}}
-        val root=RoleArchive.parse(entries["backup.json"]?:error("缺少备份资料"));validateRoot(root)
+        val root=RoleArchive.parse(entries["backup.json"]?:error("缺少备份资料"));validateRoot(root);RetiredRelationshipData.stripBackup(root)
         return Package(root,entries.filterKeys{it.startsWith("assets/")},digest(entries))
     }
     /** Keep every v1 read rule, including its smaller compressed/expanded and manifest limits. */
@@ -74,7 +74,8 @@ internal object BackupArchive {
         return Package(JsonObject().apply{add("roles",JsonArray());addProperty("scope","role")},emptyMap(),digest(entries),old)
     }
     private fun validateRoot(root:JsonObject){
-        require(root.keySet()==setOf("scope","roles","preferences","models","selections","includesKeys")){"备份资料字段不支持"}
+        val fields=setOf("scope","roles","preferences","models","selections","includesKeys")
+        require(root.keySet()==fields||root.keySet()==fields+BackupKeySeal.FIELD){"备份资料字段不支持"}
         require(root["scope"].isJsonPrimitive&&root["scope"].asJsonPrimitive.isString&&root["scope"].asString in setOf("role","all")&&
             root["includesKeys"].isJsonPrimitive&&root["includesKeys"].asJsonPrimitive.isBoolean){"备份范围或密钥标识无效"}
         require(root["roles"].isJsonArray&&root["roles"].asJsonArray.size() in 0..100&&
@@ -82,6 +83,7 @@ internal object BackupArchive {
             root["preferences"].isJsonObject&&root["selections"].isJsonObject){"备份资料类别或数量无效"}
         if(root["scope"].asString=="role")require(root["roles"].asJsonArray.size()==1&&root["models"].asJsonArray.isEmpty&&
             root["preferences"].asJsonObject.size()==0&&root["selections"].asJsonObject.size()==0&&!root["includesKeys"].asBoolean){"单角色包不能包含全局设置或密钥"}
+        if(BackupKeySeal.sealed(root))require(root["includesKeys"].asBoolean&&root[BackupKeySeal.FIELD].isJsonObject){"备份密钥锁无效"}
     }
     private fun digest(entries:Map<String,ByteArray>):String {
         val hash=MessageDigest.getInstance("SHA-256")

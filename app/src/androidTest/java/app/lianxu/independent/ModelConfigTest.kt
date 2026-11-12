@@ -94,7 +94,7 @@ class ModelConfigTest {
         }
         LocalTlsMock().use {s->
             s.client().request(ModelConfig("route","合成目录","silicon-cn",s.base,"unchanged"),"synthetic-key-only",true)
-            assertEquals("GET /v1/models?sub_type=chat HTTP/1.1",s.requestLine)
+            assertEquals("GET /v1/models HTTP/1.1",s.requestLine)
         }
     }
     @Test fun untrustedDirectoryIdsAreBoundedAndSecretsNeverBecomeOptions():Unit=runBlocking {

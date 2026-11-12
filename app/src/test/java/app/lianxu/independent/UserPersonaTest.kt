@@ -28,6 +28,18 @@ class UserPersonaTest {
         val result=CompanionPrompt.build(friend,RolePrompts(),emptyList(),"你好",persona=persona) as PromptBuild.Ready
         assertTrue("原介绍" in result.request.messages.first().content);assertTrue("原自写要求" in result.request.messages.first().content)
     }
+    @Test fun relationshipAndLegacyMacrosReachReplyOnceWithoutRewritingTheirSources(){
+        val f=friend.copy(bio="{{character}}的背景",prompt="与{{user}}自然交流")
+        val p=RolePrompts(initialRelationship="{{character}}和{{user}}是旧识",extra="称呼{{user}}")
+        val ready=CompanionPrompt.build(f,p,emptyList(),"你好",persona=persona) as PromptBuild.Ready
+        val text=ready.request.messages.first().content
+        assertTrue("合成同伴的背景" in text);assertTrue("与小星自然交流" in text)
+        assertTrue("合成同伴和小星是旧识" in text);assertTrue("不是已发生的聊天或现实经历的证据" in text)
+        assertEquals(1,Regex("\\[用户附加提示]").findAll(text).count())
+        assertEquals("{{character}}和{{user}}是旧识",p.initialRelationship)
+        assertEquals("{{character}}的背景",f.bio)
+        assertTrue(CompanionPrompt.profile(f,p,persona) in text)
+    }
     @Test fun macrosUseTheCallingNameWithoutMutatingOrRecursivelyExpandingSource(){
         val source="{{character}}称呼{{user}}";assertEquals("同伴称呼小星",UserPersona.expand(source,"同伴",persona));assertEquals("{{character}}称呼{{user}}",source)
         assertEquals("{{user}}与小星",UserPersona.expand("{{character}}与{{user}}","{{user}}",persona))

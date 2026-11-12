@@ -28,12 +28,26 @@ class BackupConcurrencyUiTest {
             override fun <T:androidx.lifecycle.ViewModel> create(modelClass:Class<T>):T{
                 @Suppress("UNCHECKED_CAST")
                 return AppState(ui.activity.application,object:TextChatClient{
-                    override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{calls.incrementAndGet();return response.await()}
+                    override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
+                        // Current pipeline: interpret.v2 and appraise.v1 structured stages precede the reply; a plain-text answer to them
+                        // fails the turn by design (STRUCTURED_FORMAT). Answer those stages with valid synthetic payloads and keep the
+                        // in-flight gate (and the call count) on the actual reply request, which is what this race test protects.
+                        val system=request.messages.filter{it.role=="system"}.joinToString{it.content}
+                        if(system.contains("[companion.interpret.v2]"))return TextChatResult.Success(org.json.JSONObject().put("quote",request.messages.last().content).put("memory","").put("emotion","unknown").put("valence",0).put("relationship","none").put("control","none").put("targets",org.json.JSONArray()).put("reconsider",org.json.JSONObject.NULL).put("claimKind","interaction").put("controlIntent","none").put("requestQuote","").toString())
+                        if(system.contains("[companion.appraise.v1]"))return TextChatResult.Success(RoleModelPayload.json(org.json.JSONObject(request.messages.last{it.role=="user"}.content).getJSONObject("current_source").getLong("turnId")))
+                        calls.incrementAndGet();return response.await()
+                    }
                 },name) as T
             }
         })[AppState::class.java]}
         ui.waitUntil(30000){vm.ready};vault=ModelVault(context,name,vm.processing.store)
         vault.save(ModelConfig("fake","合成服务","custom","https://example.invalid/v1","synthetic"),"synthetic-race-key")
+        // Current contract: saving a configuration no longer selects it for chat; select the synthetic config explicitly (same as BackupUiTest).
+        vault.setPurpose(ModelPurpose.CHAT,"fake")
+        // AppState waits for actual bubble layout. This fixture must mount the real chat page,
+        // rather than treating a headless ViewModel as a displayed reply.
+        ui.runOnUiThread{vm.open("chat","seed-lin")}
+        ui.setContent{LianxuTheme{Chat(vm)}}
     }
     @Test fun addingOrReplacingAnotherRolePreservesInflightReply(){
         show()

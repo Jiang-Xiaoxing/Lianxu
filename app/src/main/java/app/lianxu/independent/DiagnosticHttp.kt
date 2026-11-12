@@ -12,6 +12,6 @@ internal object DiagnosticHttp {
             while(out.size()<16384){val remaining=((deadline-System.nanoTime())/1_000_000L).toInt();if(remaining<=0)break;connection.readTimeout=minOf(2000,remaining);val n=input.read(buffer,0,minOf(buffer.size,16384-out.size()));if(n<0){complete=true;break};out.write(buffer,0,n)}
             out.toByteArray()
         }?:ByteArray(0)}.getOrElse{Diagnostics.failure("http.error_body.unavailable",it,trace=trace,secrets=listOf(key));ByteArray(0)}
-        Diagnostics.event("http.error_body",mapOf("body" to if(!complete)"[错误响应未完整读取或达到限额，正文已省略]" else String(bytes,Charsets.UTF_8),"limited" to !complete),trace=trace,secrets=listOf(key))
+        Diagnostics.event("http.error_body",mapOf("body" to if(!complete)"[错误响应未完整读取或达到限额，正文已省略]" else Diagnostics.raw(String(bytes,Charsets.UTF_8)),"limited" to !complete),trace=trace,secrets=listOf(key))
     }
 }

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="360" viewBox="0 0 1080 360">
+<rect width="1080" height="360" rx="20" fill="#f8f5ee"/>
+<g font-family="sans-serif" fill="#2d3439">
+<text x="32" y="48" font-size="25" font-weight="700">问“今晚喝什么？”：前半包材料</text>
+<text x="32" y="80" font-size="16" fill="#626b70">虚构例子 · 当前工作副本静态核对 · 真实模型效果未验收</text>
+<rect x="30" y="112" width="320" height="190" rx="15" fill="#ffffff" stroke="#d8d4c9"/>
+<text x="48" y="152" font-size="23" font-weight="700">1 · 角色规则</text>
+<text x="48" y="202" font-size="19">人设、用户自填资料与表达</text>
+<text x="48" y="245" font-size="16" fill="#626b70">符合条件的开场、能力边界、附加提示</text>
+<path d="M356 205h18m-7-7 7 7-7 7" fill="none" stroke="#9a7849" stroke-width="3"/>
+<rect x="380" y="112" width="320" height="190" rx="15" fill="#ffffff" stroke="#d8d4c9"/>
+<text x="398" y="152" font-size="23" font-weight="700">2 · 之前聊过的话</text>
+<text x="398" y="202" font-size="19">可选语气示例 → 近期原话</text>
+<text x="398" y="245" font-size="16" fill="#626b70">示例只学表达，不当事实</text>
+<path d="M706 205h18m-7-7 7 7-7 7" fill="none" stroke="#9a7849" stroke-width="3"/>
+<rect x="730" y="112" width="320" height="190" rx="15" fill="#ffffff" stroke="#d8d4c9"/>
+<text x="748" y="152" font-size="23" font-weight="700">3 · 记忆放这里</text>
+<text x="748" y="202" font-size="19">核心 + 相关 + 已有关系参考</text>
+<text x="748" y="245" font-size="16" fill="#626b70">拿不准候选另放，不当定论</text>
+</g></svg>

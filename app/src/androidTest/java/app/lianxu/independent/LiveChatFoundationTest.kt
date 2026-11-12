@@ -13,8 +13,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.*
 import kotlin.concurrent.thread
 
-/** One-request loopback TLS server. Reads and validates the real POST body; never a trust-all socket. */
-class TextTlsMock(val status:Int=200,val response:String="{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"【Mock HTTP】合成回复\",\"reasoning_content\":\"not-user-output\"}}]}",val delay:Long=0,val contentType:String="application/json"):AutoCloseable {
+/** Bounded loopback TLS server. Reads the real POST body; never a trust-all socket. */
+class TextTlsMock(val status:Int=200,val response:String="{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"【Mock HTTP】合成回复\",\"reasoning_content\":\"not-user-output\"}}]}",val delay:Long=0,val contentType:String="application/json",maxRequests:Int=1,responder:((String)->String)?=null):AutoCloseable {
     private val ks=KeyStore.getInstance("PKCS12").apply{InstrumentationRegistry.getInstrumentation().context.assets.open("localhost-test.p12").use{load(it,"synthetic-test-only".toCharArray())}}
     private val km=KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply{init(ks,"synthetic-test-only".toCharArray())}
     private val tls=SSLContext.getInstance("TLS").apply{init(km.keyManagers,null,null)}
@@ -25,16 +25,18 @@ class TextTlsMock(val status:Int=200,val response:String="{\"choices\":[{\"finis
     val calls=AtomicInteger()
     @Volatile var headers="";private set
     @Volatile var body="";private set
-    private val worker=thread(isDaemon=true){try{server.accept().use{socket->
+    private val worker=thread(isDaemon=true){try{repeat(maxRequests){server.accept().use{socket->
         calls.incrementAndGet();val input=socket.getInputStream();val header=ByteArrayOutputStream()
         while(header.size()<65536){val b=input.read();if(b<0)break;header.write(b);if(header.size()>=4&&header.toByteArray().takeLast(4)==listOf<Byte>(13,10,13,10))break}
         headers=header.toString("UTF-8")
         val size=Regex("(?im)^content-length: (\\d+)").find(headers)?.groupValues?.get(1)?.toInt()?:0;require(size<=2*1024*1024)
         val data=ByteArray(size);DataInputStream(input).readFully(data);body=String(data,Charsets.UTF_8)
         if(delay>0)Thread.sleep(delay)
-        val bytes=response.toByteArray(Charsets.UTF_8);socket.getOutputStream().apply{write(("HTTP/1.1 $status Result\r\nContent-Type: $contentType\r\nContent-Length: ${bytes.size}\r\nLocation: https://example.invalid/never-follow\r\nConnection: close\r\n\r\n").toByteArray());write(bytes);flush()}
-    }}catch(_:Exception){}}
+        val bytes=(responder?.invoke(body)?:response).toByteArray(Charsets.UTF_8);socket.getOutputStream().apply{write(("HTTP/1.1 $status Result\r\nContent-Type: $contentType\r\nContent-Length: ${bytes.size}\r\nLocation: https://example.invalid/never-follow\r\nConnection: close\r\n\r\n").toByteArray());write(bytes);flush()}
+    }}}catch(_:Exception){}}
     fun client(timeout:Int=3000)=HttpsTextChatClient(HttpsConnectionFactory{url->(url.openConnection() as HttpsURLConnection).apply{sslSocketFactory=clientTls.socketFactory}},timeout)
+    /** Test-only URL routing to a certificate-verified loopback server, never production trust changes. */
+    internal fun routedProviderClient(record:(java.net.URL)->Unit)=HttpsTextChatClient(HttpsConnectionFactory{url->record(url);(java.net.URL(base+url.path).openConnection() as HttpsURLConnection).apply{sslSocketFactory=clientTls.socketFactory}})
     internal fun embeddingClient()=HttpsMemoryEmbeddingClient(HttpsConnectionFactory{url->(url.openConnection() as HttpsURLConnection).apply{sslSocketFactory=clientTls.socketFactory}})
     override fun close(){server.close();worker.join(2000)}
 }
@@ -53,9 +55,9 @@ class LiveChatFoundationTest {
     }
     @Test fun actualTlsPostAllPresetsAndAuthDifferences():Unit=runBlocking{
         for(p in ProviderPresets.all)TextTlsMock().use{s->
-            val cfg=ModelConfig("mock","合成",p.id,s.base,"synthetic-model")
-            assertEquals("【Mock HTTP】合成回复",(s.client().complete(cfg,"synthetic-key-only",request) as TextChatResult.Success).text)
-            assertTrue(s.headers.startsWith("POST /v1/chat/completions HTTP/1.1"))
+            val cfg=ModelConfig("mock","合成",p.id,if(p.id=="opencode-go")p.base else s.base,"synthetic-model")
+            assertEquals("【Mock HTTP】合成回复",((if(p.id=="opencode-go")s.routedProviderClient{} else s.client()).complete(cfg,"synthetic-key-only",request) as TextChatResult.Success).text)
+            assertTrue(s.headers.startsWith(if(p.id=="opencode-go")"POST /v1/inference/go/openai/v1/chat/completions HTTP/1.1" else "POST /v1/chat/completions HTTP/1.1"))
             assertTrue(s.headers.contains(p.authHeader+": "+if(p.authHeader=="Authorization")"Bearer synthetic-key-only" else "synthetic-key-only",true))
             val json=JSONObject(s.body);assertEquals("synthetic-model",json.getString("model"));assertFalse(json.getBoolean("stream"));assertFalse(json.has("tools"))
             assertEquals("合成时间尾段",json.getJSONArray("messages").getJSONObject(2).getString("content"))

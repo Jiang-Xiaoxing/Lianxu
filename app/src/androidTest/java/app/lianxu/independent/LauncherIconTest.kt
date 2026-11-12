@@ -13,7 +13,7 @@ class LauncherIconTest {
     @Test fun finalPackageAdaptiveLegacyAndMonochrome(){
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val info=context.packageManager.getPackageInfo(context.packageName,0)
-        assertEquals("0.14-memory-counts-test",info.versionName)
+        assertEquals(BuildConfig.VERSION_NAME,info.versionName)
         assertEquals("恋叙",context.applicationInfo.loadLabel(context.packageManager).toString())
         val icon=context.applicationInfo.loadIcon(context.packageManager)
         assertTrue(icon is AdaptiveIconDrawable);icon as AdaptiveIconDrawable

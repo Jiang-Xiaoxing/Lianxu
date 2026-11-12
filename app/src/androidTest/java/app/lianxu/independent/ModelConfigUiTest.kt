@@ -20,7 +20,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /** Only synthetic local state and injected responses. This suite never opens a network socket. */
 class ModelConfigUiTest {
-    @get:Rule val ui=createAndroidComposeRule<MainActivity>()
+    @get:Rule(order=0) val isolated=MockChatFixture()
+    @get:Rule(order=1) val ui=createAndroidComposeRule<MainActivity>()
     private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
     private val namespace="ui-test-${System.nanoTime()}"
     private val client=ScriptedDirectory()
@@ -53,7 +54,10 @@ class ModelConfigUiTest {
         ui.waitUntil(15000){ui.onAllNodesWithTag("tab-2").fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithTag("tab-2").performClick();ui.onNodeWithTag("settings-models").performClick()
     }
-    @After fun cleanup(){ui.runOnIdle{state.clearResult()};vault.list().forEach {vault.delete(it.id)}}
+    @After fun cleanup(){ui.runOnIdle{state.clearResult()};vault.list().forEach {vault.delete(it.id)}
+        Store(context,AppServices.databaseName).use{it.writableDatabase.delete("preferences","key LIKE ?",arrayOf("${ModelStatusStore.PREFIX}${vault.statusNamespace}:%"))}}
+    private fun overview(){if(ui.onAllNodesWithTag("config-overview").fetchSemanticsNodes().isEmpty())back();ui.waitUntil(10000){ui.onAllNodesWithTag("config-overview").fetchSemanticsNodes().isNotEmpty()}}
+    private fun probeLine(id:String)=run{ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-$id"));ui.onNodeWithTag("config-probe-$id",useUnmergedTree=true)}
     private fun hideKeyboard(){ui.activityRule.scenario.onActivity {activity->
         (activity.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(activity.window.decorView.windowToken,0)
         activity.window.decorView.clearFocus()
@@ -64,6 +68,15 @@ class ModelConfigUiTest {
         File(dir,"$name.png").outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}
     }
     private fun edit(id:String="ui-a"){ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-$id"));ui.onNodeWithTag("config-edit-$id").performClick()}
+    @Test fun savedKeyIsMaskedAndEyeToggles(){
+        edit()
+        ui.waitUntil(10000){ui.onNodeWithTag("config-key").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.InputText].text=="synthetic-key-only"}
+        ui.onNodeWithTag("config-key").assert(SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsProperties.Password))
+        ui.onNodeWithTag("config-key-reveal").assertContentDescriptionEquals("显示密钥").performClick()
+        ui.onNodeWithTag("config-key").assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.EditableText,androidx.compose.ui.text.AnnotatedString("synthetic-key-only")))
+        ui.onNodeWithTag("config-key-reveal").assertContentDescriptionEquals("隐藏密钥").performClick()
+        ui.onNodeWithTag("config-key").assert(SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsProperties.Password))
+    }
     private fun back(){hideKeyboard();ui.onNodeWithTag("config-back").performClick()}
     private fun waitSaved(count:Int){ui.waitUntil(10000){runCatching{vault.list().size==count}.getOrDefault(false)};ui.waitUntil(10000){!state.saving}}
 
@@ -75,14 +88,14 @@ class ModelConfigUiTest {
         ui.onNodeWithTag("config-output").performScrollTo().assertTextContains("3333",substring=true)
         ui.onNodeWithTag("config-memory-output").performScrollTo().assertTextContains("3333",substring=true)
         ui.onNodeWithTag("config-budget-apply").performScrollTo().performClick()
-        ui.onNodeWithTag("config-output").performScrollTo().assertTextContains("16384",substring=true)
+        ui.onNodeWithTag("config-output").performScrollTo().assertTextContains("65536",substring=true)
         ui.onNodeWithTag("config-memory-output").performScrollTo().assertTextContains("32768",substring=true)
         assertEquals(c,vault.list().single{it.id==c.id});back()
         assertEquals(c,vault.list().single{it.id==c.id})
         edit(c.id);ui.onNodeWithTag("config-advanced").performScrollTo().performClick()
         ui.onNodeWithTag("config-budget-apply").performScrollTo().performClick();ui.onNodeWithTag("config-save").performClick();waitSaved(3)
         val saved=vault.list().single{it.id==c.id}
-        assertEquals(1000000,saved.contextTokens);assertEquals(16384,saved.outputTokens);assertEquals(32768,saved.memoryOutputTokens);assertEquals(0,client.calls.get())
+        assertEquals(1000000,saved.contextTokens);assertEquals(65536,saved.outputTokens);assertEquals(32768,saved.memoryOutputTokens);assertEquals(0,client.calls.get())
     }
     @Test fun newModelDefaultsRespectManualBudgetsAndNextNewDraftStartsClean(){
         ui.onNodeWithTag("config-add-top").performClick();ui.onNodeWithTag("provider-search").performTextInput("mimo");ui.onNodeWithTag("provider-mimo").performClick()
@@ -95,8 +108,8 @@ class ModelConfigUiTest {
         ui.onNodeWithTag("config-budget-unknown").performScrollTo().assertExists();ui.onNodeWithTag("config-budget-apply").assertDoesNotExist()
         back();ui.onNodeWithTag("config-add-top").performClick();ui.onNodeWithTag("provider-search").performTextInput("mimo");ui.onNodeWithTag("provider-mimo").performClick()
         ui.onNodeWithTag("config-advanced").performScrollTo().performClick()
-        ui.onNodeWithTag("config-context").performScrollTo().assertTextContains("16384",substring=true)
-        ui.onNodeWithTag("config-output").performScrollTo().assertTextContains("2048",substring=true)
+        ui.onNodeWithTag("config-context").performScrollTo().assertTextContains("1048576",substring=true)
+        ui.onNodeWithTag("config-output").performScrollTo().assertTextContains("65536",substring=true)
         assertEquals(2,vault.list().size);assertEquals(0,client.calls.get())
     }
     @Test fun layeredCrudValidationKeyboardAndRecreation(){
@@ -112,7 +125,7 @@ class ModelConfigUiTest {
         ui.onNodeWithTag("config-save").performClick()
         ui.onNodeWithTag("config-status").assertTextContains("API Key",substring=true)
         ui.onNodeWithTag("config-name").performTextReplacement("旅行随记")
-        ui.onNodeWithTag("config-key").performTextInput("synthetic-key-only")
+        ui.onNodeWithTag("config-key").performTextReplacement("synthetic-key-only")
         ui.onNodeWithTag("config-model").performScrollTo().performTextInput("synthetic-new-model")
         // IME must leave the focused field and the fixed header save action visible.
         ui.onNodeWithTag("config-model").assertIsDisplayed();ui.onNodeWithTag("config-save").assertIsDisplayed();ui.onNodeWithContentDescription("保存配置").assertHasClickAction()
@@ -122,7 +135,7 @@ class ModelConfigUiTest {
         ui.onNodeWithTag("config-status").performScrollTo().assertTextContains("HTTPS",substring=true)
         ui.onNodeWithTag("config-url").performScrollTo().performTextReplacement("https://example.invalid/v1")
         hideKeyboard();ui.onNodeWithTag("config-advanced").performScrollTo().performClick()
-        ui.onNodeWithTag("config-key").performScrollTo().performTextInput("synthetic-key-only");hideKeyboard()
+        ui.onNodeWithTag("config-key").performScrollTo().performTextReplacement("synthetic-key-only");hideKeyboard()
         ui.onNodeWithTag("config-name").performScrollTo();shot("03-editor-masked-real-app")
         ui.onNodeWithTag("config-save").performTouchInput{doubleClick()}
         waitSaved(3);assertEquals(0,client.calls.get())
@@ -170,26 +183,81 @@ class ModelConfigUiTest {
         ui.waitUntil(10000){state.probe.phase==ProbePhase.REACHABLE}
         late.complete(ConfigResult.Failure(ConfigError.NETWORK))
         ui.waitForIdle();assertEquals(ProbePhase.REACHABLE,state.probe.phase);assertFalse(state.testing)
-        back();ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-ui-b"));ui.onNodeWithTag("config-probe-ui-b",useUnmergedTree=true).assertTextContains("可达",substring=true)
+        // 2026-11-02 (小星): the overview no longer says "可达"; it names the last test time, the tested model and the result.
+        back();probeLine("ui-b").assertTextContains("上次测试",substring=true).assertTextContains("synthetic-model-b",substring=true).assertTextContains("成功",substring=true)
         assertEquals("synthetic-chat-model",vault.list().single{it.id==a.id}.modelId)
     }
 
-    @Test fun cancelUnsupportedProviderAndBackgroundClearSecrets(){
-        ui.onNodeWithTag("config-add-top").performClick();back()
-        ui.onNodeWithTag("config-overview").assertIsDisplayed()
-        ui.onNodeWithTag("config-add-top").performClick()
-        ui.onNodeWithTag("provider-search").performTextInput("zhipu")
-        ui.onNodeWithTag("provider-zhipu-cn").performClick()
-        ui.onNodeWithTag("config-fetch").assertDoesNotExist();ui.onNodeWithTag("config-test").assertDoesNotExist()
-        ui.onNodeWithTag("config-key").performTextInput("synthetic-key-only")
-        ui.onNodeWithTag("config-model").performScrollTo().performTextInput("synthetic-glm")
-        hideKeyboard();shot("05-manual-provider-real-app")
+    @Test fun overviewShowsLastTestAndResetsToUntestedWhenModelOrKeyChanges(){
+        edit("ui-b");client.reply(ConfigResult.Failure(ConfigError.UNAUTHORIZED,401))
+        ui.onNodeWithTag("config-test").performScrollTo().performClick();ui.waitUntil(10000){state.probe.phase==ProbePhase.FAILED}
+        back();probeLine("ui-b").assertTextContains("synthetic-model-b · 失败：",substring=true).assertTextContains("401",substring=true)
+        edit("ui-b");client.reply(ConfigResult.Success())
+        ui.onNodeWithTag("config-test").performScrollTo().performClick();ui.waitUntil(10000){state.probe.phase==ProbePhase.REACHABLE}
+        back();probeLine("ui-b").assertTextContains("上次测试：",substring=true).assertTextContains("synthetic-model-b · 成功",substring=true);shot("05-overview-last-test")
+        probeLine("ui-a").assertTextEquals("未测试")
+        edit("ui-b");ui.onNodeWithTag("config-model").performScrollTo().performTextReplacement("synthetic-model-c");hideKeyboard()
+        ui.onNodeWithTag("config-save").performClick();ui.waitUntil(10000){vault.list().single{it.id=="ui-b"}.modelId=="synthetic-model-c"&&!state.saving}
+        overview();probeLine("ui-b").assertTextEquals("未测试");shot("06-overview-reset-after-model-change")
+        edit("ui-b");client.reply(ConfigResult.Success())
+        ui.onNodeWithTag("config-test").performScrollTo().performClick();ui.waitUntil(10000){state.probe.phase==ProbePhase.REACHABLE}
+        back();probeLine("ui-b").assertTextContains("synthetic-model-c · 成功",substring=true)
+        edit("ui-b");ui.onNodeWithTag("config-key").performScrollTo().performTextReplacement("synthetic-key-rotated");hideKeyboard()
+        ui.onNodeWithTag("config-save").performClick();ui.waitUntil(10000){vault.secret("ui-b")=="synthetic-key-rotated"&&!state.saving}
+        overview();probeLine("ui-b").assertTextEquals("未测试")
+        assertEquals(3,client.calls.get())
+    }
+    @Test fun overviewShowsTheLatestRealCallResult(){
+        kotlinx.coroutines.runBlocking{
+            val status=ModelStatusStore(Store(context,AppServices.databaseName),vault.statusNamespace)
+            repeat(3){status.recordCall("ui-a","总结",false,MemoryRepairFeedback.reason("SUMMARY_TIMEOUT"))}
+            status.recordCall("ui-b","聊天",true,"")
+        }
+        ui.runOnIdle{state.refresh()};ui.waitUntil(10000){state.calls.size==2}
+        ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-ui-a"))
+        ui.onNodeWithTag("config-calls-ui-a",useUnmergedTree=true).assertTextEquals("最近 3 次总结失败：超时")
+        ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-ui-b"))
+        ui.onNodeWithTag("config-calls-ui-b",useUnmergedTree=true).assertTextContains("最近一次真实调用结果：聊天成功",substring=true);shot("07-overview-recent-calls")
+        assertEquals(0,client.calls.get())
+    }
+    @Test fun addEmbeddingFetchSelectAndBackgroundKeepsUnsavedDraftUntilSave(){
+        val beforePurposes=vault.backup(false).second
+        var embeddingCalls=0
+        state.embeddingClient=object:MemoryEmbeddingClient{override suspend fun embed(credential:ModelCredential,texts:List<String>,timeout:Int):List<DoubleArray>{assertEquals(listOf("向量连接测试"),texts);assertEquals("BAAI/bge-m3",credential.config.modelId);embeddingCalls++;return listOf(doubleArrayOf(1.0,0.0,0.0,0.0))}}
+        ui.onNodeWithTag("config-add-embedding").performScrollTo().performClick()
+        ui.onNodeWithTag("provider-silicon-cn").performClick()
+        ui.onNodeWithTag("config-name").performTextReplacement("合成向量草稿")
+        ui.onNodeWithTag("config-key").performTextReplacement("synthetic-key-only");hideKeyboard()
+        client.reply(ConfigResult.Success(listOf("BAAI/bge-m3","synthetic-chat")))
+        ui.onNodeWithTag("config-fetch").performScrollTo().performClick()
+        ui.waitUntil(10000){state.models.size==2}
+        ui.onNodeWithText("synthetic-chat").assertDoesNotExist()
+        ui.onNodeWithTag("model-search").performScrollTo().performTextInput("bge");hideKeyboard()
+        // The model list scrolls inside the editor's outer scroll area. Bring both into view.
+        ui.onNodeWithTag("model-options").performScrollTo()
+        ui.onNodeWithText("BAAI/bge-m3").performScrollTo().assertIsDisplayed().performClick()
+        ui.onNodeWithTag("config-model").performScrollTo().assertTextContains("BAAI/bge-m3",substring=true)
+        ui.onNodeWithTag("config-advanced").performScrollTo().performClick()
+        ui.onNodeWithTag("config-url").performScrollTo().assertTextContains("https://api.siliconflow.cn/v1",substring=true)
         ui.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
         ui.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
-        ui.onNodeWithTag("config-key").assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.EditableText,androidx.compose.ui.text.AnnotatedString("")))
-        ui.onNodeWithTag("config-save").performClick()
-        ui.onNodeWithTag("config-status").performScrollTo().assertTextContains("API Key",substring=true)
-        back();assertEquals(2,vault.list().size);assertEquals(0,client.calls.get())
+        ui.onNodeWithTag("config-key").performScrollTo().assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.InputText,androidx.compose.ui.text.AnnotatedString("synthetic-key-only")))
+        ui.onNodeWithTag("config-name").assertTextContains("合成向量草稿",substring=true)
+        ui.onNodeWithTag("config-model").assertTextContains("BAAI/bge-m3",substring=true)
+        ui.onNodeWithTag("config-url").performScrollTo().assertTextContains("https://api.siliconflow.cn/v1",substring=true)
+        shot("08-embedding-draft-after-background")
+        assertEquals(2,vault.list().size)
+        ui.onNodeWithTag("config-test").performScrollTo().performClick()
+        ui.waitUntil(10000){state.probe.phase==ProbePhase.REACHABLE}
+        ui.onNodeWithTag("config-probe-inline").assertTextContains("4 维",substring=true)
+        assertEquals(1,embeddingCalls)
+        ui.onNodeWithTag("config-save").performClick();waitSaved(3)
+        val saved=vault.list().single{it.name=="合成向量草稿"}
+        assertEquals("BAAI/bge-m3",saved.modelId)
+        assertEquals(beforePurposes[ModelPurpose.CHAT],vault.purposeId(ModelPurpose.CHAT))
+        assertEquals(beforePurposes[ModelPurpose.MEMORY],vault.purposeId(ModelPurpose.MEMORY))
+        assertEquals(saved.id,vault.purposeId(ModelPurpose.EMBEDDING))
+        assertEquals(1,client.calls.get())
     }
     @Test fun backgroundCancelsActiveProbeAndLateFailureCannotRestoreIt(){
         edit();val late=client.pending()
@@ -239,7 +307,7 @@ class ModelConfigUiTest {
     }
     @Test fun addressOrProviderChangeInvalidatesFetchAndCannotReuseSavedKey(){
         edit();val late=client.pending()
-        ui.onNodeWithTag("config-key").performTextInput("synthetic-key-only");hideKeyboard()
+        ui.onNodeWithTag("config-key").performTextReplacement("synthetic-key-only");hideKeyboard()
         ui.onNodeWithTag("config-fetch").performScrollTo().performClick();ui.waitUntil(10000){client.calls.get()==1}
         ui.onNodeWithTag("config-advanced").performScrollTo().performClick()
         ui.onNodeWithTag("config-url").performScrollTo().performTextReplacement("https://changed.invalid/v1")
@@ -251,7 +319,7 @@ class ModelConfigUiTest {
         ui.onNodeWithTag("config-status").performScrollTo().assertTextContains("重新输入",substring=true)
         ui.onNodeWithTag("provider-picker").performScrollTo().performClick()
         ui.onNodeWithTag("provider-search").performTextReplacement("mimo");ui.onNodeWithTag("provider-mimo").performClick()
-        ui.onNodeWithTag("config-key").performTextInput("synthetic-key-only");hideKeyboard()
+        ui.onNodeWithTag("config-key").performTextReplacement("synthetic-key-only");hideKeyboard()
         val oldProvider=client.pending();ui.onNodeWithTag("config-fetch").performScrollTo().performClick()
         ui.waitUntil(10000){client.calls.get()==2}
         ui.onNodeWithTag("provider-picker").performScrollTo().performClick()

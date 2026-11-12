@@ -18,6 +18,24 @@ internal object Diagnostics {
     internal val traceState=ThreadLocal<DiagnosticTraceState?>()
     @Volatile private var journal:DiagnosticJournal?=null
     private var identity=""
+    /** Detailed journal mode. Off by default; only then is the visible reasoning text recorded. */
+    @Volatile var detailed=false
+    /** Same per-event reasoning budget the journal applies to any data row. */
+    internal const val REASONING_LIMIT=32768
+    /**
+     * One reasoning row shared by both the network response and the shown panel. The status is always
+     * recorded so a turn that produced no thinking is visibly "absent", never silently blank, and a
+     * request that failed or was cancelled after thinking streamed in is "partial" rather than absent.
+     */
+    fun reasoning(value:String,incomplete:Boolean=false,hitLimit:Boolean=false,receivedChars:Int=value.length):Map<String,Any?>{
+        val received=maxOf(receivedChars,value.length)
+        if(received==0)return mapOf("reasoning_status" to "absent","reasoning_chars" to 0)
+        val status=if(incomplete)"partial" else "returned"
+        if(!detailed)return mapOf("reasoning_status" to status,"reasoning_chars" to received,"reasoning_text" to "[详细诊断未开启]")
+        val truncated=hitLimit||received>REASONING_LIMIT
+        return mapOf("reasoning_status" to status,"reasoning_chars" to received,
+            "reasoning_text" to if(value.length>REASONING_LIMIT)value.take(REASONING_LIMIT)else value,"reasoning_truncated" to truncated)
+    }
     /** Invoke on Dispatchers.IO during application setup; directory is app-private. */
     @Synchronized fun configure(directory:File,version:String){
         val key=directory.absolutePath
@@ -26,6 +44,16 @@ internal object Diagnostics {
         event("diagnostic.session",mapOf("retention_days" to 7,"segments" to 5,"segment_bytes" to 2*1024*1024,"queue_capacity" to 128,"queue_bytes" to 2*1024*1024))
     }
     fun registerSecret(secret:String){journal?.redactor?.register(secret)}
+    /** Chat words, memory text, prompts and replies reach the journal only with 详细诊断 on; otherwise just how long they were. */
+    fun raw(value:String?):Any? = if(value==null)null else if(detailed)value else "[详细诊断未开启，共${value.length}字]"
+    /** Same rule for structured payloads (tool arguments and results), counted on their JSON text. */
+    fun rawJson(value:Any?):Any? = if(value==null||detailed)value else "[详细诊断未开启，共${com.google.gson.Gson().toJson(value).length}字]"
+    /** Same masking as the journal, for text shown to the user (raw provider errors). */
+    fun redact(text:String,secrets:List<String> = emptyList()):String {
+        val shared=journal?.redactor
+        return if(shared!=null)synchronized(shared){secrets.forEach{shared.register(it)};shared.text(text)}
+        else DiagnosticRedactor().apply{secrets.forEach{register(it)}}.text(text)
+    }
     fun traceId():String=traceState.get()?.trace?:UUID.randomUUID().toString()
     fun event(name:String,data:Map<String,Any?> = emptyMap(),trace:String?=null,elapsed:Long?=null,secrets:List<String> = emptyList()){
         val state=traceState.get()
@@ -50,21 +78,21 @@ internal object Diagnostics {
         val active=journal?:error("诊断记录尚未初始化，请返回页面后重试")
         event("diagnostic.export",mapOf("detailed" to detailed));active.export(detailed)
     }
-    internal fun installForTest(value:DiagnosticJournal?){journal=value;identity=""}
+    internal fun installForTest(value:DiagnosticJournal?){journal=value;identity="";detailed=false}
 }
 
 /** Covers mocked and HTTPS clients alike; stream chunks are aggregated, not individually enqueued. */
 internal class LoggedTextChatClient(private val delegate:TextChatClient):TextChatClient {
     private fun request(config:ModelConfig,key:String,value:TextChatRequest,id:String,stream:Boolean){
         Diagnostics.registerSecret(key)
-        Diagnostics.event("network.request",mapOf("request_id" to id,"stream" to stream,"model" to config.modelId,"provider" to config.providerId,"endpoint" to config.baseUrl,"context_limit" to config.contextTokens,"output_limit" to value.outputLimit,"timeout_ms" to value.timeoutMillis,"messages" to value.messages.map{mapOf("role" to it.role,"content" to it.content,"tool_calls" to it.toolCalls.map{c->mapOf("id" to c.id,"name" to c.name,"arguments" to c.arguments)})},"tools" to value.tools),secrets=listOf(key))
+        Diagnostics.event("network.request",mapOf("request_id" to id,"stream" to stream,"model" to config.modelId,"provider" to config.providerId,"endpoint" to config.baseUrl,"context_limit" to config.contextTokens,"output_limit" to value.outputLimit,"timeout_ms" to value.timeoutMillis,"messages" to value.messages.map{mapOf("role" to it.role,"content" to Diagnostics.raw(it.content),"tool_calls" to it.toolCalls.map{c->mapOf("id" to c.id,"name" to c.name,"arguments" to Diagnostics.raw(c.arguments))})},"tools" to value.tools),secrets=listOf(key))
     }
-    private fun response(id:String,result:TextChatResult,start:Long,key:String,extra:Map<String,Any?> = emptyMap()){
+    private fun response(id:String,result:TextChatResult,start:Long,key:String,extra:Map<String,Any?> = emptyMap(),reasoning:Map<String,Any?>?=null){
         val value=when(result){
-            is TextChatResult.Success->mapOf("status" to "success","text" to result.text,"tool_calls" to result.toolCalls.map{mapOf("id" to it.id,"name" to it.name,"arguments" to it.arguments)})
+            is TextChatResult.Success->mapOf("status" to "success","text" to Diagnostics.raw(result.text),"tool_calls" to result.toolCalls.map{mapOf("id" to it.id,"name" to it.name,"arguments" to Diagnostics.raw(it.arguments))})
             is TextChatResult.Failure->mapOf("status" to "failure","reason" to result.reason.name,"http_status" to result.httpStatus)
         }
-        Diagnostics.event("network.response",value+extra+mapOf("request_id" to id),elapsed=(System.nanoTime()-start)/1_000_000,secrets=listOf(key))
+        Diagnostics.event("network.response",value+extra+(reasoning?:Diagnostics.reasoning((result as? TextChatResult.Success)?.displayReasoning.orEmpty()))+mapOf("request_id" to id),elapsed=(System.nanoTime()-start)/1_000_000,secrets=listOf(key))
     }
     override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult=withContext(Diagnostics.context(Diagnostics.traceState.get()?.purpose?:"network")){
         val id=UUID.randomUUID().toString();val start=System.nanoTime();request(config,key,request,id,false)
@@ -77,9 +105,36 @@ internal class LoggedTextChatClient(private val delegate:TextChatClient):TextCha
         var chunks=0;var chars=0;var omitted=false;val text=StringBuilder()
         return@withContext try{
             delegate.stream(config,key,request){chunk->chunks++;chars+=chunk.length;if(!omitted){if(text.length+chunk.length<=32768)text.append(chunk)else{omitted=true;text.clear()}};onChunk(chunk)}
-                .also{result->response(id,result,start,key,mapOf("chunks" to chunks,"stream_chars" to chars,"stream_text" to if(result is TextChatResult.Success&&!omitted)text.toString() else "[流式正文已省略]","stream_text_omitted" to (omitted||result !is TextChatResult.Success),"stream_omitted_reason" to if(omitted)"超过正文限额" else if(result !is TextChatResult.Success)"响应未完整成功" else ""))}
+                .also{result->response(id,result,start,key,mapOf("chunks" to chunks,"stream_chars" to chars,"stream_text" to if(result is TextChatResult.Success&&!omitted)Diagnostics.raw(text.toString()) else "[流式正文已省略]","stream_text_omitted" to (omitted||result !is TextChatResult.Success),"stream_omitted_reason" to if(omitted)"超过正文限额" else if(result !is TextChatResult.Success)"响应未完整成功" else ""))}
         }catch(e:CancellationException){Diagnostics.event("network.cancelled",mapOf("request_id" to id,"chunks" to chunks,"stream_chars" to chars));throw e}
         catch(e:Exception){Diagnostics.failure("network.failed",e,mapOf("request_id" to id,"chunks" to chunks,"stream_chars" to chars),secrets=listOf(key));throw e}
+    }
+    override suspend fun streamEvents(config:ModelConfig,key:String,request:TextChatRequest,onEvent:suspend(TextStreamEvent)->Unit):TextChatResult=withContext(Diagnostics.context(Diagnostics.traceState.get()?.purpose?:"network")){
+        val id=UUID.randomUUID().toString();val start=System.nanoTime();request(config,key,request,id,true)
+        var chunks=0;var chars=0;var reasoningChunks=0;var reasoningChars=0;var omitted=false;val text=StringBuilder()
+        // Thinking that already streamed in is a fact even when the request later fails or is cancelled.
+        val streamedReasoning=StringBuilder();var reasoningOmitted=false
+        fun reasoningMap()=Diagnostics.reasoning(streamedReasoning.toString(),incomplete=true,hitLimit=reasoningOmitted,receivedChars=reasoningChars)
+        fun counts()=mapOf("request_id" to id,"chunks" to chunks,"stream_chars" to chars,"reasoning_chunks" to reasoningChunks,"reasoning_chars" to reasoningChars)
+        return@withContext try{
+            delegate.streamEvents(config,key,request){event->
+                when(event){
+                    is TextStreamEvent.Content->{chunks++;chars+=event.text.length;if(!omitted){if(text.length+event.text.length<=32768)text.append(event.text)else{omitted=true;text.clear()}}}
+                    is TextStreamEvent.Reasoning->{reasoningChunks++;reasoningChars+=event.text.length
+                        // Keep a bounded prefix that fills the remaining budget instead of dropping a
+                        // whole oversized chunk (which would make a long thought look "absent").
+                        if(!reasoningOmitted){
+                            val room=Diagnostics.REASONING_LIMIT-streamedReasoning.length
+                            if(event.text.length<=room)streamedReasoning.append(event.text)
+                            else{streamedReasoning.append(event.text,0,room);reasoningOmitted=true}
+                        }}
+                }
+                onEvent(event)
+            }.also{result->response(id,result,start,key,counts()+mapOf("stream_text" to if(result is TextChatResult.Success&&!omitted)Diagnostics.raw(text.toString()) else "[流式正文已省略]","stream_text_omitted" to (omitted||result !is TextChatResult.Success)),
+                reasoning=if(result is TextChatResult.Success)Diagnostics.reasoning(result.displayReasoning) else reasoningMap())}
+        }catch(e:CancellationException){Diagnostics.event("network.cancelled",counts()+reasoningMap());throw e}
+        // An observer exception may echo the supplied reasoning; retain type/counts, never its message.
+        catch(e:Exception){Diagnostics.event("network.failed",counts()+reasoningMap()+mapOf("error_type" to e.javaClass.name));throw e}
     }
 }
 

@@ -19,7 +19,7 @@ class ConfigRulesTest {
         assertNull(ProviderPresets.get("bailian-cn").modelsPath)
         assertNull(ProviderPresets.get("zhipu-cn").modelsPath)
         assertEquals("models",ProviderPresets.get("deepseek").modelsPath)
-        assertEquals("models?sub_type=chat",ProviderPresets.get("silicon-cn").modelsPath)
+        assertEquals("models",ProviderPresets.get("silicon-cn").modelsPath)
         assertEquals("api-key",ProviderPresets.get("mimo").authHeader)
         assertEquals("key",ProviderPresets.get("openrouter").testPath)
         assertTrue(ProviderPresets.all.all {it.base.isEmpty()||ConfigRules.urlError(it.base)==null})

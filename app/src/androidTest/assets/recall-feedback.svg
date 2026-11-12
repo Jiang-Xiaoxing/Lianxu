@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="460" viewBox="0 0 1080 460">
+<rect width="1080" height="460" rx="20" fill="#f8f5ee"/><g font-family="sans-serif" fill="#2d3439">
+<text x="32" y="44" font-size="25" font-weight="700">主动回查：把反馈交回模型，再决定下一步</text>
+<text x="32" y="76" font-size="16" fill="#626b70">虚构例子 · 候选实现 · 普通反馈不替模型决定“资料够了”</text>
+<g fill="#fff" stroke="#d8d4c9"><rect x="30" y="108" width="300" height="150" rx="15"/><rect x="390" y="108" width="300" height="150" rx="15"/><rect x="750" y="108" width="300" height="150" rx="15"/></g>
+<text x="48" y="146" font-size="22" font-weight="700">1 · 模型选择查法</text><text x="48" y="190" font-size="18">搜“咖啡” / 查记忆 / 读原话</text><text x="48" y="227" font-size="16" fill="#626b70">相同调用本次不再次执行</text>
+<text x="408" y="146" font-size="22" font-weight="700">2 · 程序返回反馈</text><text x="408" y="190" font-size="18">找到 / 空 / 重复 / 普通错误</text><text x="408" y="227" font-size="16" fill="#626b70">没找到，不代表你没说过</text>
+<text x="768" y="146" font-size="22" font-weight="700">3 · 模型再决定</text><text x="768" y="190" font-size="18">够了就答；不够可换方向</text><text x="768" y="227" font-size="16" fill="#626b70">无新线索应停，并说明不确定</text>
+<g fill="none" stroke="#9a7849" stroke-width="3"><path d="M337 180h43m-8-7 8 7-8 7M697 180h43m-8-7 8 7-8 7"/><path d="M900 267v42H180v-41m-7 8 7-8 7 8"/></g>
+<text x="360" y="299" font-size="18">仍有新线索：改搜“不喝”或读取原文</text>
+<rect x="30" y="347" width="1020" height="82" rx="12" fill="#ede6d6"/>
+<text x="48" y="379" font-size="18" font-weight="700">提醒不是停查保证；实际限制仍由程序执行</text>
+<text x="48" y="409" font-size="16">权限 / 用户取消 / 逐次网络超时 / 实际上下文；不设回查轮数、整轮时限或人为份额</text>
+</g></svg>

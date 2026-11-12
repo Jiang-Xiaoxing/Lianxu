@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
             ModelPurpose.entries.forEachIndexed{index,purpose->
                 var menu by remember(purpose){mutableStateOf(false)}
+                var includeUnknown by remember(purpose){mutableStateOf(false)}
                 val chosen=state.configs.firstOrNull{it.id==state.purposes[purpose]}
                 Box{
                     Row(Modifier.fillMaxWidth().heightIn(min=72.dp).clickable(enabled=!state.busy,role=Role.Button){menu=true}.testTag("purpose-select-${purpose.key}").padding(16.dp),verticalAlignment=Alignment.CenterVertically){
@@ -32,7 +33,8 @@ import androidx.compose.ui.unit.dp
                     }
                     DropdownMenu(menu,{menu=false}){
                         DropdownMenuItem(text={Text("不选择")},onClick={menu=false;state.selectPurpose(purpose,"")},modifier=Modifier.testTag("purpose-clear-${purpose.key}"))
-                        state.configs.forEach{config->DropdownMenuItem(text={Column{Text(config.name);Text(config.modelId,style=MaterialTheme.typography.bodySmall)}},onClick={menu=false;state.selectPurpose(purpose,config.id)},modifier=Modifier.testTag("purpose-option-${purpose.key}-${config.id}"))}
+                        ProviderCatalog.configurations(state.configs,purpose,chosen?.id.orEmpty(),includeUnknown).forEach{config->DropdownMenuItem(text={Column{Text(config.name);Text(config.modelId,style=MaterialTheme.typography.bodySmall)}},onClick={menu=false;state.selectPurpose(purpose,config.id)},modifier=Modifier.testTag("purpose-option-${purpose.key}-${config.id}"))}
+                        if(purpose==ModelPurpose.EMBEDDING&&!includeUnknown)DropdownMenuItem(text={Text("其他已保存配置（能力未核实）")},onClick={includeUnknown=true},modifier=Modifier.testTag("purpose-unknown-embedding"))
                     }
                 }
                 if(index<ModelPurpose.entries.lastIndex)HorizontalDivider(Modifier.padding(start=64.dp,end=16.dp),color=Line)

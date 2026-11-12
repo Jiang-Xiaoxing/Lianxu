@@ -14,11 +14,11 @@ class ReleaseUpgradeTest {
     @Suppress("DEPRECATION")
     @Test fun syntheticDataAndEncryptedConfigSurviveCoverInstall():Unit=runBlocking {
         val stage=InstrumentationRegistry.getArguments().getString("releaseUpgradeStage").orEmpty()
-        assumeTrue("Only run with an explicit release-upgrade stage",stage in setOf("seed16","verify17","seed17","verify18","seed18","verify19"))
+        assumeTrue("Only run with an explicit release-upgrade stage",stage in setOf("seed16","verify17","seed17","verify18","seed18","verify19","seed21","verify22","seed19","verify59"))
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         assertEquals("app.lianxu.independent",context.packageName)
-        assertEquals(when(stage){"seed16"->16;"verify18","seed18"->18;"verify19"->19;else->17},context.packageManager.getPackageInfo(context.packageName,0).versionCode)
-        val generation=when(stage){"seed18","verify19"->"019";"seed17","verify18"->"018";else->"017"}
+        assertEquals(when(stage){"seed16"->16;"verify18","seed18"->18;"verify19","seed19"->19;"seed21"->21;"verify22"->22;"verify59"->59;else->17},context.packageManager.getPackageInfo(context.packageName,0).versionCode)
+        val generation=when(stage){"seed19","verify59"->"100";"seed21","verify22"->"022";"seed18","verify19"->"019";"seed17","verify18"->"018";else->"017"}
         val friend=Friend("release-upgrade-v$generation","升级验收角色","仅含合成数据","这是覆盖升级验收用的人设。")
         // The released v17 class has seven constructor parameters; v18 adds a memory budget.
         // Reflection keeps this instrumentation fixture compatible with both installed APKs.
@@ -26,6 +26,8 @@ class ReleaseUpgradeTest {
         val args=mutableListOf<Any>("upgrade-model-v$generation","升级验收模型","custom","https://upgrade.invalid/v1","synthetic-upgrade-model",16384,2048)
         if(constructor.parameterTypes.size==8)args.add(0)
         val model=constructor.newInstance(*args.toTypedArray()) as ModelConfig
+        // v1.0 checks both the documented old-default lifting and an explicit custom budget.
+        val custom=if(generation=="100")model.copy(id="upgrade-custom-v100",contextTokens=32768,outputTokens=4096)else null
         val namespace="release-upgrade-v$generation"
         val proof=File(context.filesDir,"release-upgrade-v$generation-proof.json")
         val encrypted=File(context.noBackupFilesDir,"$namespace/${model.id}.enc")
@@ -39,7 +41,9 @@ class ReleaseUpgradeTest {
                 store.exchange(friend,"升级前保存的合成原话","升级前保存的合成回复")
                 store.setPreference("release-upgrade-v$generation-setting","合成偏好保留")
                 vault.save(model,"synthetic-upgrade-key-only");vault.setDefault(model.id)
-                proof.writeText(JSONObject().put("messageIds",store.messages().filter{it.friendId==friend.id}.joinToString(","){it.id.toString()}).put("encryptedSHA256",digest(encrypted.readBytes())).toString())
+                val saved=JSONObject().put("messageIds",store.messages().filter{it.friendId==friend.id}.joinToString(","){it.id.toString()}).put("encryptedSHA256",digest(encrypted.readBytes()))
+                custom?.let{vault.save(it,"synthetic-custom-upgrade-key-only");saved.put("customEncryptedSHA256",digest(java.io.File(context.noBackupFilesDir,"$namespace/${it.id}.enc").readBytes()))}
+                proof.writeText(saved.toString())
             }
             assertTrue(proof.exists())
             val expected=JSONObject(proof.readText())
@@ -56,7 +60,13 @@ class ReleaseUpgradeTest {
             assertEquals(listOf(true,false),messages.map{it.mine})
             assertEquals(expected.getString("messageIds"),messages.joinToString(","){it.id.toString()})
             assertEquals("合成偏好保留",store.preference("release-upgrade-v$generation-setting",""))
-            assertEquals(model,vault.list().single{it.id==model.id})
+            val expectedModel=if(stage=="verify59")model.copy(contextTokens=1048576,outputTokens=65536)else model
+            assertEquals(expectedModel,vault.list().single{it.id==model.id})
+            custom?.let{
+                assertEquals(it,vault.list().single{row->row.id==it.id})
+                assertEquals("synthetic-custom-upgrade-key-only",vault.secret(it.id))
+                assertEquals(expected.getString("customEncryptedSHA256"),digest(java.io.File(context.noBackupFilesDir,"$namespace/${it.id}.enc").readBytes()))
+            }
             assertEquals(model.id,vault.defaultId())
             assertEquals("synthetic-upgrade-key-only",vault.secret(model.id))
             assertEquals(expected.getString("encryptedSHA256"),digest(encrypted.readBytes()))

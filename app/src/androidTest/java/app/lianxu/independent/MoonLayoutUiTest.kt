@@ -53,21 +53,21 @@ class MoonLayoutUiTest {
     }
     @Test fun aboutUsesInstalledVersionAndAuthor(){
         ui.runOnIdle{vm.open("settings-info")}
-        ui.onNodeWithText("江晓星").assertExists()
+        ui.onNodeWithText("姜小星").assertExists()
         ui.onNodeWithTag("settings-version").performScrollTo().assertTextContains(InstalledBuild.read(context).versionName,substring=true)
         ui.onNodeWithText("第三方致谢").performScrollTo().assertExists()
     }
-    @Test fun emptyTabsAndIndependentRelationshipReturn(){
+    @Test fun emptyTabsAndIndependentMemoryReturn(){
         ui.onNodeWithTag("roles-empty-chat").assertIsDisplayed()
         ui.onNodeWithTag("tab-1").performClick()
         ui.onNodeWithTag("roles-empty-contacts").assertIsDisplayed()
-        ui.runOnIdle{vm.createCompanion("合成关系角色","合成角色设定","","","")}
+        ui.runOnIdle{vm.createCompanion("合成记忆角色","合成角色设定","","","")}
         ui.waitUntil(10000){!vm.busy&&vm.friends.size==1}
         val id=vm.friends.single().id
-        ui.runOnIdle{vm.open("relationships");vm.open("relationship-role",id)}
-        ui.onNodeWithTag("processing-relationship").assertIsDisplayed()
+        ui.runOnIdle{vm.open("processing");vm.open("processing-role",id)}
+        ui.onNodeWithText("我写的").performClick();ui.onNodeWithTag("memory-add").assertIsDisplayed()
         ui.onNodeWithTag("back").performClick()
-        ui.runOnIdle{assertEquals("relationships",vm.page);vm.open("detail",id);vm.open("relationship-role",id)}
+        ui.runOnIdle{assertEquals("processing",vm.page);vm.open("detail",id);vm.open("processing-role",id)}
         ui.onNodeWithTag("back").performClick()
         ui.runOnIdle{assertEquals("detail",vm.page)}
     }

@@ -48,13 +48,50 @@ class BackupUiTest {
     }
     private fun waitSaved(previous:Int){ui.waitUntil(30000){saves.size>previous&&ui.onAllNodesWithText("已保存。备份和详细日志可能含私密资料，请妥善保管。").fetchSemanticsNodes().isNotEmpty()}}
     private fun bytes()=instrument.context.contentResolver.openInputStream(saves.last())!!.use{it.readBytes()}
-    private fun exportAll(keys:Boolean){val n=saves.size;ui.onNodeWithTag("backup-export-all").performScrollTo().performClick();ui.onNodeWithText("消耗额度",substring=true).assertExists();assertEquals(n,saves.size);ui.onNodeWithTag(if(keys)"backup-with-keys"else"backup-without-keys").performClick();waitSaved(n)}
+    private fun exportAll(keys:Boolean){val n=saves.size;ui.onNodeWithTag("backup-export-all").performScrollTo().performClick();ui.onNodeWithText("是否包含 API 密钥？").assertExists();assertEquals(n,saves.size);ui.onNodeWithTag(if(keys)"backup-with-keys"else"backup-without-keys").performClick();if(keys){ui.onNodeWithTag("backup-password").performTextInput("synthetic-test-password");ui.onNodeWithTag("backup-password-again").performTextInput("synthetic-test-password");ui.onNodeWithTag("backup-password-ok").performClick()};waitSaved(n)}
     private fun open(mode:String){openUri=saves.last();ui.onNodeWithTag("archive-open").performScrollTo().performClick();ui.waitUntil(30000){ui.onAllNodesWithTag("archive-mode-add").fetchSemanticsNodes().isNotEmpty()};ui.onNodeWithTag(if(mode=="ADD")"archive-mode-add"else"archive-mode-replace").performClick();ui.onNodeWithTag("archive-preview").performScrollTo().performClick();ui.waitUntil(30000){ui.onAllNodesWithTag("archive-impact").fetchSemanticsNodes().isNotEmpty()}}
     private fun shot(label:String){ui.waitForIdle();instrument.uiAutomation.takeScreenshot().let{b->File(instrument.targetContext.filesDir,"backup-ui-$label.png").outputStream().use{b.compress(Bitmap.CompressFormat.PNG,100,it)};b.recycle()}}
     @Test fun allExportRequiresKeyDecisionAndExcludesSecretByDefault(){show(dark=true,big=true);exportAll(false);val p=BackupArchive.read(bytes().inputStream());assertTrue(p.all);assertFalse(p.includesKeys);assertFalse(p.root.toString().contains("synthetic-ui-key-only"));assertEquals(0,calls.get());shot("all-export-dark-large")}
-    @Test fun explicitIncludeKeysProducesPortableSensitiveBackup(){show();exportAll(true);val p=BackupArchive.read(bytes().inputStream());assertTrue(p.includesKeys);assertTrue(p.root.toString().contains("synthetic-ui-key-only"));assertEquals(0,calls.get())}
+    @Test fun explicitIncludeKeysProducesPortableSensitiveBackup(){show();exportAll(true);val p=BackupArchive.read(bytes().inputStream());assertTrue(p.includesKeys);assertTrue(BackupKeySeal.sealed(p.root));assertFalse(p.root.toString().contains("synthetic-ui-key-only"));assertTrue(BackupKeySeal.open(p.root,"synthetic-test-password".toCharArray()).toString().contains("synthetic-ui-key-only"));assertEquals(0,calls.get())}
     @Test fun fullAddPreservesCurrentModelsAndOnlyAddsRoles(){show();exportAll(true);val before=vm.friends.size;vault.save(config("https://keep.invalid/v1"),"synthetic-current-key");open("ADD");ui.onNodeWithTag("archive-import").performScrollTo().performClick();ui.waitUntil(30000){vm.friends.size==before*2};assertEquals("https://keep.invalid/v1",vault.list().single().baseUrl);assertEquals("synthetic-current-key",vault.secret("service"));assertEquals(0,calls.get())}
     @Test fun fullReplaceCancelIsReadOnlyAndConfirmRestoresSettings(){show();exportAll(false);runBlocking{vm.processing.store.setPreference("nickname","新昵称")};open("REPLACE");ui.onNodeWithTag("archive-import").performScrollTo().performClick();ui.onNodeWithText("取消").performClick();assertEquals("新昵称",runBlocking{vm.processing.store.preference("nickname","")});ui.onNodeWithTag("archive-import").performScrollTo().performClick();shot("replace-confirm");ui.onNodeWithTag("archive-confirm-overwrite").performClick();ui.waitUntil(30000){vm.nickname=="原昵称"};assertEquals("synthetic-ui-key-only",vault.secret("service"));assertEquals(0,calls.get())}
     @Test fun singleRoleCompleteExportAddsAssetsWithoutScopeFragments(){show();ui.onNodeWithTag("archive-export").assertIsNotEnabled();ui.onNodeWithTag("archive-export-seed-lin").performScrollTo().performClick();val n=saves.size;ui.onNodeWithTag("archive-export").performScrollTo().performClick();waitSaved(n);val p=BackupArchive.read(bytes().inputStream());assertFalse(p.all);assertEquals(1,p.roles.size());assertEquals(1,p.files.size);val before=vm.friends.size;open("ADD");ui.onNodeWithTag("archive-import").performScrollTo().performClick();ui.waitUntil(30000){vm.friends.size==before+1};assertEquals(0,calls.get())}
+    /** 保存必须串行：两次写入不能同时进行，否则旧值可能盖掉新值。 */
+    @Test fun detailedSavesNeverOverlap(){
+        show()
+        var inFlight=0;var overlap=false
+        vm.diagnosticPersist={inFlight++;if(inFlight>1)overlap=true;Thread.sleep(120);inFlight--}
+        fun toggle()=ui.onNodeWithTag("backup-detailed").performScrollTo().performClick()
+        toggle();toggle();toggle()
+        instrument.waitForIdleSync();Thread.sleep(1200)
+        vm.diagnosticPersist=null
+        assertFalse("两次保存不能重叠",overlap)
+    }
+
+    /** 保存失败时界面要退回落盘值，不能显示一个没存上的开关。 */
+    @Test fun failedDetailedSaveRollsBackToStoredValue(){
+        show()
+        assertFalse(vm.diagnosticDetailed)
+        vm.diagnosticPersist={if(it=="1")throw java.io.IOException("synthetic save failure")}
+        ui.onNodeWithTag("backup-detailed").performScrollTo().performClick()
+        ui.waitUntil(15000){!vm.diagnosticDetailed}
+        vm.diagnosticPersist=null
+        assertEquals("没有存上就不能留成开","0",runBlocking{vm.processing.store.preference("diagnostic-detailed","0")})
+    }
+
     @Test fun oneDetailedSwitchControlsExportAndSecretsNeverAppear(){show();Diagnostics.event("synthetic.ui",mapOf("message" to "合成诊断正文","api_key" to "synthetic-ui-key-only"));var n=saves.size;ui.onNodeWithTag("backup-export-diagnostics").performScrollTo().performClick();waitSaved(n);val simple=bytes().toString(Charsets.UTF_8);assertFalse(simple.contains("合成诊断正文"));ui.onNodeWithTag("backup-detailed").performScrollTo().performClick();ui.onAllNodesWithTag("backup-detailed").assertCountEquals(1);n=saves.size;ui.onNodeWithTag("backup-export-diagnostics").performScrollTo().performClick();waitSaved(n);val detailed=bytes().toString(Charsets.UTF_8);assertTrue(detailed.contains("合成诊断正文"));assertFalse(detailed.contains("synthetic-ui-key-only"));shot("diagnostic-switch")}
+    /** 快速开关不能让较早的一次保存盖掉最后一次选择：落盘的必须等于最后的状态。 */
+    @Test fun detailedSwitchStoresTheLastChoiceEvenWhenToggledRapidly(){
+        show()
+        fun toggle()=ui.onNodeWithTag("backup-detailed").performScrollTo().performClick()
+        fun stored():String{instrument.waitForIdleSync();Thread.sleep(600);return runBlocking{vm.processing.store.preference("diagnostic-detailed","0")}}
+        toggle();toggle();toggle()   // 关 → 开 → 关 → 开
+        assertEquals("最后选择是开，落盘也必须是开","1",stored())
+        assertTrue(vm.diagnosticDetailed)
+        toggle()                    // 开 → 关
+        assertEquals("最后选择是关，落盘也必须是关","0",stored())
+        assertFalse("界面状态要等于最后落盘的选择",vm.diagnosticDetailed)
+        toggle()                    // 关 → 开
+        assertEquals("1",stored());assertTrue(vm.diagnosticDetailed)
+    }
 }

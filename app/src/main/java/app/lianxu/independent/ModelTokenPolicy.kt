@@ -2,9 +2,17 @@ package app.lianxu.independent
 
 /** Checked, exact model IDs on their official endpoint only. Not a guess based on a name prefix. */
 data class ModelTokenCapability(val context:Int,val maxOutput:Int,val reasoning:Boolean)
-data class ModelTokenDefaults(val context:Int=16384,val chat:Int=2048,val memory:Int=2048)
+/** Defaults for a model we have no checked capability for: 1M window, 64K reply, 32K summary. */
+data class ModelTokenDefaults(val context:Int=ModelTokenPolicy.DEFAULT_CONTEXT,val chat:Int=ModelTokenPolicy.DEFAULT_CHAT,val memory:Int=ModelTokenPolicy.DEFAULT_MEMORY)
 object ModelTokenPolicy {
     const val MAX_OUTPUT=393216
+    /** The user's 2026-11-06 ruling: a normal reply budget is 64K on a 1M window, not 16K/2K. */
+    const val DEFAULT_CONTEXT=1048576
+    const val DEFAULT_CHAT=65536
+    const val DEFAULT_MEMORY=32768
+    /** The pair older builds pre-filled; treated as "never touched" when read from an unknown model. */
+    const val LEGACY_CONTEXT=16384
+    const val LEGACY_OUTPUT=2048
     private val openai=mapOf(
         "gpt-4o-mini" to ModelTokenCapability(128000,16384,false),
         "gpt-4o-mini-2024-07-18" to ModelTokenCapability(128000,16384,false),
@@ -28,8 +36,17 @@ object ModelTokenPolicy {
     fun capability(config:ModelConfig)=capability(config.providerId,config.baseUrl,config.modelId)
     fun defaults(provider:String,base:String,model:String):ModelTokenDefaults {
         val known=capability(provider,base,model)?:return ModelTokenDefaults()
-        return ModelTokenDefaults(known.context,minOf(if(known.reasoning)16384 else 4096,known.maxOutput),minOf(if(known.reasoning)32768 else 8192,known.maxOutput))
+        // A checked model keeps its documented window; the reply budget follows the same 64K rule,
+        // capped by what that model actually accepts. Summary output stays the smaller purpose budget.
+        return ModelTokenDefaults(known.context,minOf(DEFAULT_CHAT,known.maxOutput),minOf(DEFAULT_MEMORY,known.maxOutput))
     }
+    /**
+     * 老版本建配置时预填的就是 16384/2048，这个组合和「用户从没动过」无法区分。
+     * 读到时按模型自己的上限升到新默认（未核对模型即 1M/64K）；用户改过的任何其它值原样保留。
+     */
+    fun liftLegacy(context:Int,output:Int,provider:String,base:String,model:String):Pair<Int,Int> =
+        if(context==LEGACY_CONTEXT&&output==LEGACY_OUTPUT)defaults(provider,base,model).let{it.context to it.chat}
+        else context to output
     fun error(config:ModelConfig):String? {
         val memory=config.memoryOutputLimit()
         if(config.contextTokens !in 4096..2000000||config.outputTokens !in 1..MAX_OUTPUT||config.memoryOutputTokens !in 0..MAX_OUTPUT||memory>=config.contextTokens||config.outputTokens>=config.contextTokens)
@@ -45,7 +62,7 @@ object ModelTokenPolicy {
 }
 
 /** Draft policy is independent of Compose; saved custom values never opt into automatic changes. */
-data class ModelBudgetDraft(val context:String="16384",val chat:String="2048",val memory:String="2048",val automatic:Boolean=true) {
+data class ModelBudgetDraft(val context:String="1048576",val chat:String="65536",val memory:String="32768",val automatic:Boolean=true) {
     fun manual(context:String=this.context,chat:String=this.chat,memory:String=this.memory)=copy(context=context,chat=chat,memory=memory,automatic=false)
     fun apply(provider:String,base:String,model:String):ModelBudgetDraft {
         val d=ModelTokenPolicy.defaults(provider,base,model)

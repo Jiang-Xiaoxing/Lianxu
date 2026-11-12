@@ -256,4 +256,38 @@ class BackupDocumentsUiTest {
         saveEvidence("completed")
         // 专用模拟器 Downloads 中保留这一份合成包，作为实际系统保存流程的可检查证据。
     }
+
+    @Test
+    fun deliveredMemoryTestRoleImportsViaSystemPickerWithoutOverwritingOrCallingModel() {
+        show()
+        val before = vm.friends.toList()
+        val originals = runBlocking { before.associate { it.id to vm.roleArchive.export(it.id, true) } }
+        val rulesBefore = runBlocking { vm.processing.memoryRules() }
+        ui.onNodeWithTag("archive-open").performScrollTo().performClick()
+        awaitNode("memory-package-open") { true }.also { @Suppress("DEPRECATION") it.recycle() }
+        downloads()
+        chooseFile("memory-function-test.lianxu.zip")
+        waitForApp()
+        ui.waitUntil(30_000) { ui.onAllNodesWithTag("archive-mode-add").fetchSemanticsNodes().isNotEmpty() }
+        ui.onNodeWithTag("archive-mode-add").performClick()
+        ui.onNodeWithTag("archive-preview").performScrollTo().performClick()
+        ui.waitUntil(30_000) { ui.onAllNodesWithTag("archive-impact").fetchSemanticsNodes().isNotEmpty() }
+        saveEvidence("memory-package-preview")
+        ui.onNodeWithTag("archive-import").performScrollTo().performClick()
+        ui.waitUntil(30_000) { vm.friends.size == before.size + 1 }
+        val copy = vm.friends.single { fresh -> before.none { it.id == fresh.id } }
+        assertEquals("记忆功能测试", copy.name)
+        runBlocking {
+            assertTrue(vm.processing.memories(copy.id).isEmpty())
+            assertTrue(vm.processing.sources(copy.id).isEmpty())
+            assertTrue(vm.processing.store.messages().none { it.friendId == copy.id })
+            before.forEach { assertEquals(originals.getValue(it.id), vm.roleArchive.export(it.id, true)) }
+            assertEquals(rulesBefore, vm.processing.memoryRules())
+            val prompts = vm.roleArchive.export(copy.id, false)["prompts"].asJsonObject
+            assertTrue(prompts["extra"].asString.contains("不得为了通过测试伪造"))
+        }
+        assertEquals("导入不应调用模型", 0, calls.get())
+        saveEvidence("memory-package-imported")
+    }
+
 }

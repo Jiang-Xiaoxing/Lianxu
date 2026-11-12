@@ -46,3 +46,20 @@ docs/*
 !docs/MODEL-TOKEN-BUDGETS.md
 !docs/PERSONA.md
 !docs/LOCAL-UPDATES.md
+
+/HANDOFF.md
+
+!docs/MEMORY-PORT.md
+
+!docs/CONFIRMED-COMPANION-CORE.md
+
+!docs/ADAPTIVE-CONTEXT-20261102.md
+!docs/GIT-CHECKPOINTS-20261102.md
+!docs/ROLE-GENERATION-FIX-20261102.md
+
+# Private planning and local evidence never belong in release snapshots
+/openspec/
+/codex_task/
+/临时/
+/development/
+/*.init.gradle

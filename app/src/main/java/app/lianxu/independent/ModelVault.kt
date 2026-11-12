@@ -1,6 +1,7 @@
 package app.lianxu.independent
 
 import android.content.Context
+import android.os.Looper
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
@@ -15,6 +16,8 @@ import javax.crypto.spec.GCMParameterSpec
 /** Per-config AES-GCM keys stay in AndroidKeyStore. Entire records live encrypted in noBackupFilesDir. */
 class ModelVault(context:Context,private val namespace:String="model-configs",private val store:Store?=null) {
     private val root=File(context.noBackupFilesDir,namespace).apply {mkdirs()}
+    /** Non-secret scope for per-configuration status lines. */
+    internal val statusNamespace get()=namespace
     internal val generationKey get()="model-vault-generation:$namespace"
     private val directory:File get(){
         val generation=store?.readableDatabase?.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(generationKey))?.use{if(it.moveToFirst())it.getString(0) else ""}.orEmpty()
@@ -22,6 +25,16 @@ class ModelVault(context:Context,private val namespace:String="model-configs",pr
         return if(generation.isEmpty())root else File(root,"generations/$generation")
     }
     private val keyStore=KeyStore.getInstance("AndroidKeyStore").apply {load(null)}
+    init { AppMutationGate.read {
+        // Remove only the retired purpose selection; keep every model configuration/key.
+        val locations=listOf(root)+File(root,"generations").listFiles().orEmpty().filter{it.isDirectory}
+        for(location in locations){val file=File(location,"purpose-selections");if(!file.exists())continue
+            val atomic=AtomicFile(file);val value=JSONObject(String(atomic.readFully(),Charsets.UTF_8))
+            if(!value.has("relationship"))continue
+            value.remove("relationship");val stream=atomic.startWrite()
+            try{stream.write(value.toString().toByteArray(Charsets.UTF_8));atomic.finishWrite(stream)}catch(e:Exception){atomic.failWrite(stream);throw e}
+        }
+    } }
     private fun file(id:String):File { require(id.matches(Regex("[a-zA-Z0-9-]{1,80}"))); return File(directory,"$id.enc") }
     private fun alias(id:String)="lianxu.$namespace.$id"
     private fun key(id:String):SecretKey = (keyStore.getKey(alias(id),null) as? SecretKey) ?: KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore").apply {
@@ -36,16 +49,37 @@ class ModelVault(context:Context,private val namespace:String="model-configs",pr
         cipher.updateAAD(id.toByteArray(Charsets.UTF_8))
         return JSONObject(String(cipher.doFinal(bytes.copyOfRange(13,bytes.size)),Charsets.UTF_8)).also{Diagnostics.registerSecret(it.getString("key"))}
     }
-    fun list():List<ModelConfig> = AppMutationGate.read { directory.listFiles().orEmpty().filter {it.extension=="enc"}.map {f ->
-        val j=read(f.nameWithoutExtension)
-        ModelConfig(f.nameWithoutExtension,j.getString("name"),j.getString("provider"),j.getString("base"),j.getString("model"),j.optInt("contextTokens",16384),j.optInt("outputTokens",2048),j.optInt("memoryOutputTokens",0))
-    }.sortedBy {it.name} }
-    fun secret(id:String)=AppMutationGate.read {read(id).getString("key").also{Diagnostics.registerSecret(it)}}
+    private fun onMainThread():Boolean {
+        val main=Looper.getMainLooper()?:return false
+        return Looper.myLooper()===main
+    }
+    private fun snapshot():ModelVaultCache.Snapshot = ModelVaultCache.getOrLoad(namespace,directory.canonicalPath,onMainThread()) {
+        val dir=directory
+        val loaded=dir.listFiles().orEmpty().filter {it.extension=="enc"}.map {f ->
+            val j=read(f.nameWithoutExtension)
+            val provider=j.getString("provider");val base=j.getString("base");val model=j.getString("model")
+            val context=j.optInt("contextTokens",ModelTokenPolicy.DEFAULT_CONTEXT)
+            val output=j.optInt("outputTokens",ModelTokenPolicy.DEFAULT_CHAT)
+            // Old builds pre-filled exactly 16384/2048. That pair is indistinguishable from an untouched
+            // default, so it is lifted to the current default (capped by a checked model's real ceiling);
+            // any other saved value stays exactly as the user set it.
+            val (liftedContext,liftedOutput)=ModelTokenPolicy.liftLegacy(context,output,provider,base,model)
+            val config=ModelConfig(f.nameWithoutExtension,j.getString("name"),provider,base,model,liftedContext,liftedOutput,j.optInt("memoryOutputTokens",0))
+            config to j.getString("key")
+        }
+        ModelVaultCache.Snapshot(dir.canonicalPath,loaded.map{it.first}.sortedBy {it.name},loaded.associate{it.first.id to it.second})
+    }
+    internal fun matchesCached(config:ModelConfig):Boolean=AppMutationGate.read {
+        ModelVaultCache.peek(namespace,directory.canonicalPath)?.configs?.any{it==config}==true
+    }
+    fun list():List<ModelConfig> = AppMutationGate.read { snapshot().configs.toList() }
+    fun secret(id:String)=AppMutationGate.read { snapshot().secrets[id]?.also{Diagnostics.registerSecret(it)} ?: read(id).getString("key").also{Diagnostics.registerSecret(it)} }
     fun save(config:ModelConfig,secret:String):Unit = AppMutationGate.write {
         Diagnostics.registerSecret(secret)
         require(ConfigRules.validate(config,secret)==null)
         writeAt(directory,config,secret)
-        if(defaultId().isEmpty()) setDefault(config.id)
+        ModelVaultCache.invalidate(namespace)
+        // New configurations require an explicit purpose selection; an embedding must not become chat by saving it.
     }
     private fun writeAt(destination:File,config:ModelConfig,secret:String){
         Diagnostics.registerSecret(secret)
@@ -60,6 +94,7 @@ class ModelVault(context:Context,private val namespace:String="model-configs",pr
         keyStore.deleteEntry(alias(id)); AtomicFile(file(id)).delete()
         val selections=ModelPurpose.entries.associateWith{purposeId(it)}
         selections.filterValues{it==id}.keys.forEach{setPurpose(it, "")}
+        ModelVaultCache.invalidate(namespace)
     }
     // Existing default-id is read as the chat purpose until first explicit purpose write.
     // Saving/selecting never contacts a provider. A deleted selection is cleared, not switched silently.
@@ -114,6 +149,7 @@ class ModelVault(context:Context,private val namespace:String="model-configs",pr
     }
     internal fun finishRestore(prepared:Prepared){
         check(isActive(prepared)==true){"密钥记录尚未完成切换"}
+        ModelVaultCache.invalidate(namespace)
         // Cleanup is best-effort after publication. Failure cannot turn a successful restore into failure.
         runCatching{
             val active=prepared.directory.canonicalFile

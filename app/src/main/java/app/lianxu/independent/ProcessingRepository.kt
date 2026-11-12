@@ -35,7 +35,7 @@ class ProcessingRepository(val store:Store) {
         val raw=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(RolePromptStore.key(id))).use{if(it.moveToFirst())it.getString(0) else ""}
         return stableDigest(friend(db,id).toString()+"\u0000"+raw)
     }
-    internal fun sources(db:SQLiteDatabase,friendId:String,after:Long=0,boundary:Long=Long.MAX_VALUE):List<SourceDialogue> = db.rawQuery("SELECT t.id,t.user_message_id,t.assistant_message_id,t.source_revision,t.source_zone,u.body,u.created,a.body,a.created FROM chat_turns t JOIN messages u ON u.id=t.user_message_id JOIN messages a ON a.id=t.assistant_message_id LEFT JOIN message_state us ON us.message_id=u.id LEFT JOIN message_state ats ON ats.message_id=a.id WHERE t.friend_id=? AND t.state='COMPLETED' AND t.user_message_id>? AND t.user_message_id<=? AND COALESCE(us.deleted,0)=0 AND COALESCE(ats.deleted,0)=0 ORDER BY t.user_message_id",arrayOf(friendId,after.toString(),boundary.toString())).use{c->buildList{while(c.moveToNext())add(SourceDialogue(c.getString(0),SourceRef(friendId,c.getLong(1),c.getLong(3)),Message(c.getLong(1),friendId,c.getString(5),true,c.getLong(6)),Message(c.getLong(2),friendId,c.getString(7),false,c.getLong(8)),c.getString(4)))}}
+    internal fun sources(db:SQLiteDatabase,friendId:String,after:Long=0,boundary:Long=Long.MAX_VALUE):List<SourceDialogue> = db.rawQuery("SELECT t.id,t.user_message_id,t.assistant_message_id,t.source_revision,t.source_zone,u.body,u.created,a.body,a.created FROM chat_turns t JOIN messages u ON u.id=t.user_message_id LEFT JOIN messages a ON a.id=t.assistant_message_id LEFT JOIN message_state us ON us.message_id=u.id LEFT JOIN message_state ats ON ats.message_id=a.id WHERE t.friend_id=? AND t.state IN ('COMPLETED','SUPERSEDED') AND t.user_message_id>? AND t.user_message_id<=? AND COALESCE(us.deleted,0)=0 AND COALESCE(ats.deleted,0)=0 ORDER BY t.user_message_id",arrayOf(friendId,after.toString(),boundary.toString())).use{c->buildList{while(c.moveToNext())if(CompanionRepository.aiAllowed(db,friendId,c.getLong(1)))add(SourceDialogue(c.getString(0),SourceRef(friendId,c.getLong(1),c.getLong(3)),Message(c.getLong(1),friendId,c.getString(5),true,c.getLong(6)),if(c.isNull(2))null else Message(c.getLong(2),friendId,c.getString(7),false,c.getLong(8)),c.getString(4)))}}
     internal fun recentSources(db:SQLiteDatabase,friendId:String):List<SourceDialogue> = sources(db,friendId).filter{source->!db.rawQuery("SELECT 1 FROM memory_retired WHERE friend_id=? AND source_user_id=? AND source_version=?",arrayOf(friendId,source.source.turnId.toString(),source.source.version.toString())).use{it.moveToFirst()}}
     suspend fun recentSources(friendId:String)=read{recentSources(it,friendId)}
     suspend fun sources(friendId:String,after:Long=0,boundary:Long=Long.MAX_VALUE)=read{sources(it,friendId,after,boundary)}
@@ -44,14 +44,13 @@ class ProcessingRepository(val store:Store) {
         val current=sources(db,targets.first().source.characterId).associateBy{it.source.turnId}
         return targets.all{current[it.source.turnId]==it}
     }
-    internal fun sourceValid(db:SQLiteDatabase,ref:SourceRef):Boolean = db.rawQuery("SELECT 1 FROM chat_turns t LEFT JOIN message_state us ON us.message_id=t.user_message_id LEFT JOIN message_state ats ON ats.message_id=t.assistant_message_id WHERE t.friend_id=? AND t.user_message_id=? AND t.source_revision=? AND t.state='COMPLETED' AND COALESCE(us.deleted,0)=0 AND COALESCE(ats.deleted,0)=0",arrayOf(ref.characterId,ref.turnId.toString(),ref.version.toString())).use{it.moveToFirst()}
+    internal fun sourceValid(db:SQLiteDatabase,ref:SourceRef):Boolean = CompanionRepository.aiAllowed(db,ref.characterId,ref.turnId)&&db.rawQuery("SELECT 1 FROM chat_turns t LEFT JOIN message_state us ON us.message_id=t.user_message_id LEFT JOIN message_state ats ON ats.message_id=t.assistant_message_id WHERE t.friend_id=? AND t.user_message_id=? AND t.source_revision=? AND t.state IN ('COMPLETED','SUPERSEDED') AND COALESCE(us.deleted,0)=0 AND COALESCE(ats.deleted,0)=0",arrayOf(ref.characterId,ref.turnId.toString(),ref.version.toString())).use{it.moveToFirst()}
     internal fun cursor(db:SQLiteDatabase,friendId:String)=db.rawQuery("SELECT cursor FROM memory_progress WHERE friend_id=?",arrayOf(friendId)).use{if(it.moveToFirst())it.getLong(0) else 0L}
     suspend fun cursor(friendId:String)=read{cursor(it,friendId)}
     data class TaskStatus(val state:String="IDLE",val attempt:Int=0,val error:String="")
     suspend fun memoryStatus(friendId:String)=read{db->db.rawQuery("SELECT state,attempt,error FROM memory_batches WHERE friend_id=? ORDER BY rowid DESC LIMIT 1",arrayOf(friendId)).use{if(it.moveToFirst())TaskStatus(it.getString(0),it.getInt(1),if(it.isNull(2))"" else it.getString(2)) else TaskStatus()}}
-    suspend fun relationshipStatus(friendId:String)=read{db->db.rawQuery("SELECT state,error FROM relationship_jobs WHERE friend_id=?",arrayOf(friendId)).use{if(it.moveToFirst())TaskStatus(it.getString(0),1,if(it.isNull(1))"" else it.getString(1)) else TaskStatus()}}
     internal fun memory(db:SQLiteDatabase,friendId:String,id:String):StoredMemory?=db.rawQuery("SELECT json FROM memory_current WHERE id=? AND friend_id=?",arrayOf(id,friendId)).use{if(it.moveToFirst())StoredMemory.from(JSONObject(it.getString(0))) else null}
-    internal fun memories(db:SQLiteDatabase,friendId:String)=db.rawQuery("SELECT json FROM memory_current WHERE friend_id=? ORDER BY id",arrayOf(friendId)).use{c->buildList{while(c.moveToNext())add(StoredMemory.from(JSONObject(c.getString(0))))}}
+    internal fun memories(db:SQLiteDatabase,friendId:String)=db.rawQuery("SELECT json FROM memory_current WHERE friend_id=? ORDER BY id",arrayOf(friendId)).use{c->buildList{while(c.moveToNext())StoredMemory.from(JSONObject(c.getString(0))).let{if(!it.userDeleted)add(it)}}}
     suspend fun memories(friendId:String)=read{memories(it,friendId)}
     internal fun usableMemories(db:SQLiteDatabase,friendId:String):List<StoredMemory> {
         val disputed=candidates(db,friendId).filter{it.valid}.mapNotNull{it.targetId}.toSet()
@@ -59,10 +58,14 @@ class ProcessingRepository(val store:Store) {
             (m.manual||m.evidence.isNotEmpty())&&m.evidence.all{e->e.source.characterId==friendId&&e.quote.isNotBlank()&&e.quote in e.snapshot&&sourceValid(db,e.source)}}
     }
     internal fun saveMemory(db:SQLiteDatabase,m:StoredMemory){
-        val old=memory(db,m.friendId,m.id);require(m.version==(old?.version?:0)+1)
+        val old=memory(db,m.friendId,m.id);rejectUnless(old?.userDeleted!=true,"SOURCE_CHANGED");require(m.version==(old?.version?:0)+1)
+        val now=AppServices.companionClock()
+        val recall=MemoryForgetting.ensure(db,old?:m,now)
+        if(old!=null&&MemoryForgetting.importance(old)!=MemoryForgetting.importance(m))
+            MemoryForgetting.put(db,m,MemoryForgetting.reclassify(recall,MemoryForgetting.importance(m),now))
         db.insertOrThrow("memory_history",null,ContentValues().apply{put("memory_id",m.id);put("version",m.version);put("json",m.json().toString())})
         db.insertWithOnConflict("memory_current",null,ContentValues().apply{put("id",m.id);put("friend_id",m.friendId);put("json",m.json().toString());put("version",m.version);put("valid",if(m.valid)1 else 0)},SQLiteDatabase.CONFLICT_REPLACE)
-        Diagnostics.event("memory.write.staged",mapOf("character" to m.friendId,"memory" to m.id,"version" to m.version,"text" to m.text,"valid" to m.valid,"manual" to m.manual,"locked" to m.locked))
+        Diagnostics.event("memory.write.staged",mapOf("character" to m.friendId,"memory" to m.id,"version" to m.version,"text" to Diagnostics.raw(m.text),"valid" to m.valid,"manual" to m.manual,"locked" to m.locked))
     }
     suspend fun manualSave(friendId:String,id:String?,text:String,category:MemoryCategory,core:Boolean,locked:Boolean,about:MemoryAbout?=null,tags:List<String> = emptyList(),dueDate:String?=null,life:MemoryLife?=null,birthday:String?=null)=tx{db->
         store.memorySummary.requireEditable(friendId)
@@ -70,7 +73,7 @@ class ProcessingRepository(val store:Store) {
         require(!category.modern||about!=null);require(old==null||old.category.modern==category.modern){"旧记录本轮不重分类"}
         val due=if(category.modern)MemoryFacets.dueDate(dueDate.orEmpty()) else null
         val annual=birthday?.trim()?.takeIf{it.isNotEmpty()}?.let{MemoryDates.monthDay(it)}
-        val value=StoredMemory(id?:"manual-${UUID.randomUUID()}",friendId,category,text,life?:old?.life?:MemoryLife.ACTIVE,core,locked,true,(old?.version?:0)+1,about=about,tags=if(category.modern)MemoryFacets.tags(tags) else emptyList(),dueExpression=due,dueDate=due,dateType=if(birthday==null)old?.dateType else if(annual!=null)"birthday" else null,annualMonthDay=if(birthday==null)old?.annualMonthDay else annual,eventDate=if(birthday==null)old?.eventDate else null,dateExpression=if(birthday==null)old?.dateExpression else annual)
+        val value=StoredMemory(id?:"manual-${UUID.randomUUID()}",friendId,category,text,life?:old?.life?:MemoryLife.ACTIVE,core,locked,true,(old?.version?:0)+1,about=about,tags=if(category.modern)MemoryFacets.tags(tags) else emptyList(),dueExpression=due,dueDate=due,dateType=if(birthday==null)old?.dateType else if(annual!=null)"birthday" else null,annualMonthDay=if(birthday==null)old?.annualMonthDay else annual,eventDate=if(birthday==null)old?.eventDate else null,dateExpression=if(birthday==null)old?.dateExpression else annual,createdAt=old?.createdAt?:AppServices.companionClock(),importance=old?.importance)
         saveMemory(db,value);value
     }
     suspend fun setLock(friendId:String,id:String,locked:Boolean)=tx{db->store.memorySummary.requireEditable(friendId);val old=memory(db,friendId,id)?:error("Unknown memory");saveMemory(db,old.copy(locked=locked,version=old.version+1))}
@@ -80,16 +83,22 @@ class ProcessingRepository(val store:Store) {
     }
     suspend fun restore(friendId:String,id:String,version:Int)=tx{db->
         store.memorySummary.requireEditable(friendId)
-        val current=memory(db,friendId,id)?:error("Unknown memory")
+        val current=memory(db,friendId,id)?:error("Unknown memory");rejectUnless(!current.userDeleted,"SOURCE_CHANGED")
         val old=db.rawQuery("SELECT json FROM memory_history WHERE memory_id=? AND version=?",arrayOf(id,version.toString())).use{check(it.moveToFirst());StoredMemory.from(JSONObject(it.getString(0)))}
-        check(old.friendId==friendId);saveMemory(db,old.copy(version=current.version+1,manual=true,locked=current.locked,valid=true,evidence=emptyList()))
+        rejectUnless(old.evidence.all{sourceValid(db,it.source)},"SOURCE_CHANGED")
+        val deniedHistory=db.rawQuery("SELECT json FROM memory_history WHERE memory_id=?",arrayOf(id)).use{c->var denied=false;while(c.moveToNext()){
+            val prior=StoredMemory.from(JSONObject(c.getString(0)))
+            if(prior.evidence.any{!CompanionRepository.aiAllowed(db,friendId,it.source.turnId)})denied=true
+        };denied}
+        rejectUnless(!deniedHistory,"SOURCE_CHANGED")
+        check(old.friendId==friendId);saveMemory(db,old.copy(version=current.version+1,manual=true,locked=current.locked,valid=true,evidence=emptyList(),createdAt=current.createdAt))
     }
     internal fun candidate(db:SQLiteDatabase,friendId:String,targetId:String?,proposed:StoredMemory,reason:String,id:String){
         check(proposed.friendId==friendId)
         val current=targetId?.let{memory(db,friendId,it)}
         val data=JSONObject().put("proposed",proposed.json()).put("reason",reason).put("sourceValid",proposed.valid&&proposed.evidence.all{it.source.characterId==friendId&&sourceValid(db,it.source)}).put("targetVersion",current?.version?:JSONObject.NULL).toString()
         db.insertWithOnConflict("memory_candidates",null,ContentValues().apply{put("id",id);put("friend_id",friendId);if(targetId==null)putNull("target_id") else put("target_id",targetId);put("json",data);put("created",System.currentTimeMillis())},SQLiteDatabase.CONFLICT_IGNORE)
-        Diagnostics.event("memory.candidate.staged",mapOf("character" to friendId,"candidate" to id,"target" to targetId,"reason" to reason,"proposed" to proposed.text))
+        Diagnostics.event("memory.candidate.staged",mapOf("character" to friendId,"candidate" to id,"target" to targetId,"reason" to Diagnostics.raw(reason),"proposed" to Diagnostics.raw(proposed.text)))
     }
     data class Candidate(val id:String,val targetId:String?,val proposed:StoredMemory,val reason:String,val valid:Boolean=true,val targetVersion:Int?=null)
     internal fun candidates(db:SQLiteDatabase,friendId:String)=db.rawQuery("SELECT id,target_id,json FROM memory_candidates WHERE friend_id=? AND resolved=0 ORDER BY created,id",arrayOf(friendId)).use{c->buildList{while(c.moveToNext()){
@@ -103,18 +112,16 @@ class ProcessingRepository(val store:Store) {
     }
     suspend fun candidates(friendId:String)=read{candidates(it,friendId)}
     internal fun referenceStamp(db:SQLiteDatabase,friendId:String):String {
-        val relation=db.rawQuery("SELECT json FROM relationship_state WHERE friend_id=?",arrayOf(friendId)).use{if(it.moveToFirst())it.getString(0) else ""}
-        return stableDigest(memoryRules(db).toString()+policy(db,friendId).toString()+memories(db,friendId).joinToString{it.json().toString()}+candidates(db,friendId).joinToString{it.id+it.proposed.json()}+relation+usableMemories(db,friendId).joinToString{it.id+"@"+it.version}+MemoryAssociations(this).raw(db,friendId)+sources(db,friendId).joinToString{it.json().toString()})
+        return stableDigest(memoryRules(db).toString()+policy(db,friendId).first.coreGoal+memories(db,friendId).joinToString{it.json().toString()}+candidates(db,friendId).joinToString{it.id+it.proposed.json()}+usableMemories(db,friendId).joinToString{it.id+"@"+it.version}+MemoryAssociations(this).raw(db,friendId)+sources(db,friendId).joinToString{it.json().toString()})
     }
     internal fun referenceCurrent(friendId:String,stamp:String)=referenceStamp(store.readableDatabase,friendId)==stamp
-    data class References(val valid:List<PromptReference>,val pending:List<String>,val stamp:String)
+    data class References(val valid:List<PromptReference>,val pending:List<String>,val stamp:String,val at:Long=AppServices.companionClock())
     suspend fun references(friendId:String,input:String,userMessageId:Long,vectors:Map<String,Double> = emptyMap()):References=tx{db->
         // Expiry can advance while ranking references. Capture the guard first so a
         // reference that expires during assembly cannot inherit an already-expired stamp.
         val stamp=referenceStamp(db,friendId)
-        val memory=reference(db,friendId,input,userMessageId,vectors)
-        val relation=RelationshipRepository(this).reference(db,friendId)
-        References(memory.first+listOfNotNull(relation),memory.second,stamp)
+        val at=AppServices.companionClock();val memory=reference(db,friendId,input,userMessageId,vectors,at)
+        References(memory.first,memory.second,stamp,at)
     }
     suspend fun resolveCandidate(friendId:String,id:String,accept:Boolean,expectedTargetVersion:Int?=null)=tx{db->
         store.memorySummary.requireEditable(friendId)
@@ -130,19 +137,24 @@ class ProcessingRepository(val store:Store) {
         db.update("memory_candidates",ContentValues().apply{put("resolved",1)},"id=? AND friend_id=?",arrayOf(id,friendId))
     }
     suspend fun reference(friendId:String,input:String,userMessageId:Long):Pair<List<PromptReference>,List<String>> = tx{db->reference(db,friendId,input,userMessageId)}
-    private fun reference(db:SQLiteDatabase,friendId:String,input:String,userMessageId:Long,vectors:Map<String,Double> = emptyMap()):Pair<List<PromptReference>,List<String>> {
+    private fun reference(db:SQLiteDatabase,friendId:String,input:String,userMessageId:Long,vectors:Map<String,Double> = emptyMap(),at:Long=AppServices.companionClock()):Pair<List<PromptReference>,List<String>> {
         val values=usableMemories(db,friendId)
-        val core=values.filter{it.core}.map{PromptReference("核心记忆 ${it.id}@${it.version}",describe(it),true,it.id)}
+        val clarity=values.associate{it.id to MemoryForgetting.ensure(db,it,at).clarity(at)}
+        fun body(m:StoredMemory)=MemoryForgetting.text(m,clarity.getValue(m.id)){describe(m)}
+        val core=MemoryForgetting.core(this,db,friendId,values,clarity).map{PromptReference("核心记忆 ${it.id}@${it.version}",body(it),true,it.id,sources=it.evidence.map{e->e.source}.toSet())}
+        val rules=memoryRules(db).first
+        val limit=if(rules.adaptiveContext)values.size.coerceAtLeast(1)else rules.relatedCount
         val graph=MemoryAssociations(this)
-        val recalled=MemoryRecall.select(friendId,input,values,graph.verified(db,friendId,values),memoryRules(db).first.relatedCount,vectors).map{hit->
+        val coreIds=core.map{it.memoryId}.toSet()
+        val recalled=MemoryRecall.select(friendId,input,values.map{it.copy(core=it.id in coreIds)},graph.verified(db,friendId,values),limit,vectors).filter{clarity.getValue(it.memory.id)>=20&&body(it.memory).isNotBlank()}.sortedWith(compareByDescending<MemoryRecall.Hit>{it.score}.thenByDescending{clarity.getValue(it.memory.id)}).map{hit->
             val m=hit.memory
-            PromptReference("${if(hit.via==null)"关键词记忆" else "关联记忆"} ${m.id}@${m.version}",describe(m)+(if(hit.via==null)"" else "\n关联线索（仅作参考，不推断额外因果）：${hit.reason}"),false,m.id,true)
+            PromptReference("${if(hit.via==null)"关键词记忆" else "关联记忆"} ${m.id}@${m.version}",body(m),false,m.id,true,m.evidence.map{it.source}.toSet(),hit.score)
         }
-        val retainedIds=MemoryReferenceHistory.retain(db,friendId,recentSources(db,friendId).flatMap{listOf(it.user.id,it.assistant.id)}.toSet())
+        val retainedIds=MemoryReferenceHistory.retain(db,friendId,recentSources(db,friendId).flatMap{it.messages.map{m->m.id}}.toSet())
         val already=(core+recalled).map{it.memoryId}.toSet()
-        val retained=retainedIds.mapNotNull{id->values.firstOrNull{it.id==id&&id !in already&&!it.core}}
-            .take((memoryRules(db).first.relatedCount-recalled.size).coerceAtLeast(0))
-            .map{PromptReference("近期原话引用的记忆 ${it.id}@${it.version}",describe(it),false,it.id,true)}
+        val retained=retainedIds.mapNotNull{id->values.firstOrNull{it.id==id&&id !in already&&clarity.getValue(id)>=20&&body(it).isNotBlank()}}
+            .take((limit-recalled.size).coerceAtLeast(0))
+            .map{PromptReference("近期原话引用的记忆 ${it.id}@${it.version}",body(it),false,it.id,true,it.evidence.map{e->e.source}.toSet(),0.2)}
         MemoryReferenceHistory.snapshot(db,friendId,userMessageId,recalled.map{it.memoryId})
         val choices=candidates(db,friendId).filter{it.valid}.filter{candidate->
             val seen=db.rawQuery("SELECT user_message_id FROM candidate_injections WHERE candidate_id=?",arrayOf(candidate.id)).use{c->buildList{while(c.moveToNext())add(c.getLong(0))}}

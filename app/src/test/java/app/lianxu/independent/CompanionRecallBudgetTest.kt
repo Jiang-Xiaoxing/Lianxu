@@ -137,6 +137,14 @@ class CompanionRecallBudgetTest {
         assertTrue((g.read("main") { history(original("原话正文")) }["messages"] as List<*>).isEmpty())
     }
 
+    @Test fun timeHeadedOriginalStillCountsAsVisible() = runBlocking {
+        val g = guard()
+        val head = "[今天 08:05] "
+        prepare(g, listOf(mapOf("role" to "user", "content" to head + "原话正文",
+            CompanionRecallBudget.SOURCE_META to mapOf("id" to "m101", "revision" to stableDigest("原话正文"), "prefix" to head.length))))
+        assertTrue((g.read("main") { history(original("原话正文")) }["messages"] as List<*>).isEmpty())
+    }
+
     @Test fun parallelActorsShareOnePersistentAllowance() = runBlocking {
         val first = guard(tokens = 600)
         val second = guard(tokens = 600)
@@ -153,6 +161,47 @@ class CompanionRecallBudgetTest {
         g.prepare("main", emptyList(), emptyList(), 500, 400)
         val result = g.read("main") { error("不应访问原话") }
         assertEquals(true, result["recall_stopped"])
+    }
+
+    /** 命中但已在本轮参考资料里：不能只回空列表，要带编号说清楚“就在上面”。 */
+    @Test fun memoryAlreadyInTheReferenceComesBackNamedInsteadOfEmpty() = runBlocking {
+        val g = guard()
+        val player = mapOf<String, Any>("role" to "user", "content" to "我还记得我喜欢吃意大利面吗",
+            "_companion_memory_ids" to listOf("tool-e6cb26abcdef01"))
+        prepare(g, listOf(systemMessage(), player))
+        val body = "偏好与边界 · 用户：用户喜欢吃意大利面。"
+        val result = g.read("main") {
+            mapOf("success" to true, "results" to listOf(mapOf(
+                "id" to "tool-e6cb26abcdef01", "content" to body,
+                "content_revision" to stableDigest(body), "text_offset" to 0)))
+        }
+        val rows = result["results"] as List<*>
+        assertEquals("不能返回空列表", 1, rows.size)
+        val content = (rows.single() as Map<*, *>)["content"] as String
+        assertTrue(content, content.contains("tool-e6cb…"))
+        assertTrue(content, content.contains("用户喜欢吃意大利面"))
+        assertTrue(content, content.contains("已在上方参考资料中"))
+        assertEquals("already_in_context", result["status"])
+        assertTrue((result["note"] as String).contains("找到了，就在参考资料里"))
+    }
+
+    @Test fun aRealMissStaysEmptyAndAMixedPageStaysFound() = runBlocking {
+        val g = guard(rounds = 10)
+        prepare(g)
+        val empty = g.read("main") { mapOf("success" to true, "results" to emptyList<Any>()) }
+        assertEquals("empty", empty["status"])
+        assertEquals(CompanionRecallBudget.EMPTY_NOTE, empty["note"])
+        // 容量把行拿走后不能再按“裁剪前”说找到了：没有行就是 empty。
+        assertEquals("empty", CompanionRecallBudget.recallStatus(mapOf("success" to true, "in_reference" to 2), emptyList()))
+        val player = mapOf<String, Any>("role" to "user", "content" to "意面",
+            "_companion_memory_ids" to listOf("tool-aa11"))
+        prepare(g, listOf(systemMessage(), player))
+        val result = g.read("main") { mapOf("success" to true, "results" to listOf(
+            mapOf("id" to "tool-aa11", "content" to "偏好与边界 · 用户：喜欢吃意面。", "content_revision" to stableDigest("x"), "text_offset" to 0),
+            mapOf("id" to "tool-bb22", "content" to "偏好与边界 · 用户：也喜欢披萨。", "content_revision" to stableDigest("y"), "text_offset" to 0))) }
+        val rows = result["results"] as List<*>
+        assertEquals("参考里的用摘要、其余保留原文", 2, rows.size)
+        assertEquals("found", result["status"])
     }
 
     @Test fun settingsAreFrozenBeforeFirstRead() = runBlocking {

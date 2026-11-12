@@ -165,13 +165,19 @@ class MemoryPortTest {
         val m=repo.memories("a").first{!it.manual};assertEquals(MemoryDates.resolve("下周三",first.user.created,first.zone),m.eventDate)
         assertEquals(first.user.text,m.evidence.single().snapshot);assertEquals(first.source,m.evidence.single().source)
     }
+    /**
+     * 2026-11-02 requirement change approved by 小星 (whole-batch atomic commit): one invalid item rejects the whole
+     * batch, so the good item is no longer saved on its own. Previously expected memories=1; now 0, with the raw round
+     * still in the recent window and the batch not retired. The recorded error is now the concrete validation code sent
+     * back to the model (EVIDENCE: R1 is auxiliary, not evidence) instead of the old generic FORMAT for "items dropped".
+     */
     @Test fun badItemDoesNotStopFollowingGoodItemOrRetireDirtyBatch()=runBlocking{
         completed("下周三去花园散步");var calls=0
         val e=MemoryEngine(scope,repo,ModelAccess(vault),client{r->calls++;val d=JSONObject(r.messages.last().content)
             receipt(d,JSONArray().put(summaryOp("R1","bad")).put(summaryOp("S1","good")))}, {})
         assertFalse(e.ensureRoom("a",forceOne=true).success);assertEquals(3,calls)
-        assertEquals(1,repo.memories("a").size);assertEquals(1,repo.recentSources("a").size);assertEquals(0L,repo.cursor("a"))
-        assertEquals("FORMAT",repo.memoryStatus("a").error)
+        assertEquals(0,repo.memories("a").size);assertEquals(1,repo.recentSources("a").size);assertEquals(0L,repo.cursor("a"))
+        assertEquals("EVIDENCE",repo.memoryStatus("a").error)
     }
     @Test fun summaryDoubtBecomesCandidateAndUnknownDatesRemainEmpty()=runBlocking{
         completed("那年我去过花园")
@@ -224,22 +230,24 @@ class MemoryPortTest {
         var calls=0;tools.run(config,"synthetic-only",request("garden"),client{r->if(calls++==0)TextChatResult.Success("",listOf(ChatToolCall("one","agent_memory_update",args("update",other.id).toString())))else{assertTrue(r.messages.last().content.contains("UNKNOWN_TARGET"));TextChatResult.Success("final")}})
         assertTrue(commit(t,tools));assertTrue(repo.memories("a").isEmpty());assertEquals(other,repo.memories("b").single())
     }
-    @Test fun recallStopsAtThreeRoundsAndCountsFullReturnedBodies()=runBlocking{
+    @Test fun recallUsesContextProtectionAndKeepsRolesIsolated()=runBlocking{
         val source=completed("history",reply="history detail ".repeat(1000));completed("other role",friend="b")
         val t=ChatLedger(store).begin("a","please recall",config.id);val tools=runtime(t);var calls=0;val payloads=mutableListOf<String>()
         val result=tools.run(config,"synthetic-only",request("please recall"),client{r->
-            r.messages.lastOrNull{it.role=="tool"}?.let{payloads+=it.content;assertTrue(ConservativeTokens.tokens(it.content)<=1500)}
-            if(r.tools.isEmpty())TextChatResult.Success("final")else TextChatResult.Success("",listOf(ChatToolCall("read-${calls++}","agent_history_read",JSONObject().put("message_id",source.assistant.id.toString()).put("before",0).put("after",0).put("text_offset",calls*1000).toString())))
+            r.messages.lastOrNull{it.role=="tool"}?.let{payloads+=it.content}
+            if(calls>=10)TextChatResult.Success("final")else TextChatResult.Success("",listOf(ChatToolCall("read-${calls++}","agent_history_read",JSONObject().put("message_id",requireNotNull(source.assistant).id.toString()).put("before",0).put("after",0).put("text_offset",calls*1000).toString())))
         })
-        assertTrue(result is TextChatResult.Success);assertEquals(3,calls)
-        val usage=JSONObject(store.preference("memory-recall-usage:${t.id}","{}"));assertEquals(3,usage.getInt("rounds"));assertTrue(usage.getInt("tokens")<=4000)
+        assertTrue(result is TextChatResult.Success);assertEquals(10,calls)
+        val usage=JSONObject(store.preference("memory-recall-usage:${t.id}","{}"));assertEquals(calls,usage.getInt("rounds"));assertTrue(usage.getInt("tokens")>0)
         assertTrue(payloads.all{!it.contains("other role")})
     }
     @Test fun retainedReferencesExpireWithTheirOriginalVisibleTurnAndShareFifteenCap()=runBlocking{
         val memory=repo.manualSave("a",null,"garden",MemoryCategory.STATE_FACT,false,true,MemoryAbout.USER)
+        seedRecallOnlyMemories(repo,"a")
         val l=ChatLedger(store);val t=l.begin("a","garden",config.id);assertTrue(repo.references("a","garden",t.userMessageId).valid.any{it.memoryId==memory.id});l.finish(t.id,1,"reply")
         assertTrue(repo.references("a","unrelated",998).valid.any{it.memoryId==memory.id})
         repeat(20){repo.manualSave("a",null,"ocean $it",MemoryCategory.STATE_FACT,false,true,MemoryAbout.USER)}
+        seedRecallOnlyMemories(repo,"a")
         val full=repo.references("a","ocean",997).valid;assertEquals(15,full.count{it.related});assertFalse(full.any{it.memoryId==memory.id})
         val b=MemoryBatchRepository(repo);val w=b.prepare("a",repo.recentSources("a"),"test");b.beginAttempt(w,"test");assertTrue(b.complete(w,emptySet(),0,w.id))
         assertFalse(repo.references("a","unrelated",996).valid.any{it.memoryId==memory.id})
@@ -296,12 +304,21 @@ class MemoryPortTest {
         }
     }
     @Test fun conversationRunnerCommitsToolMemoryAndReplyUsingTheRealCallback()=runBlocking{
-        var calls=0;val mocked=client{r->if(calls++==0){assertTrue(r.messages.last().content.contains("时间"));TextChatResult.Success("",listOf(ChatToolCall("one","agent_memory_update",args().toString())))}else TextChatResult.Success("Synthetic final")}
-        val access=ModelAccess(vault);val memory=MemoryEngine(scope,repo,access,mocked,{});val relation=RelationshipEngine(scope,repo,access,mocked,{})
-        val runner=ConversationRunner(scope,store,vault,mocked,repo,memory,relation,{},{});
+        var calls=0;var structuredCalls=0;var firstReply:TextChatRequest?=null
+        val mocked=client{r->
+            syntheticCompanionStage(r)?.also{structuredCalls++}?:if(calls++==0){
+                firstReply=r;TextChatResult.Success("",listOf(ChatToolCall("one","agent_memory_update",args().toString())))
+            }else TextChatResult.Success("Synthetic final")
+        }
+        val access=ModelAccess(vault);val memory=MemoryEngine(scope,repo,access,mocked,{})
+        val runner=ConversationRunner(scope,store,vault,mocked,repo,memory,{},{});
         withContext(Dispatchers.Main){assertTrue(runner.send("a","我喜欢花园",{}))}
         withTimeout(10000){while(runner.sending.isNotEmpty())delay(20)}
         assertEquals(2,calls);assertEquals(1,repo.memories("a").size);assertEquals(TurnState.COMPLETED,ChatLedger(store).all().single().state)
+        // Assertions stay on the instrumentation thread; a mismatch must fail this test, not kill its process.
+        assertEquals(0,structuredCalls);assertTrue(firstReply!!.messages.last().turnContext)
+        assertTrue(firstReply!!.messages.last().content.contains("时间"))
+        assertEquals("Synthetic final",store.messages().single{!it.mine}.text)
     }
     @Test fun relativeDateRenderingKeepsUnknownsAndCrossYearDatesExplicit(){
         val today=LocalDate.of(2026,10,26)
@@ -310,8 +327,8 @@ class MemoryPortTest {
         assertEquals("2025年12月25日：散步",MemoryDates.display("散步","2025-12-25",today))
         assertEquals("散步",MemoryDates.display("散步",null,today))
     }
-    private fun assembled(thinking:Boolean=false)=(CompanionPrompt.build(Friend("a","A","Synthetic"),
-        RolePrompts(internalPrompt="original-thinking",internalEnabled=thinking,thinkingNone=!thinking),emptyList(),"garden") as PromptBuild.Ready).request
+    private fun assembled()=(CompanionPrompt.build(Friend("a","A","Synthetic"),
+        RolePrompts(),emptyList(),"garden") as PromptBuild.Ready).request
     @Test fun actualClientCapabilitiesFollowAllFourToolSwitches()=runBlocking {
         for(recall in listOf(false,true))for(write in listOf(false,true)) {
             repo.saveMemoryRules(MemoryRules(proactiveRecall=recall,immediateWrite=write))
@@ -327,30 +344,47 @@ class MemoryPortTest {
             assertTrue(result is TextChatResult.Success);assertTrue(ChatLedger(store).finish(t.id,t.attempt,"final"))
         }
     }
-    @Test fun actualToolRoundsMoveOnlyOriginalTailAndRespectExhaustion()=runBlocking {
-        for(thinking in listOf(false,true)) {
+    @Test fun actualToolRoundsKeepTailAndReturnDuplicateFeedback()=runBlocking {
+        run {
             repo.saveMemoryRules(MemoryRules(proactiveRecall=true,recallRounds=2))
-            val t=ChatLedger(store).begin("a","garden",config.id);val original=assembled(thinking);var calls=0
+            val t=ChatLedger(store).begin("a","garden",config.id);val original=assembled();var calls=0
             val result=runtime(t).run(config,"synthetic-only",original,client{r->
                 assertEquals(original.messages.last(),r.messages.last());assertEquals(1,r.messages.count{it.turnContext})
-                assertEquals(thinking,r.messages.last().content.contains("original-thinking"))
+                assertFalse(r.messages.last().content.contains("内部判断提示"))
                 val pairs=r.messages.filter{it.role=="assistant"||it.role=="tool"}
                 assertEquals(calls*2,pairs.size)
                 pairs.chunked(2).forEach{pair->assertEquals(pair[0].toolCalls.single().id,pair[1].toolCallId)}
                 calls++
                 if(calls<=2) TextChatResult.Success("",listOf(ChatToolCall("round-$calls","agent_history_search","{\"query\":\"garden\"}")))
-                else {assertTrue(r.tools.isEmpty());assertTrue(r.messages.first().content.contains(CompanionPrompt.NO_MEMORY_TOOLS));TextChatResult.Success("final")}
+                else {assertTrue(r.tools.any{toolNameOf(it) in CompanionRecallBudget.readNames});assertTrue(JSONObject(r.messages.last{it.role=="tool"}.content).getBoolean("query_duplicate"));TextChatResult.Success("final")}
             })
             assertTrue(result is TextChatResult.Success);assertEquals(3,calls);assertTrue(ChatLedger(store).finish(t.id,t.attempt,"final"))
         }
     }
     @Test fun actualUnsupportedFallbackRemovesCapabilityClaimAndKeepsTail()=runBlocking {
-        val t=ChatLedger(store).begin("a","garden",config.id);val original=assembled(true);var calls=0
+        val t=ChatLedger(store).begin("a","garden",config.id);val original=assembled();var calls=0
         val result=runtime(t).run(config,"synthetic-only",original,client{r->
             calls++;assertEquals(original.messages.last(),r.messages.last())
             if(calls==1){assertTrue(r.messages.first().content.contains("本次提供记忆回查与写入工具"));TextChatResult.Failure(ChatFailure.UNSUPPORTED_TOOLS)}
-            else {assertTrue(r.tools.isEmpty());assertEquals(original.messages,r.messages);TextChatResult.Success("final")}
+            else {
+                assertTrue(r.tools.isEmpty())
+                assertEquals(original.messages.drop(1),r.messages.drop(1).map{it.copy(content=it.content.removeSuffix("\n\n"+CompanionPrompt.THINKING_REMINDER))})
+                assertFalse(r.messages.first().content.contains("本次提供记忆回查与写入工具"))
+                assertTrue(r.messages.first().content.contains(CompanionPrompt.NO_MEMORY_TOOLS))
+                TextChatResult.Success("final")
+            }
         })
         assertTrue(result is TextChatResult.Success);assertEquals(2,calls)
+    }
+    @Test fun adaptiveEmptyRecallAllowsAnotherDirectionAndWrite()=runBlocking {
+        val turn=ChatLedger(store).begin("a","我喜欢花园",config.id);val tools=runtime(turn);var calls=0
+        val result=tools.run(config,"synthetic-only",request("我喜欢花园"),client{r->
+            when(calls++){
+                0->TextChatResult.Success("",listOf(ChatToolCall("read","agent_memory_read","{\"query\":\"missing-synthetic\"}")))
+                1->{assertTrue(r.tools.any{toolNameOf(it) in CompanionRecallBudget.readNames});assertTrue(r.tools.any{toolNameOf(it)=="agent_memory_update"});TextChatResult.Success("",listOf(ChatToolCall("write","agent_memory_update",args().toString())))}
+                else->TextChatResult.Success("Synthetic final reply")
+            }
+        })
+        assertTrue(result is TextChatResult.Success);assertEquals(3,calls);assertTrue(repo.memories("a").isEmpty());assertTrue(commit(turn,tools));assertEquals(1,repo.memories("a").size)
     }
 }

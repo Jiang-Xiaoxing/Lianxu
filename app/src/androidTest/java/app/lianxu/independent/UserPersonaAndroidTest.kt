@@ -46,11 +46,11 @@ class UserPersonaAndroidTest {
     }
     @Test fun characterEditsPreserveExamplesAdvancedSettingsAndOtherRoles()=runBlocking {
         add();add("b");val example=DialogueExample("合成示例问题","合成示例回答")
-        f.store.updateRolePrompts("a"){it.copy(examples=listOf(example),extra="附加要求",internalPrompt="内部提示",internalEnabled=true)}
+        f.store.updateRolePrompts("a"){it.copy(examples=listOf(example),extra="附加要求")}
         val before=f.store.preference(RolePromptStore.key("b"),"")
         f.store.saveConfigured("a","新名字"){it.copy(characterDefinition="新的角色设定",expression="新的说话方式",opening="可选开场")}
         val p=RolePromptStore.decode(f.store.preference(RolePromptStore.key("a"),""))
-        assertEquals(listOf(example),p.examples);assertEquals("附加要求",p.extra);assertTrue(p.internalEnabled);assertEquals("内部提示",p.internalPrompt)
+        assertEquals(listOf(example),p.examples);assertEquals("附加要求",p.extra)
         assertEquals(before,f.store.preference(RolePromptStore.key("b"),""));assertEquals("新名字",f.store.friends().first{it.id=="a"}.name)
     }
     @Test fun changingProfileRejectsLateReplyAndDoesNotChangeOtherStoredSources()=runBlocking {
@@ -66,20 +66,32 @@ class UserPersonaAndroidTest {
         val l=ChatLedger(f.store);val t=l.begin("a","总结后的新原话","synthetic");val snapshot=l.context(t.id)
         assertTrue(snapshot.recent.isEmpty());assertFalse(snapshot.openingEligible)
     }
-    @Test fun realRunnerReceivesFullUserProfileAndCharacterStyleWithoutExtraCalls()=runBlocking {
+    @Test fun realRunnerReceivesFullUserProfileAndCharacterStyleWithoutProfileLookupCalls()=runBlocking {
         add();f.store.savePersona(persona)
+        f.store.updateRolePrompts("a"){it.copy(initialRelationship="{{character}}与{{user}}是旧识")}
         val cfg=ModelConfig("synthetic","合成服务","custom","https://example.invalid/v1","fake-model",64000,4096)
         f.vault.save(cfg,"synthetic-key-only");f.vault.setPurpose(ModelPurpose.CHAT,cfg.id)
         val seen=CompletableDeferred<TextChatRequest>();val finished=CompletableDeferred<Unit>();var calls=0
-        val client=object:TextChatClient {override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {calls++;seen.complete(request);return TextChatResult.Success("合成回复，不调用任何外部服务。")}}
+        val stages=mutableListOf<TextChatRequest>()
+        val client=object:TextChatClient {override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {
+            calls++;stages+=request;syntheticCompanionStage(request)?.let{return it}
+            seen.complete(request);return syntheticFinalReply(request,TextChatResult.Success("合成回复，不调用任何外部服务。"))
+        }}
         val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
         try {
             val memory=MemoryEngine(scope,f.repo,ModelAccess(f.vault),client,{})
-            val relationship=RelationshipEngine(scope,f.repo,ModelAccess(f.vault),client,{})
-            val runner=ConversationRunner(scope,f.store,f.vault,client,f.repo,memory,relationship,{if(ChatLedger(f.store).all().any{it.state==TurnState.COMPLETED})finished.complete(Unit)},{})
+            val runner=ConversationRunner(scope,f.store,f.vault,client,f.repo,memory,{if(ChatLedger(f.store).all().any{it.state==TurnState.COMPLETED})finished.complete(Unit)},{})
             assertTrue(runner.send("a","你好"){})
             val request=withTimeout(5000){seen.await()};withTimeout(5000){finished.await()}
             val fixed=request.messages.first().content;assertTrue(persona.introduction in fixed);assertTrue("小星" in fixed);assertTrue("自然简短" in fixed)
+            for(text in listOf(fixed)){
+                assertTrue(persona.introduction in text);assertTrue("自然简短" in text);assertTrue("合成同伴与小星是旧识" in text)
+                assertFalse("{{user}}" in text);assertFalse("{{character}}" in text)
+            }
+            // 现在没有单独的「先理解原话」请求：理解和回话在同一次请求里，用户资料只在开头人设里出现一次。
+            assertTrue(stages.none{r->r.messages.any{"[companion.interpret.v2]" in it.content}})
+            assertEquals(1,Regex(Regex.escape(persona.introduction)).findAll(stages.first().messages.joinToString("\n"){it.content}).count())
+            // One foreground reply; profile appears once, with no lookup or foreground accounting call.
             assertTrue(request.messages.last().turnContext);assertEquals(1,calls);assertTrue(f.repo.memories("a").isEmpty())
             assertEquals("你好",f.repo.sources("a").single().user.text)
         }finally{scope.cancel()}
@@ -113,31 +125,6 @@ class UserPersonaAndroidTest {
         assertTrue(runCatching{f.store.savePersona(persona.copy(address="换\n行"))}.isFailure)
         assertTrue(runCatching{f.store.saveConfigured("a","新的名字"){it.copy(characterDefinition="字".repeat(8001))}}.isFailure)
         assertEquals(before,f.backup.export().root.toString())
-    }
-    @Test fun exampleSelectionCannotAdoptAfterTheCharacterDefinitionChanges()=runBlocking {
-        add();repeat(20){turn("这是一条合成原话第${it}轮。")}
-        val examples=RoleExamplesRepository(f.store);val selected=examples.claim("a")!!
-        assertEquals("成年合成角色",selected.prompts.definition(selected.friend))
-        f.store.saveConfigured("a","合成同伴"){it.copy(characterDefinition="修改后的角色设定")}
-        assertFalse(examples.complete("a",selected,selected.candidates.take(2)){true})
-        assertEquals(ExamplesState.FAILED,examples.get("a")!!.state)
-        assertFalse(RolePromptStore.decode(f.store.preference(RolePromptStore.key("a"),"")).examplesEnabled)
-    }
-    @Test fun relationshipRequestUsesTheCurrentFullCharacterDefinition()=runBlocking {
-        add();val definition="角色新设定".repeat(1000)
-        f.store.saveConfigured("a","合成同伴"){it.copy(characterDefinition=definition)};turn()
-        val cfg=ModelConfig("synthetic","合成关系服务","custom","https://example.invalid/v1","fake-model",64000,4096)
-        f.vault.save(cfg,"synthetic-key-only");f.vault.setPurpose(ModelPurpose.RELATIONSHIP,cfg.id)
-        RelationshipRepository(f.repo).setEnabled("a",true,"BACKFILL",true)
-        val seen=CompletableDeferred<TextChatRequest>();val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
-        val client=object:TextChatClient {override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {seen.complete(request);return TextChatResult.Failure(ChatFailure.NETWORK)}}
-        try {
-            val job=RelationshipEngine(scope,f.repo,ModelAccess(f.vault),client,{}).evaluate("a")!!
-            val request=withTimeout(5000){seen.await()};job.join()
-            val data=org.json.JSONObject(request.messages.last().content)
-            assertEquals(definition,data.getString("background"));assertEquals(1,data.getJSONArray("pending_dialogue").length())
-            assertFalse("原自写要求" in data.getString("background"))
-        }finally{scope.cancel()}
     }
     @Test fun legacyMultilineNicknameSurvivesReadAndOldBackupRestoreWithoutRewriting()=runBlocking {
         val old="旧\n昵称\t原文";f.store.setPreference("nickname",old);add()

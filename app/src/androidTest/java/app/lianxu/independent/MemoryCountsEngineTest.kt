@@ -52,6 +52,7 @@ class MemoryCountsEngineTest{
     @Test fun relatedCountRankingNoPaddingCoreSeparateAndFailedTurnsIgnored()=runBlocking{
         for(i in 1..20)repo.manualSave("a",null,"Synthetic $i",MemoryCategory.STATE_FACT,false,true,MemoryAbout.USER,listOf(if(i==20)"garden tea" else "garden"))
         repo.manualSave("a",null,"CORE",MemoryCategory.STATE_FACT,true,true,MemoryAbout.USER);repo.manualSave("b",null,"OTHER",MemoryCategory.STATE_FACT,false,true,MemoryAbout.BOTH,listOf("garden"))
+        seedRecallOnlyMemories(repo,"a")
         val refs=repo.references("a","garden tea",1).valid;assertEquals(15,refs.count{it.related});assertTrue("Synthetic 20" in refs.first{it.related}.text);assertEquals(1,refs.count{it.mandatory});assertFalse(refs.any{"OTHER" in it.text});assertEquals(0,repo.references("a","missing",2).valid.count{it.related})
         val l=ChatLedger(store);val t=l.begin("a","pending","synthetic");assertEquals(0,repo.recentSources("a").size);l.fail(t.id,1,ChatFailure.TIMEOUT);assertEquals(0,repo.recentSources("a").size);val retry=l.retry(t.id,"synthetic")!!;l.finish(retry.id,retry.attempt,"reply");assertEquals(1,repo.recentSources("a").size);assertFalse(l.finish(retry.id,retry.attempt,"duplicate"));assertEquals(1,repo.recentSources("a").size)
     }

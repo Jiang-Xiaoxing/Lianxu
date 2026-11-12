@@ -15,16 +15,18 @@ class HttpsModelClient(
 ):ModelDirectoryClient {
     override suspend fun request(config:ModelConfig,key:String,fetchModels:Boolean):ConfigResult = withContext(Dispatchers.IO) {
         Diagnostics.registerSecret(key)
-        Diagnostics.event("model.http.request",mapOf("endpoint" to config.baseUrl,"provider" to config.providerId,"fetch_models" to fetchModels,"timeout_ms" to timeoutMillis),secrets=listOf(key))
         if(ConfigRules.urlError(config.baseUrl)!=null || key.isBlank() || key.any {it.isWhitespace() || it.code<32}) return@withContext ConfigResult.Failure(ConfigError.INVALID)
         val provider=ProviderPresets.get(config.providerId)
-        val path=(if(fetchModels) provider.modelsPath else provider.testPath) ?: return@withContext ConfigResult.Failure(ConfigError.UNSUPPORTED)
+        val url=ModelDirectoryRules.url(config,provider,fetchModels) ?: return@withContext ConfigResult.Failure(ConfigError.UNSUPPORTED)
+        if(ConfigRules.urlError(url)!=null) return@withContext ConfigResult.Failure(ConfigError.INVALID)
+        Diagnostics.event("model.http.request",mapOf("endpoint" to url,"provider" to config.providerId,"fetch_models" to fetchModels,"timeout_ms" to timeoutMillis),secrets=listOf(key))
+        val path=if(fetchModels) null else provider.testPath
         var connection:HttpsURLConnection?=null
         var cancellationWatcher:Job?=null
         val deadline=System.nanoTime()+timeoutMillis*3L*1_000_000L
         try {
             ensureActive()
-            connection=factory.open(URL(config.baseUrl.trimEnd('/')+"/"+path))
+            connection=factory.open(URL(url))
             val opened=connection
             cancellationWatcher=launch(start=CoroutineStart.UNDISPATCHED){
                 try{awaitCancellation()}finally{opened.disconnect()}
@@ -55,8 +57,8 @@ class HttpsModelClient(
                 if((path=="key" && body.optJSONObject("data")==null) || (path!="key" && body.optJSONArray("data")==null)) ConfigResult.Failure(ConfigError.FORMAT) else ConfigResult.Success()
             } else {
                 val data=body.optJSONArray("data") ?: return@withContext ConfigResult.Failure(ConfigError.FORMAT)
-                val ids=(0 until data.length()).mapNotNull {data.optJSONObject(it)?.optString("id")?.takeIf {id -> id.matches(Regex("[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}")) && !id.contains(key)}}.distinct().take(500)
-                ConfigResult.Success(ids)
+                val entries=(0 until data.length()).mapNotNull{data.optJSONObject(it)?.let{obj->ModelDirectoryEntry(obj.optString("id"),obj.optJSONObject("api")?.optJSONObject("chat-completions")!=null)}}
+                ConfigResult.Success(ModelDirectoryParser.ids(entries,provider.openAiChatModelsOnly).filter{!it.contains(key)})
             }
         } catch(e:CancellationException) {throw e}
         catch(e:SocketTimeoutException) {ensureActive();Diagnostics.failure("model.http.timeout",e,secrets=listOf(key));ConfigResult.Failure(ConfigError.TIMEOUT)}
@@ -65,4 +67,18 @@ class HttpsModelClient(
         catch(e:Exception) {ensureActive();Diagnostics.failure("model.http.failed",e,secrets=listOf(key));ConfigResult.Failure(ConfigError.NETWORK)}
         finally {cancellationWatcher?.cancel();connection?.disconnect()}
     }
+}
+
+/** Absolute catalog URL for presets whose model directory lives on a different path than the chat base. */
+internal object ModelDirectoryRules {
+    fun url(config:ModelConfig,preset:ProviderPreset,fetchModels:Boolean):String? =
+        (if(fetchModels) preset.modelsUrl else null)
+            ?: (if(fetchModels) preset.modelsPath else preset.testPath)?.let{config.baseUrl.trimEnd('/')+"/"+it}
+}
+internal data class ModelDirectoryEntry(val id:String,val openAiChat:Boolean)
+internal object ModelDirectoryParser {
+    private val idPattern=Regex("[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}")
+    /** Keeps only sanitized, de-duplicated IDs; openAiChatOnly drops models without an OpenAI-compatible chat route. */
+    fun ids(entries:List<ModelDirectoryEntry>,openAiChatOnly:Boolean):List<String> =
+        entries.filter{!openAiChatOnly||it.openAiChat}.mapNotNull{it.id.takeIf{id->idPattern.matches(id)}}.distinct().take(500)
 }

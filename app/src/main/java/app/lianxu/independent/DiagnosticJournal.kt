@@ -18,13 +18,13 @@ internal class DiagnosticRedactor {
         variants.forEach{secrets.remove(it);secrets.add(it)}
         while(secrets.size>512)secrets.remove(secrets.first())
     }}
-    private val sensitive=Regex("(?i)^(key|authorization|proxy-authorization|cookie|set-cookie|reasoning|reasoning_content|thinking|.*(?:api.?key|token|password|secret|credential).*)$")
+    private val sensitive=Regex("(?i)^(key|authorization|proxy-authorization|cookie|set-cookie|reasoning|reasoning_content|thinking|thinking_content|displayReasoning|.*(?:api.?key|token|password|secret|credential).*)$")
     @Synchronized fun text(raw:String):String {
         var value=raw
         secrets.sortedByDescending{it.length}.forEach{value=value.replace(it,"[已脱敏]")}
         value=value.replace(Regex("""(?is)<think(?:ing)?\b[^>]*>.*?(?:</think(?:ing)?\s*>|$)"""),"[模型思考内容已省略]")
         value=value.replace(Regex("""(?im)(authorization|proxy-authorization|cookie|set-cookie|x-api-key)\s*["']?\s*[:=]\s*[^\r\n]*"""),"$1: [已脱敏]")
-        value=value.replace(Regex("""(?i)(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|token|key|reasoning_content|reasoning|thinking)["']?\s*[:=]\s*)(?:["'][^"']*["']|[^\s,;&}]+)"""),"$1[已脱敏]")
+        value=value.replace(Regex("""(?i)(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|token|key|reasoning_content|thinking_content|displayReasoning|reasoning|thinking)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&}]+)"""),"$1[已脱敏]")
         value=value.replace(Regex("""(?i)\b(Bearer|Basic)\s+[A-Za-z0-9+/=._~-]+"""),"$1 [已脱敏]")
         value=value.replace(Regex("""(?i)\b(?:sk|sess|ghp|gho|github_pat)[-_][A-Za-z0-9_-]{8,}"""),"[已脱敏]")
         return value.replace(Regex("""https?://[^\s"<>]+""")){m->runCatching{val u=URI(m.value);require(u.host!=null);URI(u.scheme,null,u.host,u.port,u.path,null,null).toString()+if(u.rawQuery!=null||u.rawFragment!=null)"?[参数已脱敏]" else ""}.getOrDefault("[地址已脱敏]")}
@@ -39,6 +39,13 @@ internal class DiagnosticRedactor {
 
 internal class DiagnosticJournal(private val directory:File,private val version:String,private val segmentBytes:Int=2*1024*1024,private val segments:Int=5,private val keepMillis:Long=7L*24*60*60*1000,queueCapacity:Int=128):AutoCloseable {
     private data class Pending(val event:String,val trace:String,val data:JsonObject,val bytes:Long,val elapsed:Long?,val barrier:CountDownLatch?=null)
+    private companion object {
+        /** Small fields that tie an event to its turn, attempt and request; never truncated away. */
+        val CORRELATION_KEYS=setOf("request_id","span","parent_span","purpose","turn","attempt","step","status",
+            "reasoning_status","reasoning_chars","reasoning_truncated","chunks","stream_chars","reasoning_chunks","saved","outcome",
+            "call_id","name","failure","reason","error_type",
+            "final_reasoning_status","final_reasoning_chars","final_reasoning_truncated")
+    }
     val redactor=DiagnosticRedactor()
     private val queue=ArrayBlockingQueue<Pending>(queueCapacity)
     private val pendingBytes=AtomicLong();val dropped=AtomicLong();private var reportedDrops=0L
@@ -66,7 +73,12 @@ internal class DiagnosticJournal(private val directory:File,private val version:
                 if(lost>reportedDrops){write(JsonObject().apply{addProperty("at",now);addProperty("event","diagnostic.dropped");addProperty("count",lost-reportedDrops)});reportedDrops=lost}
                 val clean=p.data;val raw=clean.toString();val excerptLimit=minOf(32768,segmentBytes/16)
                 val row=JsonObject().apply{addProperty("at",now);addProperty("event",p.event);addProperty("trace",p.trace);addProperty("version",version);p.elapsed?.let{addProperty("elapsed_ms",it)}
-                    if(raw.length>excerptLimit){addProperty("truncated",true);addProperty("original_chars",raw.length);addProperty("data_excerpt",raw.take(excerptLimit))}else add("data",clean)
+                    // A long field (usually the reasoning text) must never take the turn/request correlation
+                    // fields down with it: keep those in a structured part and excerpt only the payload.
+                    if(raw.length>excerptLimit){addProperty("truncated",true);addProperty("original_chars",raw.length)
+                        add("data",JsonObject().apply{clean.entrySet().forEach{(k,v)->if(k in CORRELATION_KEYS)add(k,v)}})
+                        addProperty("data_excerpt",raw.take(excerptLimit))
+                    }else add("data",clean)
                 }
                 write(row)
             } catch(_:Exception){dropped.incrementAndGet()}finally{pendingBytes.addAndGet(-p.bytes)}
