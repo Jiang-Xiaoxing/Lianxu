@@ -159,17 +159,19 @@ class RelationshipV3Test {
         raw="""{"模板":"傲娇"}""";assertEquals(RelationTemplate.TSUNDERE,creation.recommend("甲",config,"synthetic",retry=true).template);assertEquals(2,calls)
         creation.recommend("乙",config,"synthetic");assertEquals(3,calls)
     }
-    @Test fun askClampsValuesWithoutSavingAndBadFormatDoesNotRetry()=runBlocking{
-        var calls=0;var raw="""{"参数":{"silenceDays":99},"她的话":"我想隔久一点再找你。"}"""
+    @Test fun askKeepsToneProposalAndRejectsRetiredFrequencyWithoutRequest()=runBlocking{
+        var calls=0;var raw="""{"参数":{"tone":"温柔些"},"她的话":"说得温柔些。"}"""
         val ask=RelationshipAsk(object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{calls++;return TextChatResult.Success(raw)}})
         val config=ModelConfig("test","test","custom","https://example.invalid","test")
-        val good=ask.ask("人设",config,"synthetic","silenceDays",0);assertEquals("14.0",good.proposal!!.values["silenceDays"]);assertEquals(1,calls)
-        raw="{}";assertEquals("她没说清楚，再问一次",ask.ask("人设",config,"synthetic","silenceDays",0).message);assertEquals(2,calls)
+        val good=ask.ask("人设",config,"synthetic","tone",0);assertEquals("温柔些",good.proposal!!.values["tone"]);assertEquals(1,calls)
+        assertTrue(runCatching{ask.ask("人设",config,"synthetic","silenceDays",0)}.isFailure);assertEquals(1,calls)
+        raw="{}";assertEquals("她没说清楚，再问一次",ask.ask("人设",config,"synthetic","tone",0).message);assertEquals(2,calls)
         assertEquals(1.0,p.silenceDays,0.0)
     }
     @Test fun chatParameterProposalRequiresCurrentRequestAndSafeAllowlist(){
-        fun parse(input:String,key:String="silenceDays",source:Long=1)=RelationParameterContract.parse(JsonParser.parseString("""{"消息":"$source","参数":{"$key":3},"她的话":"可以，等你确认。"}"""),row(1).source,input,0)
-        assertEquals("3.0",parse("三天找我一次就行")!!.values["silenceDays"])
+        fun parse(input:String,key:String="tone",source:Long=1)=RelationParameterContract.parse(JsonParser.parseString("""{"消息":"$source","参数":{"$key":"温柔些"},"她的话":"可以，等你确认。"}"""),row(1).source,input,0)
+        assertEquals("温柔些",parse("说话温柔些")!!.values["tone"])
+        for(key in listOf("silenceDays","resendDays","resendCount","dailyMax"))assertNull(parse("三天找我一次",key))
         // Intent is the model's job; source and parameter allowlist remain program checks.
         assertNotNull(parse("今天看了电影"));assertNull(parse("三天找我一次",source=2));assertNull(parse("改失望参数，三天找我一次","sensitivity"))
         assertNotNull(parse("改人设，三天找我一次"));assertFalse("ignoredDisappointment" in RelationParameterRules.modelAllowed)

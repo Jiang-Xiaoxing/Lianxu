@@ -6,10 +6,24 @@ import com.google.gson.Gson
 
 /** Versioned evidence only; no authoritative cumulative score. Included in complete role backup. */
 internal data class ParameterReceipt(val source:SourceRef,val old:RelationParameters,val undone:Boolean=false,val oldLabel:String?=null,val keys:Set<String>?=null)
+internal fun RelationHistory.receiptKeys(receipt:ParameterReceipt):Set<String> {
+    val oldJson=Gson().toJsonTree(receipt.old).asJsonObject
+    return receipt.keys?:changes.firstOrNull{it.old==receipt.old}?.let{change->val next=Gson().toJsonTree(change.new).asJsonObject;RelationParameterRules.storedProposalKeys.filter{oldJson[it]!=next[it]}.toSet()}.orEmpty()
+}
+internal fun RelationHistory.activeParameterReceipts()=receipts.orEmpty().filter{receipt->
+    // Old receipts did not identify their changed keys. Consider every matching change,
+    // not just the first: repeated returns to the same old parameters are ambiguous.
+    val oldJson=Gson().toJsonTree(receipt.old).asJsonObject
+    val keys=receipt.keys?:changes.filter{it.old==receipt.old}.flatMap{change->
+        val next=Gson().toJsonTree(change.new).asJsonObject
+        RelationParameterRules.storedProposalKeys.filter{oldJson[it]!=next[it]}
+    }.toSet()
+    keys.isNotEmpty()&&keys.all{it in RelationParameterRules.modelAllowed}
+}
 internal fun RelationHistory.reverseParameters(source:SourceRef,current:RelationParameters,label:String,at:Long,afterMessage:Long):RelationHistory? {
     val receipt=receipts.orEmpty().firstOrNull{it.source==source&&!it.undone}?:return null
     val oldJson=Gson().toJsonTree(receipt.old).asJsonObject
-    val changed=receipt.keys?:changes.firstOrNull{it.old==receipt.old}?.let{change->val next=Gson().toJsonTree(change.new).asJsonObject;RelationParameterRules.modelAllowed.filter{oldJson[it]!=next[it]}.toSet()}.orEmpty()
+    val changed=receiptKeys(receipt)
     val restored=RelationParameterRules.apply(current,changed.associateWith{oldJson[it].asString})
     return copy(changes=changes+RelationChange(at,current,restored,receipt.oldLabel?:label,afterMessage),receipts=receipts.orEmpty().map{if(it.source==source)it.copy(undone=true)else it})
 }
@@ -63,12 +77,13 @@ internal suspend fun CompanionRepository.relationshipParameterProposals(role:Str
         while(c.moveToNext()){
             val source=SourceRef(role,c.getLong(0),c.getLong(1));if(!refCurrent(db,source)||source in accepted)continue
             val p=runCatching{Gson().fromJson(c.getString(2),ExperienceProposal::class.java).parameterProposal}.getOrNull()?:continue
-            if(p.source==source)add(p)
+            if(p.source==source&&RelationParameterRules.activeProposal(p.values))add(p)
         }
     }}
 }
 /** Both explicit ask and in-chat suggestions are inert until this method is called. */
 internal suspend fun CompanionRepository.confirmRelationshipParameters(role:String,proposal:RelationParameterProposal,use:Boolean)=ProcessingRepository(store).tx{db->
+    if(!RelationParameterRules.activeProposal(proposal.values))return@tx false
     val h=RelationStorage.read(db,role)
     if(proposal.source!=null&&(proposal.source.characterId!=role||!refCurrent(db,proposal.source)||proposal.source in h.acceptedProposals))return@tx false
     val view=relationship(db,role)
@@ -77,4 +92,4 @@ internal suspend fun CompanionRepository.confirmRelationshipParameters(role:Stri
         acceptedProposals=h.acceptedProposals+listOfNotNull(proposal.source),receipts=h.receipts.orEmpty()+if(use&&proposal.source!=null)listOf(ParameterReceipt(proposal.source,view.parameters,oldLabel=view.label,keys=proposal.values.keys))else emptyList()))
     CompanionRepository.bump(db,role);relationship(db,role);CompanionRuntime.changed();true
 }
-internal suspend fun CompanionRepository.relationshipParameterReceipts(role:String)=ProcessingRepository(store).read{RelationStorage.read(it,role).receipts.orEmpty()}
+internal suspend fun CompanionRepository.relationshipParameterReceipts(role:String)=ProcessingRepository(store).read{RelationStorage.read(it,role).activeParameterReceipts()}

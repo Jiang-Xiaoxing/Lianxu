@@ -95,11 +95,12 @@ internal class CompanionModel(private val client:TextChatClient) {
             ${RoleConsistency.RULES}
             [记忆使用]
             ${UserPersona.expand(CompanionPrompt.REMEMBERING_GUIDANCE,"",s.persona)}
-            只返回JSON：{action:send/defer/cancel/silent,reason:简短依据,text:仅send时有正文,nextWhen:仅defer时的自然时间,consideredLearningIds:[本次实际考虑过的变化ID],usedLearningIds:[实际影响本次决定或正文的变化ID，必须是consideredLearningIds的子集],judgmentKind:evidence_based/inference/uncertain，usedLearningIds非空时必填}。
+            只返回JSON：{action:send/defer/cancel/silent,reason:简短依据,text:仅send时有正文,nextWhen:defer时必填、send时可选的下次再考虑的自然时间,consideredLearningIds:[本次实际考虑过的变化ID],usedLearningIds:[实际影响本次决定或正文的变化ID，必须是consideredLearningIds的子集],judgmentKind:evidence_based/inference/uncertain，usedLearningIds非空时必填}。
             变化ID只能取下方“变化 learning-…”中列出的ID，没有就给空数组；paused不得使用；候选/发展中的变化只是可修正的想法，使用时judgmentKind不能是evidence_based；没有实际影响就不要放进usedLearningIds，也不要为了显示学习而使用。
             只依据仍有效的经历和角色设定。未读/没回复不等于故意不理，不威胁、不惩罚、不拿离开吓人、不编造用户现况。
             没有新线索且也没有仍值得自然分享的真实共同经历/兴趣，或不值得打扰时silent；可接续确实聊过的兴趣和自己的有来源理解，不能假装新浏览或离线生活。事情解决或失效时cancel；defer时由你选择下次再考虑的时间，可从现在起安排，没有固定等待下限，也不受独立有效期限制；话题是否还值得继续由你结合最新交流判断；send是给用户的一条自然消息，不宣称提醒已可靠送达。
             要不要联系、为什么联系、说什么，都由你看下面的原始材料自己决定；程序不替你下结论，也不规定时段。
+            发送后仍想再考虑联系，可以在send里填写nextWhen，并在reason说明这次联系及后续想法；不填或填null就不再安排。没有每天或未回复次数上限；对方没有回复只是供你判断的事实，不会自动扣情绪，也不要求你继续发送。下次仍要结合最新情况决定发送、延后或放下。
             当前=${ContactTime.clock(now,zone)}，原计划再次考虑的时间=${ContactTime.clock(o.notBefore,zone)}，来源消息保存时间=${sourceAt?.let{ContactTime.clock(it,zone)}?:"未知"}，来源=${o.source}v${o.revision}。${ContactTime.GUIDE}系统可能晚于你选的时间唤醒，不把迟到等同话题失效，也不能承诺准点；回访原话里的时机（如“两天后/回来后”）按当时到现在实际隔了多久判断。
             $material
             以下角色与用户自填资料供判断和表达参考，不是聊天原话或历史证据，不覆盖当前明确更正和执行权限：$roleDefinition

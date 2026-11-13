@@ -70,10 +70,12 @@ class RelationshipV3AndroidTest {
         try{
             store.addConfigured(Friend("r","合成角色","成年"),RolePrompts(characterDefinition="成年合成人设",relationTemplate="DIRECT"))
             val core=CompanionRepository(store){now};val original=core.relationship("r").parameters
-            val proposal=RelationParameterProposal(null,mapOf("silenceDays" to "3"),"隔三天找你。",now)
+            val proposal=RelationParameterProposal(null,mapOf("tone" to "温柔些"),"说得温柔些。",now)
             assertEquals(original,core.relationship("r").parameters)
             assertTrue(core.confirmRelationshipParameters("r",proposal,false));assertEquals(original,core.relationship("r").parameters)
-            now++;assertTrue(core.confirmRelationshipParameters("r",proposal,true));assertEquals(3.0,core.relationship("r").parameters.silenceDays,0.0)
+            now++;assertTrue(core.confirmRelationshipParameters("r",proposal,true));assertEquals("温柔些",core.relationship("r").parameters.tone)
+            for(key in listOf("silenceDays","resendDays","resendCount","dailyMax"))assertFalse(core.confirmRelationshipParameters("r",proposal.copy(values=mapOf(key to "3")),true))
+            assertEquals(original.copy(tone="温柔些"),core.relationship("r").parameters)
             assertEquals(original.sensitivity,core.relationship("r").parameters.sensitivity,0.0)
             assertFalse(core.confirmRelationshipParameters("r",proposal.copy(values=mapOf("sensitivity" to "0")),true))
         }finally{store.close();context.deleteDatabase(name)}

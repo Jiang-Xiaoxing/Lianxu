@@ -14,10 +14,13 @@ internal object RelationParameterRules {
         "unhappyHours" to RelationParameterRange(1.0,336.0,"生气多久消掉一半（小时）"),"happyHours" to RelationParameterRange(1.0,336.0,"开心多久消掉一半（小时）"),
         "apology" to RelationParameterRange(0.0,1.0,"道歉能缓解多少心结"),
         "missingMax" to RelationParameterRange(0.0,1.0,"想念最多有多强"),"missingDays" to RelationParameterRange(1.0,30.0,"想念多久涨到大半（天）"),
-        "silenceDays" to RelationParameterRange(.5,14.0,"她多想你才会主动找你（数值越大越不主动）"),"resendDays" to RelationParameterRange(.25,7.0,"没回时隔多久再发（天）"),
-        "resendCount" to RelationParameterRange(0.0,3.0,"没回时最多再发几次",true),"dailyMax" to RelationParameterRange(0.0,5.0,"每天最多主动发几条",true),
+        "silenceDays" to RelationParameterRange(.5,14.0,"已停用：旧主动联系阈值，仅保留历史数据"),"resendDays" to RelationParameterRange(.25,7.0,"已停用：旧未回复间隔，仅保留历史数据"),
+        "resendCount" to RelationParameterRange(0.0,3.0,"已停用：旧未回复次数上限，仅保留历史数据",true),"dailyMax" to RelationParameterRange(0.0,5.0,"已停用：旧每日上限，仅保留历史数据",true),
         "ignoredDisappointment" to RelationParameterRange(0.0,.2,"主动消息被晾时增加多少失望"))
-    val modelAllowed=setOf("silenceDays","resendDays","resendCount","dailyMax","tone")
+    // Legacy keys remain readable/reversible in history, but are not active settings or proposals.
+    val storedProposalKeys=setOf("silenceDays","resendDays","resendCount","dailyMax","tone")
+    val modelAllowed=setOf("tone")
+    fun activeProposal(values:Map<String,String>)=values.isNotEmpty()&&values.keys.all{it in modelAllowed}
     val descriptions=ranges.mapValues{it.value.explanation}+mapOf("tone" to "主动消息用什么语气","proactive" to "有心结时会不会主动提一次")
     fun clamp(p:RelationParameters):RelationParameters {
         val j=Gson().toJsonTree(p).asJsonObject
@@ -25,7 +28,7 @@ internal object RelationParameterRules {
         j.addProperty("tone",p.tone.take(120));return Gson().fromJson(j,RelationParameters::class.java)
     }
     fun apply(p:RelationParameters,values:Map<String,String>):RelationParameters {
-        require(values.keys.all{it in modelAllowed})
+        require(values.keys.all{it in storedProposalKeys})
         val j=Gson().toJsonTree(p).asJsonObject
         values.forEach{(key,value)->if(key=="tone"){require(value.isNotBlank());j.addProperty(key,value.take(120))}else{
             val n=value.toDouble();require(n.isFinite());j.addProperty(key,n)
@@ -39,8 +42,8 @@ internal data class RelationParameterProposal(val source:SourceRef?,val values:M
 internal data class RelationParameterAnswer(val proposal:RelationParameterProposal?,val message:String=if(proposal==null)"她没说清楚，再问一次"else "")
 internal object RelationParameterContract {
     val instruction="""
-        只有本轮用户明确提出更改主动联系的频率、次数或语气时，顶层加“改主动参数”:{"消息":"本轮来源编号","参数":{"silenceDays":3},"她的话":"好，那我隔三天再找你。"}。
-        参数只准silenceDays（越大越不主动）、resendDays（没回再发间隔天数）、resendCount（再发次数）、dailyMax（每天最多几条）、tone（语气）。用户没有提出就省略。不能改情绪、人设、记忆、模型或密钥，不要把普通聊天当设置。只是待用户确认的建议，不能声称已经改好。
+        只有本轮用户明确提出更改主动联系的语气时，顶层加“改主动参数”:{"消息":"本轮来源编号","参数":{"tone":"温柔些"},"她的话":"那我说得温柔些。"}。
+        参数只准tone（语气）。用户没有提出就省略。联系时间由你结合对话安排，不提供频率、间隔或次数设置建议。不能改情绪、人设、记忆、模型或密钥，不要把普通聊天当设置。只是待用户确认的建议，不能声称已经改好。
     """.trimIndent()
     fun parse(value:JsonElement?,source:SourceRef?,input:String?,at:Long):RelationParameterProposal?=runCatching{
         val j=value?.takeIf{it.isJsonObject}?.asJsonObject?:return null
@@ -48,7 +51,7 @@ internal object RelationParameterContract {
             require(j["消息"].asString.toLong()==source.turnId)
         }
         val values=j["参数"].asJsonObject.entrySet().associate{(key,v)->require(v.isJsonPrimitive);key to v.asString}
-        require(values.isNotEmpty()&&values.keys.all{it in RelationParameterRules.modelAllowed})
+        require(RelationParameterRules.activeProposal(values))
         val sentence=j["她的话"].asString;require(sentence.isNotBlank()&&sentence.length<=500)
         val clamped=RelationParameterRules.apply(RelationTemplate.STEADY.parameters,values)
         val encoded=Gson().toJsonTree(clamped).asJsonObject

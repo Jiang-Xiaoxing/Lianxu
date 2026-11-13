@@ -95,7 +95,12 @@ internal object CompanionContracts {
             require(RoleConsistency.learningUseError(considered,used,judgment,learning)==null)
             Triple(considered,used,judgment)
         }.getOrElse{ignored("learningUse");Triple(emptyList(),emptyList(),"")}
-        return OpportunityDecision("send",reason,text,consideredLearningIds=use.first,usedLearningIds=use.second,judgmentKind=use.third)
+        val next=runCatching{j.nextContact(now,zone)}.getOrElse{ignored("nextWhen");null}
+        return OpportunityDecision("send",reason,text,next,consideredLearningIds=use.first,usedLearningIds=use.second,judgmentKind=use.third)
+    }
+    private fun JsonObject.nextContact(now:Long,zone:java.time.ZoneId):Long? {
+        if(listOf("nextWhen","nextAt").none{get(it)?.isJsonNull==false})return null
+        return ContactTime.field(this,"nextWhen","nextAt",now,zone).also{require(it>=now)}
     }
     private fun JsonObject.ids(key:String):List<String> {
         val value=get(key)?.takeUnless{it.isJsonNull}?:return emptyList()
@@ -110,7 +115,7 @@ internal object CompanionContracts {
         val j=JsonParser.parseString(raw).asJsonObject
         val action=j.text("action");val reason=j.text("reason");val text=j.text("text")
         require(action in setOf("send","defer","cancel","silent")&&reason.isNotBlank()&&reason.length<=600)
-        val next=if(action=="defer")ContactTime.field(j,"nextWhen","nextAt",now,zone) else null
+        val next=when(action){"defer"->ContactTime.field(j,"nextWhen","nextAt",now,zone);"send"->j.nextContact(now,zone);else->null}
         if(next!=null)require(next>=now)
         if(action=="send")require(text.isNotBlank()&&text.length<=8000)else require(text.isEmpty())
         val considered=j.ids("consideredLearningIds");val used=j.ids("usedLearningIds");val judgment=j.text("judgmentKind")

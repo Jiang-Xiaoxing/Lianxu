@@ -200,7 +200,7 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
             }}
         }
         val proposal=proposal.copy(understanding=flow,reconsider=if(proposal.understanding!=null)flow?.future?.timing else proposal.reconsider,
-            relationInput=relation?.copy(sourceHash=RelationshipBackup.hash(input)),parameterProposal=proposal.parameterProposal?.takeIf{it.source==source&&it.values.keys.all{key->key in RelationParameterRules.modelAllowed}},relationAttempted=proposal.relationAttempted||proposal.relationInput!=null,recordIssues=recordIssues.distinct(),relationIssues=relationIssues.distinct())
+            relationInput=relation?.copy(sourceHash=RelationshipBackup.hash(input)),parameterProposal=proposal.parameterProposal?.takeIf{it.source==source&&RelationParameterRules.activeProposal(it.values)},relationAttempted=proposal.relationAttempted||proposal.relationInput!=null,recordIssues=recordIssues.distinct(),relationIssues=relationIssues.distinct())
         val previous=if(old)db.rawQuery("SELECT proposal,committed FROM companion_sources WHERE role=? AND source_id=? AND revision=?",arrayOf(turn.friendId,turn.userMessageId.toString(),revision.toString())).use{it.moveToFirst();gson.fromJson(it.getString(0),ExperienceProposal::class.java) to it.getInt(1)}else null
         val controlFacts=previous?.first?.let{saved->saved.controlChecked&&saved.control in setOf("correct","stop_reminding")&&proposal.controlChecked&&proposal.control==saved.control&&proposal.targets==saved.targets&&proposal.controlQuote==saved.controlQuote&&proposal.requestQuote==saved.requestQuote}==true
         try {
@@ -338,18 +338,12 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
     }
     private fun opportunities(db:SQLiteDatabase,where:String,args:Array<String>)=db.rawQuery("SELECT id,role,source_id,revision,epoch,policy_version,not_before,expires_at,reason,state,attempt FROM companion_opportunities WHERE $where",args).use{c->buildList{while(c.moveToNext())add(CompanionOpportunity(c.getString(0),c.getString(1),c.getLong(2),c.getLong(3),c.getLong(4),c.getLong(5),c.getLong(6),c.getLong(7),c.getString(8),c.getString(9),c.getInt(10)))}}
     suspend fun queued()=repo.read{opportunities(it,"state='queued'",emptyArray())}
-    /** Transactional cap is checked both before model IO and immediately before sending. */
+    /** Source validity is checked before model IO and again before sending; no contact quota. */
     private fun contactAllowed(db:SQLiteDatabase,o:CompanionOpportunity):ContactPermission {
         if(o.id.startsWith("relationship:"))return ContactPermission.Denied
         val latest=db.rawQuery("SELECT MAX(user_message_id) FROM chat_turns WHERE friend_id=?",arrayOf(o.role)).use{it.moveToFirst();it.getLong(0)}
         if(latest!=o.source)return ContactPermission.Denied
-        val relation=relationship(db,o.role)
-        val sent=relationshipSent(db,o.role).filterNot{m->db.rawQuery("SELECT 1 FROM companion_receipts WHERE message_id=? AND opportunity_id=?",arrayOf(m.source.turnId.toString(),o.id)).use{it.moveToFirst()}}
-        val midnight=relationshipDayStart(now())
-        if(db.rawQuery("SELECT 1 FROM companion_receipts r JOIN companion_opportunities old ON old.id=r.opportunity_id WHERE r.role=? AND old.source_id=? AND old.id<>? LIMIT 1",arrayOf(o.role,o.source.toString(),o.id)).use{it.moveToFirst()})return ContactPermission.Denied
-        // Keep the user's existing daily cap; relationship scores have no scheduling authority.
-        val dailyMax=relation.parameters.dailyMax.coerceIn(0,5)
-        return ContactPermission.evaluate(o,now(),dailyMax,sent.count{it.at>=midnight}>=dailyMax,midnight){null}
+        return ContactPermission.Allowed
     }
     private fun permission(db:SQLiteDatabase,o:CompanionOpportunity):ContactPermission {
         val s=state(db,o.role)
@@ -357,13 +351,11 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
         return contactAllowed(db,o)
     }
     private fun permitted(db:SQLiteDatabase,o:CompanionOpportunity)=permission(db,o)==ContactPermission.Allowed
-    /** Persist a temporary timing failure and fence any old worker attempt. */
+    /** Fence any old worker attempt when permission or source validity has changed. */
     private fun settlePermission(db:SQLiteDatabase,o:CompanionOpportunity):Boolean {
         val result=if(hasReceipt(db,o.id))ContactPermission.Denied else permission(db,o)
         if(result==ContactPermission.Allowed)return true
-        val next=(result as? ContactPermission.Deferred)?.at
-        db.execSQL("UPDATE companion_opportunities SET state=?,not_before=?,attempt=attempt+1,owner='' WHERE id=?",
-            arrayOf<Any>(if(next!=null)"queued" else "cancelled",next?:o.notBefore,o.id))
+        db.execSQL("UPDATE companion_opportunities SET state='cancelled',attempt=attempt+1,owner='' WHERE id=?",arrayOf<Any>(o.id))
         return false
     }
     private fun pending(db:SQLiteDatabase,role:String)=db.rawQuery("SELECT 1 FROM chat_turns WHERE friend_id=? AND state='PENDING'",arrayOf(role)).use{it.moveToFirst()}
@@ -406,6 +398,15 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
         s.sources.forEach{r->db.execSQL("INSERT OR IGNORE INTO companion_uses(role,turn_source,source_id,revision) VALUES(?,?,?,?)",arrayOf<Any>(o.role,message,r.turnId,r.version))}
         db.insertOrThrow("companion_receipts",null,ContentValues().apply{put("message_id",message);put("role",o.role);put("opportunity_id",o.id);put("delivery","ready")})
         db.insertOrThrow("companion_action_learning",null,ContentValues().apply{put("message_id",message);put("role",o.role);put("considered",ProactiveLearningUse.encode(d.consideredLearningIds));put("used",ProactiveLearningUse.encode(d.usedLearningIds));put("judgment",d.judgmentKind)})
+        // A new model-chosen opportunity, not a retry of this already-sent message.
+        // Receipt and successor commit together, so stale/repeated workers cannot create either twice.
+        d.nextAt?.let{next->
+            db.insertOrThrow("companion_opportunities",null,ContentValues().apply{
+                put("id","contact:$message");put("role",o.role);put("source_id",o.source);put("revision",o.revision)
+                put("epoch",o.epoch);put("policy_version",o.policyVersion);put("not_before",next);put("expires_at",0L)
+                put("reason",d.reason);put("state","queued")
+            })
+        }
         relationship(db,o.role)
         message
     }
