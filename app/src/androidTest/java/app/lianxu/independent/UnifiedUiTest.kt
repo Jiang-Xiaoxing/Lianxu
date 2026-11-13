@@ -65,7 +65,7 @@ class UnifiedUiTest {
         ui.onNodeWithTag("config-model").performScrollTo().performTextInput("synthetic-model")
         hideKeyboard();ui.onNodeWithTag("config-name").performScrollTo();shot("11-model-editor")
         ui.onNodeWithTag("config-back").performClick();ui.onNodeWithTag("config-back").performClick()
-        ui.onNodeWithTag("settings-display").performScrollTo().performClick();shot("12-display");ui.onNodeWithTag("settings-back").performClick()
+        ui.onNodeWithTag("settings-display").assertDoesNotExist();ui.onNodeWithTag("settings-home").assertIsDisplayed();shot("12-settings-directory")
         ui.onNodeWithTag("settings-info").performScrollTo().performClick();shot("13-data-version");ui.onNodeWithTag("settings-back").performClick()
         ui.onNodeWithTag("tab-3").performClick();shot("14-profile")
     }

@@ -145,7 +145,7 @@ class InteriorPagesUiTest {
         ui.onNodeWithTag("back").performClick()
         open("settings-memory");shot("26-memory-rules")
         open("role-archive");shot("27-backup-diagnostics")
-        open("settings-display");shot("28-display-settings")
+        ui.runOnIdle{vm.home();vm.tab=2};ui.onNodeWithTag("settings-home").assertIsDisplayed();ui.onNodeWithTag("settings-display").assertDoesNotExist();shot("28-settings-directory")
         open("settings-info");shot("29-about")
         ui.onNodeWithText("第三方致谢").performScrollTo();shot("30-about-details")
         open("settings-updates");shot("31-updates")

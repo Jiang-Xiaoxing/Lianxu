@@ -81,7 +81,6 @@ class MainActivity:ComponentActivity(){
             "processing"->ProcessingDirectory(vm)
             "processing-role"->ProcessingRole(vm)
             "settings-memory"->MemoryRulesScreen(vm)
-            "settings-display"->DisplaySettings(vm)
             "settings-info"->DataAndVersion({vm.back()})
             "settings-updates"->UpdatesScreen({vm.back()})
         }

@@ -44,11 +44,9 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
             DirectoryRow("memory","记忆","记住的内容、来源与待确认","settings-processing"){vm.open("processing")}
         }
-        SectionLabel("数据与显示")
+        SectionLabel("数据")
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper)) {
             DirectoryRow("storage","备份与诊断","完整角色、全部备份与诊断日志","settings-role-archive"){vm.open("role-archive")}
-            HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
-            DirectoryRow("list","显示与列表","列表使用统一行间距","settings-display"){vm.open("settings-display")}
         }
         SectionLabel("应用")
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper)) {
@@ -74,12 +72,6 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
     Column(Modifier.fillMaxSize().background(SettingsPaper)) {
         AppTopBar(title,onBack,"settings-back","返回设置")
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp),content=content)
-    }
-}
-
-@Composable internal fun DisplaySettings(vm:AppState) {
-    SettingsPage("显示与列表",{vm.back()}) {
-        Text("列表使用统一行间距。",Modifier.testTag("settings-display-page"),style=MaterialTheme.typography.bodyMedium,color=SettingsMuted)
     }
 }
 
