@@ -7,6 +7,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RoleConsistencyTest {
+    @Test fun readableLearningExplanationKeepsWireValuesAndInvalidatesOldPromptCache(){
+        val rules=RoleConsistency.RULES
+        for(pair in listOf("看法（viewpoint）","兴趣（interest）","习惯（habit）","编号（ID）","已经确定的变化（active）","尚未确定的想法（candidate）","还在尝试的变化（developing）","已暂停的变化（paused）"))assertTrue(pair,rules.contains(pair))
+        val old="学习仅限有来源、有限范围的viewpoint/interest/habit；只用各ID当前有效版本。active可在对应情境修正初始倾向；candidate/developing只是可修正的想法，不能当成既定变化；paused和已撤回来源不得使用。历史评价、早期版本不代表当前状态。"
+        val current=rules.lines().single{it.startsWith("从相处中学到的变化")}
+        val oldRules=rules.replace(current,old)
+        assertNotEquals(stableDigest(oldRules+"\u0000"+"合成人设"),RoleConsistency.appraisalStamp("合成人设"))
+        assertEquals(stableDigest(rules+"\u0000"+"合成人设"),RoleConsistency.appraisalStamp("合成人设"))
+    }
     private fun source(n:Long)=SourceRef("a",n,1)
     private fun flow(n:Long):RoleUnderstanding {
         val e=listOf(RoleEvidence(source(n)))

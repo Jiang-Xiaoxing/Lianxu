@@ -29,6 +29,24 @@ class CompanionSendPromptTest {
     @Test fun recallOnly(){check(listOf(read),"本次仅提供记忆回查工具，不能调用记忆写入工具")}
     @Test fun writeOnly(){check(listOf(write),"本次仅提供记忆写入工具，不能调用记忆回查工具")}
     @Test fun bothTools(){check(listOf(read,write),"本次提供记忆回查与写入工具")}
+    @Test fun readablePermissionsOnlyReplaceTheOwnedSpanAndPreserveProtectedPayloads(){
+        val input="写入仍须通过来源、版本及保护校验。\n{\"source\":12,\"state\":\"active\"}"
+        val profile="用户自写：viewpoint/interest/habit；来源12v1，不能替换这些字。"
+        val base=(CompanionPrompt.build(Friend("a","角色",profile),RolePrompts(),emptyList(),input) as PromptBuild.Ready).request
+        val call=ChatToolCall("call-12","agent_memory_update","{\"source\":12,\"revision\":1}")
+        val result=WireMessage("tool","{\"success\":true,\"source\":12,\"version\":1}",toolCallId=call.id,name=call.name)
+        val request=base.copy(messages=base.messages+WireMessage("assistant","",listOf(call))+result)
+        val original=request.messages.first();val originalRange=original.capabilityRange!!
+        for(tools in listOf(emptyList(),listOf(read),listOf(write),listOf(read,write))){
+            val sent=CompanionPrompt.forSend(request,tools);val head=sent.messages.first();val range=head.capabilityRange!!
+            assertEquals(original.content.removeRange(originalRange),head.content.removeRange(range))
+            assertTrue(head.content.contains(profile));assertEquals(result,sent.messages.single{it.role=="tool"})
+            assertEquals(call,sent.messages.single{it.toolCalls.isNotEmpty()}.toolCalls.single())
+            assertEquals(input+"\n\n"+CompanionPrompt.THINKING_REMINDER,sent.messages.single{it.role=="user"}.content)
+            assertEquals(tools,sent.tools)
+            if(write in tools)assertTrue(head.content.substring(range).contains("核对来源和版本，并遵守保护要求"))
+        }
+    }
     @Test fun repeatedToolRoundsKeepOneOriginalTailAfterIntactPairs(){
         val original=request();val tail=original.messages.last();var current=original
         repeat(3){i->

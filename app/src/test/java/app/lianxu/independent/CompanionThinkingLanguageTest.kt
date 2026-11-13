@@ -32,7 +32,7 @@ class CompanionThinkingLanguageTest {
             assertTrue(header.contains(memory.replace("{{user}}","旅人")))
             val tool=mapOf<String,Any>("type" to "function","function" to mapOf("name" to "agent_memory_update"))
             val sent=CompanionPrompt.forSend(request,listOf(tool)).messages.first().content
-            assertEquals(header.replace(CompanionPrompt.NO_MEMORY_TOOLS,"本次仅提供记忆写入工具，不能调用记忆回查工具；写入仍须通过来源、版本及保护校验。"),sent)
+            assertEquals(header.replace(CompanionPrompt.NO_MEMORY_TOOLS,"本次仅提供记忆写入工具，不能调用记忆回查工具；记下之前仍要核对来源和版本，并遵守保护要求。"),sent)
         }
     }
 }
