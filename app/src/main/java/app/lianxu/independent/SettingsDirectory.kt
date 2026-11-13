@@ -40,7 +40,7 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
     Column(Modifier.fillMaxSize().background(SettingsPaper).verticalScroll(rememberScrollState()).padding(UiSpace.page).testTag("settings-home"),verticalArrangement=Arrangement.spacedBy(16.dp)) {
         SectionLabel("聊天与陪伴")
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)) {
-            DirectoryRow("model","大模型配置",summary,"settings-models","settings-model-summary"){vm.open("models")}
+            DirectoryRow("chat","大模型配置",summary,"settings-models","settings-model-summary"){vm.open("models")}
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
             DirectoryRow("memory","记忆","记住的内容、来源与待确认","settings-processing"){vm.open("processing")}
         }

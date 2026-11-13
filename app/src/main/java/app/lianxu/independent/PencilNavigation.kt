@@ -95,6 +95,7 @@ private val IconStroke=Stroke(1.65f,cap=StrokeCap.Round,join=StrokeJoin.Round)
                 "send"->{drawPath(Path().apply{moveTo(4.5f,4.5f);lineTo(21f,12f);lineTo(4.5f,19.5f);lineTo(7f,12f);close();moveTo(7f,12f);lineTo(20f,12f)},iconColor,style=IconStroke)}
                 "chevron"->{drawPath(Path().apply{moveTo(9f,6f);lineTo(15f,12f);lineTo(9f,18f)},iconColor,style=IconStroke)}
                 "up"->{drawPath(Path().apply{moveTo(6f,15f);lineTo(12f,9f);lineTo(18f,15f)},iconColor,style=IconStroke)}
+                "plus"->{drawLine(iconColor,Offset(4f,12f),Offset(20f,12f),IconStroke.width,cap=StrokeCap.Round);drawLine(iconColor,Offset(12f,4f),Offset(12f,20f),IconStroke.width,cap=StrokeCap.Round)}
                 "back"->drawPath(Path().apply {moveTo(14.5f,5f);lineTo(7.5f,12f);lineTo(14.5f,19f)},iconColor,style=IconStroke)
                 else->{drawCircle(iconColor,9f,Offset(12f,12f),style=IconStroke);drawLine(iconColor,Offset(7f,12f),Offset(17f,12f),IconStroke.width,cap=StrokeCap.Round);drawLine(iconColor,Offset(12f,7f),Offset(12f,17f),IconStroke.width,cap=StrokeCap.Round)}
             }

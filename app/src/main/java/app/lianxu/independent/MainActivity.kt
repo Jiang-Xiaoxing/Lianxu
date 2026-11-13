@@ -110,9 +110,7 @@ class MainActivity:ComponentActivity(){
                 if(vm.tab==0){Spacer(Modifier.width(2.dp));CompanionBirds(Modifier.weight(1f,fill=false).widthIn(max=104.dp))}
             }
             if(vm.tab<=1)Box{
-                val addBg=if(isSystemInDarkTheme())Paper else GreenText
-                val addOn=if(isSystemInDarkTheme())GreenText else MaterialTheme.colorScheme.onPrimary
-                FilledTonalIconButton(onClick={menu=true},modifier=Modifier.size(UiSpace.action).testTag("add-menu").semantics{contentDescription="添加角色"},colors=IconButtonDefaults.filledTonalIconButtonColors(containerColor=addBg,contentColor=addOn)){ControlIcon("add",addOn)}
+                IconButton(onClick={menu=true},modifier=Modifier.size(UiSpace.action).testTag("add-menu").semantics{contentDescription="添加角色"}){ControlIcon("plus",GreenText,20.dp)}
                 DropdownMenu(menu,{menu=false}){
                     DropdownMenuItem(text={Text("寻找角色")},leadingIcon={ControlIcon("search")},onClick={menu=false;vm.startSearch()})
                     DropdownMenuItem(text={Text("创建角色")},leadingIcon={ControlIcon("add")},onClick={menu=false;vm.open("create")})
