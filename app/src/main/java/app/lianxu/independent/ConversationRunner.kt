@@ -269,6 +269,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         if(needsPlan)interpretation=interpretation.copy(understanding=null)
         val planner=RolePlanner(client)
         val appraisalTime=AppServices.companionClock()
+        val contactZone=java.time.ZoneId.systemDefault()
         if(executedControl==null&&!interpretation.interpretationUnknown&&!companion.accept(current,interpretation,companionState,::modelCurrent)){ledger.fail(current.id,current.attempt,ChatFailure.SOURCE_CHANGED);changed();return}
         companionState=replySnapshot()
         settled()
@@ -312,14 +313,13 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
             JointControl.receipt(requireNotNull(executedControl))
         }
         val contactTool:suspend(String)->Map<String,Any> = {raw->
-            val prior=companion.cached(current)
-            val request=ImmediateContact.parse(raw,originalInput,companion.roleContext(friendId,source),prior?.timingReferenceAt?:appraisalTime)
+            val request=ImmediateContact.parse(raw,originalInput,companion.roleContext(friendId,source),appraisalTime,contactZone)
             companion.contact(current,request,companionState,appraisalTime,::modelCurrent).also{
                 companionState=replySnapshot();roleState=companion.roleContext(friendId,source)
                 settled()
             }
         }
-        fun toolRunner()=MemoryTools(processing,current,context.input,refs,companionIndex,memoryVectors=vectors,queryCache=queryCache,relationEnabled=needsPlan,controlTool=controlTool,freshControlContext={requireNotNull(freshControlContext).invoke()},contactTool=contactTool,contactTime=appraisalTime){modelCurrent()&&companion.current(store.readableDatabase,companionState)&&processing.referenceCurrent(friendId,refs.stamp)}
+        fun toolRunner()=MemoryTools(processing,current,context.input,refs,companionIndex,memoryVectors=vectors,queryCache=queryCache,relationEnabled=needsPlan,controlTool=controlTool,freshControlContext={requireNotNull(freshControlContext).invoke()},contactTool=contactTool,contactTime=appraisalTime,contactZone=contactZone){modelCurrent()&&companion.current(store.readableDatabase,companionState)&&processing.referenceCurrent(friendId,refs.stamp)}
         val accountRecord=false // Mood/relationship review waits for the configured batch, never the reply.
         fun toolReserve()=toolRunner().reservedTokens()
         fun jointReserve()=if(needsPlan)planner.replyFixedTokens(interpretation,roleState,appraisalTime,rules.proactiveRecall,accountRecord,context.persona)+(context.recent.size+6)*8 else 0

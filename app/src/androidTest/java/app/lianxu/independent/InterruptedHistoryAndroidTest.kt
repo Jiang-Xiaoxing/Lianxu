@@ -81,7 +81,7 @@ class InterruptedHistoryAndroidTest {
         assertEquals(TurnState.SUPERSEDED,l.all().single().state)
         assertEquals("看见的部分",store.messages().single{!it.mine}.text)
     }
-    @Test fun stoppedHistoryUpdatesContactAndSuppliesAClaimableOpportunity()=runBlocking {
+    @Test fun stoppedHistoryUpdatesContactWithoutInventingAnOpportunity()=runBlocking {
         val ledger=ChatLedger(store);val repo=ProcessingRepository(store);var now=2_000_000_000_000L
         val core=CompanionRepository(store){now}
         for((role,spoken) in listOf("a" to "已显示前缀","b" to "")){
@@ -93,9 +93,7 @@ class InterruptedHistoryAndroidTest {
             repo.tx{it.execSQL("UPDATE messages SET created=? WHERE id=?",arrayOf<Any>(now,stopped.userMessageId))}
             assertEquals(now,core.relationship(role).state.lastContact)
             core.refreshRelationshipContacts()
-            val opportunity=core.queued().single{it.role==role};assertEquals(stopped.userMessageId,opportunity.source)
-            now=opportunity.notBefore
-            assertNotNull(core.claim(opportunity.id,"synthetic"))
+            assertTrue(core.queued().none{it.role==role})
         }
     }
     @Test fun consecutiveStopsKeepOrderAndForgottenSourceCannotSupplyContact()=runBlocking {

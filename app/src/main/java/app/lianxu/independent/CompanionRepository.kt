@@ -161,7 +161,7 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
         require(prior?.parameterProposal==null||request.parameters==null||prior.parameterProposal.values==request.parameters.values){"parameter_proposal_already_applied"}
         val flow=prior?.understanding?.let{old->if(future==null)old else old.copy(future=future,dependencies=(old.dependencies+future.evidence).distinct())}?:request.flow
         val p=(prior?:ExperienceProposal(claimKind="none")).copy(understanding=flow,reconsider=flow?.future?.timing,
-            timingReferenceAt=prior?.timingReferenceAt?:at,parameterProposal=prior?.parameterProposal?:request.parameters)
+            timingReferenceAt=if(prior?.understanding?.future!=null)prior.timingReferenceAt?:at else at,parameterProposal=prior?.parameterProposal?:request.parameters)
         check(saveProposal(db,turn,revision,p,expected,true))
         if(future!=null){
             val stored=db.rawQuery("SELECT proposal FROM companion_sources WHERE role=? AND source_id=? AND revision=?",arrayOf(source.characterId,source.turnId.toString(),source.version.toString())).use{check(it.moveToFirst());gson.fromJson(it.getString(0),ExperienceProposal::class.java)}
@@ -340,19 +340,16 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
     suspend fun queued()=repo.read{opportunities(it,"state='queued'",emptyArray())}
     /** Transactional cap is checked both before model IO and immediately before sending. */
     private fun contactAllowed(db:SQLiteDatabase,o:CompanionOpportunity):ContactPermission {
-        val (relation,forecast)=relationshipForecast(db,o.role)
+        if(o.id.startsWith("relationship:"))return ContactPermission.Denied
+        val latest=db.rawQuery("SELECT MAX(user_message_id) FROM chat_turns WHERE friend_id=?",arrayOf(o.role)).use{it.moveToFirst();it.getLong(0)}
+        if(latest!=o.source)return ContactPermission.Denied
+        val relation=relationship(db,o.role)
         val sent=relationshipSent(db,o.role).filterNot{m->db.rawQuery("SELECT 1 FROM companion_receipts WHERE message_id=? AND opportunity_id=?",arrayOf(m.source.turnId.toString(),o.id)).use{it.moveToFirst()}}
         val midnight=relationshipDayStart(now())
-        if(o.id.startsWith("relationship:")){
-            val latest=db.rawQuery("SELECT MAX(user_message_id) FROM chat_turns WHERE friend_id=?",arrayOf(o.role)).use{it.moveToFirst();it.getLong(0)}
-            if(latest!=o.source)return ContactPermission.Denied
-        }else{
-            if(db.rawQuery("SELECT 1 FROM companion_receipts r JOIN companion_opportunities old ON old.id=r.opportunity_id WHERE r.role=? AND old.source_id=? AND old.id<>? LIMIT 1",arrayOf(o.role,o.source.toString(),o.id)).use{it.moveToFirst()})return ContactPermission.Denied
-            if(!relation.parameters.proactive&&relation.inputs.any{it.source.turnId==o.source&&((it.v?:0.0)>0||(it.b?:0.0)>0)})return ContactPermission.Denied
-        }
+        if(db.rawQuery("SELECT 1 FROM companion_receipts r JOIN companion_opportunities old ON old.id=r.opportunity_id WHERE r.role=? AND old.source_id=? AND old.id<>? LIMIT 1",arrayOf(o.role,o.source.toString(),o.id)).use{it.moveToFirst()})return ContactPermission.Denied
+        // Keep the user's existing daily cap; relationship scores have no scheduling authority.
         val dailyMax=relation.parameters.dailyMax.coerceIn(0,5)
-        return ContactPermission.evaluate(o,now(),dailyMax,sent.count{it.at>=midnight}>=dailyMax,midnight){
-            RelationshipProactive.next(relation.parameters,relation.state.lastContact,sent,now(),midnight,forecast)}
+        return ContactPermission.evaluate(o,now(),dailyMax,sent.count{it.at>=midnight}>=dailyMax,midnight){null}
     }
     private fun permission(db:SQLiteDatabase,o:CompanionOpportunity):ContactPermission {
         val s=state(db,o.role)

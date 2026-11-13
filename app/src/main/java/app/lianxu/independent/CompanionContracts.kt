@@ -70,7 +70,7 @@ internal object CompanionContracts {
             val requestQuote=j.text("requestQuote");require(requestQuote.isNotBlank()&&requestQuote in input&&(requestQuote in controlQuote||controlQuote in requestQuote)){"CONTROL_REQUEST_EVIDENCE"}
         }else require(targets.isEmpty())
         val reconsider=j.get("reconsider")?.takeUnless{it.isJsonNull}?.asJsonObject?.let{
-            val reason=it.text("reason");val next=it.long("notBefore")
+            val reason=it.text("reason");val next=ContactTime.field(it,"when","notBefore",now)
             require(reason.isNotBlank()&&reason.length<=600&&next>=now)
             Reconsideration(reason,next)
         }
@@ -81,9 +81,9 @@ internal object CompanionContracts {
             timingReferenceAt=now.takeIf{reconsider!=null})
     }
     /** Send text is the gate; invalid bookkeeping cannot turn a valid message into a retry. */
-    fun decisionForReply(raw:String,now:Long,expiry:Long,learning:List<RoleLearningState>?=null):OpportunityDecision {
+    fun decisionForReply(raw:String,now:Long,expiry:Long,learning:List<RoleLearningState>?=null,zone:java.time.ZoneId=java.time.ZoneId.systemDefault()):OpportunityDecision {
         val j=JsonParser.parseString(raw).asJsonObject
-        if(runCatching{j.text("action")}.getOrNull()!="send")return runCatching{decision(raw,now,expiry,learning)}.getOrElse{
+        if(runCatching{j.text("action")}.getOrNull()!="send")return runCatching{decision(raw,now,expiry,learning,zone)}.getOrElse{
             Diagnostics.event("role.input.ignored",mapOf("field" to "decision","code" to "INVALID_BACKGROUND_RECORD"))
             OpportunityDecision("silent","")
         }
@@ -106,11 +106,11 @@ internal object CompanionContracts {
     }
     /** [learning] is the role learning projection of the snapshot being decided on; IDs are checked locally. */
     @Suppress("UNUSED_PARAMETER") // Old callers may pass the legacy expiry; it has no decision authority.
-    fun decision(raw:String,now:Long,expiry:Long,learning:List<RoleLearningState>?=null):OpportunityDecision {
+    fun decision(raw:String,now:Long,expiry:Long,learning:List<RoleLearningState>?=null,zone:java.time.ZoneId=java.time.ZoneId.systemDefault()):OpportunityDecision {
         val j=JsonParser.parseString(raw).asJsonObject
         val action=j.text("action");val reason=j.text("reason");val text=j.text("text")
         require(action in setOf("send","defer","cancel","silent")&&reason.isNotBlank()&&reason.length<=600)
-        val next=if(action=="defer")j.long("nextAt") else null
+        val next=if(action=="defer")ContactTime.field(j,"nextWhen","nextAt",now,zone) else null
         if(next!=null)require(next>=now)
         if(action=="send")require(text.isNotBlank()&&text.length<=8000)else require(text.isEmpty())
         val considered=j.ids("consideredLearningIds");val used=j.ids("usedLearningIds");val judgment=j.text("judgmentKind")
