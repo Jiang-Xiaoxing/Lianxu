@@ -286,7 +286,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                 append("按已选回应自然表达，忠于原话及仍有效的依据，不扩大工具权限。\n${ExperiencePresentation.REFS}\n这次理解：${ExperiencePresentation.reference(source)}")
                 flow.selectedChoice()?.let{append("；回应方式 ${it.action}")}
             },true))}.orEmpty()
-        fun controlReferences()=listOf(ControlPresentation.reference(executedControl))+(if(executedControl==null)interpretationRefs else emptyList())
+        fun controlReferences()=listOfNotNull(ControlPresentation.reference(executedControl))+(if(executedControl==null)interpretationRefs else emptyList())
         fun references():List<PromptReference>{
             // The template tone is a proactive style; a reply must not be steered by it.
             val replyRefs=CompanionPrompt.replyReferences(companionState.references)
