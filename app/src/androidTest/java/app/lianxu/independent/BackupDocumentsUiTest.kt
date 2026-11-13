@@ -1,6 +1,9 @@
 package app.lianxu.independent
 
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.ContentValues
+import android.net.Uri
+import android.provider.MediaStore
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.Bundle
@@ -32,6 +35,7 @@ class BackupDocumentsUiTest {
     private lateinit var oldVault: String
     private var oldAccessibilityFlags = 0
     private val calls = AtomicInteger()
+    private var syntheticDownload: Uri? = null
 
     @get:Rule(order = 0)
     val fixture = object : ExternalResource() {
@@ -49,6 +53,7 @@ class BackupDocumentsUiTest {
         }
 
         override fun after() {
+            syntheticDownload?.let { instrument.targetContext.contentResolver.delete(it, null, null) }
             val info = automation.serviceInfo
             info.flags = oldAccessibilityFlags
             automation.serviceInfo = info
@@ -184,12 +189,15 @@ class BackupDocumentsUiTest {
         throw AssertionError("系统文件选择器尚未返回应用")
     }
 
-    private fun chooseFile(filename: String) {
-        var file = documentNode { it.text?.toString() == filename }
+    private fun chooseFile(filename: String, search: Boolean = false) {
+        fun isFileTitle(node: AccessibilityNodeInfo) = node.viewIdResourceName == "android:id/title" && node.text?.toString() == filename
+        var file = if (search) null else documentNode(::isFileTitle)
         if (file == null) {
             click(awaitNode("search") { it.contentDescription?.toString() in setOf("Search", "搜索") })
-            setText(awaitNode("search-input") { it.className?.toString() == "android.widget.EditText" }, filename)
-            file = awaitNode("saved-file") { it.text?.toString() == filename }
+            setText(awaitNode("search-input") {
+                it.viewIdResourceName?.endsWith(":id/search_src_text") == true && it.isEditable
+            }, filename)
+            file = awaitNode("saved-file", predicate = ::isFileTitle)
         }
         click(requireNotNull(file))
         // ACTION_OPEN_DOCUMENT 通常点选即返回；多选式系统界面可能还显示打开按钮。
@@ -258,15 +266,36 @@ class BackupDocumentsUiTest {
     }
 
     @Test
-    fun deliveredMemoryTestRoleImportsViaSystemPickerWithoutOverwritingOrCallingModel() {
+    @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    fun syntheticMemoryTestRoleImportsViaSystemPickerWithoutOverwritingOrCallingModel() {
         show()
+        // Create a real archive from this test's synthetic role, never depend on a hand-delivered file.
+        val root = runBlocking { vm.roleArchive.export("seed-lin", false) }
+        root.getAsJsonObject("character").addProperty("name", "记忆功能测试")
+        root.getAsJsonObject("prompts").addProperty("extra", "这是合成验收角色，不得为了通过测试伪造记忆或结果。")
+        val bytes = java.io.ByteArrayOutputStream().also { RoleArchive.write(root, it) }.toByteArray()
+        val checked = RoleArchive.read(bytes.inputStream())
+        assertEquals("role", checked.scope)
+        assertTrue(checked.root().getAsJsonObject("records").entrySet().isEmpty())
+        val filename = "memory-function-test-${System.nanoTime()}.lianxu.zip"
+        val resolver = instrument.targetContext.contentResolver
+        val uri = requireNotNull(resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
+            put(MediaStore.MediaColumns.MIME_TYPE, "application/zip")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }))
+        syntheticDownload = uri
+        requireNotNull(resolver.openOutputStream(uri)).use { it.write(bytes) }
+        resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+        requireNotNull(resolver.openInputStream(uri)).use { assertEquals(checked.digest, RoleArchive.read(it).digest) }
         val before = vm.friends.toList()
         val originals = runBlocking { before.associate { it.id to vm.roleArchive.export(it.id, true) } }
         val rulesBefore = runBlocking { vm.processing.memoryRules() }
         ui.onNodeWithTag("archive-open").performScrollTo().performClick()
         awaitNode("memory-package-open") { true }.also { @Suppress("DEPRECATION") it.recycle() }
         downloads()
-        chooseFile("memory-function-test.lianxu.zip")
+        chooseFile(filename, search = true)
         waitForApp()
         ui.waitUntil(30_000) { ui.onAllNodesWithTag("archive-mode-add").fetchSemanticsNodes().isNotEmpty() }
         ui.onNodeWithTag("archive-mode-add").performClick()

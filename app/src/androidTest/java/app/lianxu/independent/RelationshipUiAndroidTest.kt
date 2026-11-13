@@ -38,7 +38,7 @@ class RelationshipUiAndroidTest {
         runBlocking{
             val core=vm.companion;val ledger=ChatLedger(vm.processing.store)
             val turn=ledger.begin("seed-lin","合成失约原话","synthetic");val ref=core.sourceFor(turn);val snapshot=core.snapshot("seed-lin");val now=System.currentTimeMillis()
-            val p=ExperienceProposal(relationInput=RelationInput(ref,now,now/RelationshipProjector.DAY,"关于关系",v=.9),relationAttempted=true,timingReferenceAt=now,parameterProposal=RelationParameterProposal(ref,mapOf("silenceDays" to "3"),"隔三天",now))
+            val p=ExperienceProposal(relationInput=RelationInput(ref,now,now/RelationshipProjector.DAY,"关于关系",v=.9),relationAttempted=true,timingReferenceAt=now,parameterProposal=RelationParameterProposal(ref,mapOf("tone" to "温柔简洁"),"说得温柔简洁些",now))
             assertTrue(core.accept(turn,p,snapshot){true});assertTrue(ledger.finish(turn.id,1,"合成回复"))
             ProcessingRepository(vm.processing.store).tx{core.finish(it,turn,snapshot,p)}
             vm.refreshProcessing()
@@ -61,6 +61,7 @@ class RelationshipUiAndroidTest {
     @Test fun confirmReenterAndUndoOnlyOnce(){
         seed();val old=runBlocking{vm.companion.relationship("seed-lin").parameters}
         ui.runOnIdle{vm.open("chat","seed-lin")};await("就这样");shot("card-pending");ui.onNodeWithText("就这样").performClick();await("✓ 已改，从现在起生效 ·")
+        runBlocking{assertEquals(old.copy(tone="温柔简洁"),vm.companion.relationship("seed-lin").parameters)}
         ui.runOnIdle{vm.open("detail","seed-lin")};ui.waitForIdle();ui.runOnIdle{vm.open("chat","seed-lin")};await("✓ 已改，从现在起生效 ·")
         shot("card-confirmed");ui.onNodeWithText("撤销").performClick();await("已撤销")
         runBlocking{
