@@ -52,7 +52,7 @@
 - 使用外部模型服务时，请求所需的聊天与相关上下文会发送给你配置的服务商，请自行确认其隐私与收费政策。
 - 诊断详细内容可能包含聊天与提示词。提交问题前先检查并去除私人内容、密钥和服务凭据。
 
-具体操作见[备份与诊断说明](docs/BACKUP-DIAGNOSTICS.md)。
+当前备份规则见[备份与诊断的 1.0.0 摘要](docs/BACKUP-DIAGNOSTICS.md#100-当前使用摘要)。
 
 ## 常见问题
 
@@ -78,9 +78,8 @@
 
 ## 了解更多
 
-- [角色设定](docs/PERSONA.md) · [角色档案](docs/ROLE-ARCHIVE.md)
-- [模型目录](docs/MODEL-DIRECTORY.md) · [模型容量设置](docs/MODEL-TOKEN-BUDGETS.md)
-- [开发与测试](docs/DEVELOPMENT.md) · [架构说明](docs/ARCHITECTURE.md)
+- 当前版本：[1.0.0 更新说明](RELEASE-NOTES-1.0.0.md) · [开发与测试](docs/DEVELOPMENT.md)
+- 历史设计资料（不是当前操作指南）：[角色设定](docs/PERSONA.md) · [角色档案](docs/ROLE-ARCHIVE.md) · [模型目录](docs/MODEL-DIRECTORY.md) · [模型容量设置](docs/MODEL-TOKEN-BUDGETS.md) · [架构说明](docs/ARCHITECTURE.md)
 
 发现问题时，请在 [Issues](https://github.com/Jiang-Xiaoxing/Lianxu/issues)说明应用版本、Android 版本、复现步骤，以及预期与实际结果。开发贡献请使用独立分支和 PR，保留既有许可与署名。
 
