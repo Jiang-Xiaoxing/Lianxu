@@ -62,6 +62,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
     // Pending prefixes are durable already, but the attempt preview owns their one visible copy.
     val pendingBodies=vm.turns.filter{it.friendId==friend.id&&it.state==TurnState.PENDING&&vm.chatPreview?.let{p->p.turnId==it.id&&p.attempt==it.attempt}==true}.mapNotNull{it.assistantMessageId}.toSet()
     val messages=vm.messages.filter{it.friendId==friend.id&&it.id !in pendingBodies}
+    val latestRoleMessageId=messages.lastOrNull{!it.mine}?.id
     val pills=vm.memoryPills.filter{it.friendId==friend.id}
     val timeline=remember(messages,pills){chatTimeline(messages,pills)}
     val openTurn=vm.turns.lastOrNull{it.friendId==friend.id}?.takeIf{it.state!=TurnState.COMPLETED}
@@ -187,7 +188,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
                                         }
                                     }
                                     if(message.mine)RelationshipParameterCard(vm,friend,message,parameterCards)
-                                    if(!message.mine)CompanionReadMarker(vm,message,bounds,viewport,!attachmentInfo&&controlMessage==null)
+                                    if(!message.mine)CompanionReadMarker(vm,message,bounds,viewport,!attachmentInfo&&controlMessage==null,message.id==latestRoleMessageId)
                                 }
                                 if(row.showTime)Text(time.format(Date(group.messages.last().created)),Modifier.padding(horizontal=4.dp),style=MaterialTheme.typography.labelSmall,color=Muted)
                             }
