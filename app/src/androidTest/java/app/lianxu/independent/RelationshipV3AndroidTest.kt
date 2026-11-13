@@ -110,14 +110,18 @@ class RelationshipV3AndroidTest {
             assertEquals("答应的事没做到",store.messages().single{it.id==real.turnId}.text)
         }finally{store.close();context.deleteDatabase(name)}
     }
-    @Test fun proactiveTemplateTimersDoNotRecordSilenceFeelingsAndReplyStillStopsWaiting():Unit=runBlocking{
+    @Test fun explicitContactDoesNotRecordSilenceFeelingsAndTemplatesCannotSchedule():Unit=runBlocking{
         for(template in listOf(RelationTemplate.DIRECT,RelationTemplate.RESERVED,RelationTemplate.STEADY)){
             val name="relationship-v3-proactive-${System.nanoTime()}.db";val store=Store(context,name);var now=2_000_000_000_000L
             try{
                 store.addConfigured(Friend("r","合成角色","成年"),RolePrompts(characterDefinition="成年合成人设",relationTemplate=template.name,relationStart="FRIENDS"))
                 val core=CompanionRepository(store){now};core.setPolicy("r",true,"test")
-                seed(store,core,now,"普通问候"){RelationInput(it,now,now/day,"普通信息")}
-                core.refreshRelationshipContacts();val queued=core.queued().single();val exact=now-kotlin.math.ln(1-RelationDecay.thetaBase(template.parameters.silenceDays))/RelationDecay.missingRate(.4)*RelationshipProjector.HOUR;assertTrue(queued.notBefore>=exact&&queued.notBefore-exact<=60_000)
+                val source=seed(store,core,now,"普通问候"){RelationInput(it,now,now/day,"普通信息")}
+                core.refreshRelationshipContacts();assertTrue(core.queued().isEmpty())
+                // Explicit model plan fixture; the relationship template no longer chooses its time.
+                val snapshot=core.snapshot("r")
+                store.writableDatabase.execSQL("INSERT INTO companion_opportunities(id,role,source_id,revision,epoch,policy_version,not_before,expires_at,reason,state) VALUES('explicit','r',?,?,?,?,?,?,'合成模型安排','queued')",arrayOf<Any>(source.turnId,source.version,snapshot.epoch,snapshot.policyVersion,now+3600000,Long.MAX_VALUE))
+                val queued=core.queued().single()
                 now=queued.notBefore;val claimed=core.claim(queued.id,"test")!!
                 val message=core.conclude(claimed,"test",OpportunityDecision("send","自然联系","最近怎么样？"),core.snapshot("r")){true}!!
                 now+=day;core.refreshRelationshipContacts()

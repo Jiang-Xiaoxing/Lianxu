@@ -306,8 +306,8 @@ class ReplyAccountingAndroidTest {
         ledger.fail(t.id,t.attempt,ChatFailure.TIMEOUT);val retry=requireNotNull(ledger.retry(t.id,"fake"))
         core.contact(retry,action,core.snapshot("a"),now){true};assertEquals(1,core.queued().size)
         assertTrue(ledger.finish(retry.id,retry.attempt,"已安排再考虑"));repeat(4){closed()}
-        val before=core.queued().single();assertTrue(processor{TextChatResult.Success(output(it))}.drain("a"))
-        assertEquals(listOf(before),core.queued());assertTrue(repo.read{ReplyAccountingQueue.pending(it,"a").isEmpty()})
+        assertTrue(core.queued().isEmpty());assertTrue(processor{TextChatResult.Success(output(it))}.drain("a"))
+        assertTrue(core.queued().isEmpty());assertTrue(repo.read{ReplyAccountingQueue.pending(it,"a").isEmpty()})
     }
     @Test fun invalidContactEvidenceCannotCreateAnOpportunityAfterSanitization()=runBlocking {
         core.setPolicy("a",true,CompanionRuntime.owner)
