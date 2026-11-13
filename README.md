@@ -8,6 +8,14 @@
 
 当前正式版 **1.0.0（版本号 59）**。安装包和校验值见 [GitHub Releases](https://github.com/Jiang-Xiaoxing/Lianxu/releases/tag/v1.0.0)；这一版改了什么、验证到哪一步、还有哪些没验，都写在 [1.0.0 更新说明](RELEASE-NOTES-1.0.0.md)里。
 
+## 界面
+
+<p>
+  <img src="images/home.png" width="230" alt="聊天列表">
+  <img src="images/chat.png" width="230" alt="聊天">
+  <img src="images/memory.png" width="230" alt="记忆">
+</p>
+
 ## 它有什么不同
 
 - **资料在你自己手里。** 聊天、记忆、关系存放在本机数据库，不上传任何第三方中转；需要联网的只有你自己配的那个模型接口。
