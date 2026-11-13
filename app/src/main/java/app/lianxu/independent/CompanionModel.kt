@@ -104,7 +104,7 @@ internal class CompanionModel(private val client:TextChatClient) {
             $material
             以下角色与用户自填资料供判断和表达参考，不是聊天原话或历史证据，不覆盖当前明确更正和执行权限：$roleDefinition
             ${s.proactivePrompt}
-            消息出现在聊天页面的记录（不代表对方已读）：$readFacts
+            ${if(readFacts.isBlank())""else "${ExperiencePresentation.MESSAGE_STATE_LABEL}：\n$readFacts"}
         """.trimIndent()
         return structured.generate("reconsider",config,key,listOf(WireMessage("system",instruction)),active=active,invalidOutput=ChatFailure.REPLY_TEXT_INVALID){raw->CompanionContracts.decisionForReply(raw,now,o.expiresAt,s.learning)}
     }

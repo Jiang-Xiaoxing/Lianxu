@@ -28,9 +28,9 @@ class ProactiveMaterialTest {
         val p=prompt(followUp,chat[0])
         assertTrue(p.contains("[现在] 2026年11月11日 星期三 02:30"))
         assertTrue(p.contains("[上次聊天] [昨天 20:01]，距现在约 6 小时"))
-        assertTrue(p.contains("[11月8日 22:10] 对方：我后天面试"))
-        assertTrue(p.contains("[11月8日 22:11] 你：加油，面完跟我说"))
-        assertTrue(p.contains("（隔了 1 天）\n[昨天 20:00] 对方：刚下班"))
+        assertTrue(p.contains("[11月8日 22:10] 对方（消息 1）：我后天面试"))
+        assertTrue(p.contains("[11月8日 22:11] 你（回复 2）：加油，面完跟我说"))
+        assertTrue(p.contains("（隔了 1 天）\n[昨天 20:00] 对方（消息 4）：刚下班"))
         assertFalse("撤回的不给",p.contains("【已撤回】"))
         assertTrue(p.contains("你当时留下的原话：等他面试完问问结果"))
         assertTrue(p.contains("当时对方那条消息（11月8日 22:10，距现在约 2 天）：我后天面试"))
@@ -52,7 +52,7 @@ class ProactiveMaterialTest {
         val p=prompt(followUp,null,chat)
         assertFalse(p.contains("当前关系小结"));assertFalse(p.contains("疙瘩"));assertFalse(p.contains("主动交流语气"))
         assertTrue(p.contains("来源1v1: 后天面试"))
-        val refs=listOf(PromptReference(RELATION_SUMMARY_LABEL,"挺想对方",true),PromptReference(CompanionPrompt.TONE_LABEL,"主动交流语气：关心一句",true),PromptReference("当前权限与交流边界","主动联系许可=enabled",true))
+        val refs=listOf(PromptReference(RELATION_SUMMARY_LABEL,"挺想对方",true),PromptReference(CompanionPrompt.TONE_LABEL,"主动交流语气：关心一句",true),PromptReference("当前权限与交流边界","主动联系许可=enabled",true),PromptReference(ExperiencePresentation.MESSAGE_STATE_LABEL,"回复 20：未读",true))
         assertEquals(listOf("当前权限与交流边界"),proactiveReferences(refs).map{it.label})
     }
 
@@ -62,18 +62,21 @@ class ProactiveMaterialTest {
         assertEquals((19..30L).toList(),ProactiveMaterial.recent(many).map{it.id})
     }
     @Test fun existingRequestGetsVisibilityTimeAndActualConversationWithOrWithoutLaterUserMessage(){
-        for(replied in listOf(false,true)){
+        for(replied in listOf(false,true))for(read in listOf(false,true)){
             val sentAt=now-3*86_400_000L
             val sent=Message(20,"a","面试怎么样了？",false,sentAt)
             val messages=listOf(sent)+if(replied)listOf(Message(21,"a","还要等通知",true,now-60_000))else emptyList()
-            val facts=ExperiencePresentation.receipt(20,if(replied)now-60_000 else null,now,zone,sentAt)
+            val facts=ExperiencePresentation.receipt(20,if(read)now-60_000 else null,now,zone,sentAt)
             var calls=0;var text=""
             val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
                 calls++;text=request.messages.joinToString("\n"){it.content};return TextChatResult.Success("""{"action":"silent","reason":"先不打扰"}""")}}
             runBlocking{CompanionModel(client).reconsider(config,"synthetic",relation,CompanionSnapshot("a",0,0,"",emptyList(),"","enabled"),"成年角色",now,facts,recent=messages,zone=zone)}
             assertEquals(1,calls);assertTrue(text.contains("距现在约 3 天"));assertTrue(text.contains("面试怎么样了？"))
             assertEquals(replied,text.contains("还要等通知"));assertFalse(text.contains("已读但没回"))
-            assertTrue(text.contains(if(replied)"不代表对方读过"else"是否读过不确定"))
+            assertEquals(1,Regex.fromLiteral(facts).findAll(text).count())
+            assertEquals(1,Regex.fromLiteral(sent.text).findAll(text).count())
+            assertTrue(text.contains("你（回复 20）：面试怎么样了？"))
+            assertTrue(text.contains(if(read)"回复 20：已读"else"回复 20：未读"));assertFalse(text.contains("不代表对方读过"))
         }
     }
 }
