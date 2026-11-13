@@ -75,10 +75,11 @@ class ExperiencePresentationTest {
         val base=CompanionPrompt.build(Friend("a","甲","角色简介"),RolePrompts(),emptyList(),"今天有点累",capacity=64000,outputLimit=2048) as PromptBuild.Ready
         val prepared=RolePlanner(client).prepareReply(base,config,"今天有点累",ExperienceProposal(memory="谈到今天的加班"),context,now,false,emptyMap(),0) as PromptBuild.Ready
         val notes=prepared.request.messages.first{it.content.startsWith("[这一轮的笔记")}.content
-        val body=notes.substringBefore(ExperiencePresentation.REFS);val refs=notes.substringAfter(ExperiencePresentation.REFS)
-        assertTrue(body.contains("谈到今天的加班"));assertFalse(body.contains("编号"));assertFalse(body.contains("已经看到"))
-        assertFalse(body.contains("已读"));assertFalse(body.contains("未读"));assertTrue(refs.contains("编号是 99，版本 2"));assertTrue(refs.contains("回复 56"))
-        assertTrue(refs.contains("habit-abc"));assertTrue(refs.contains("消息 12，版本 7"))
+        assertFalse(notes.contains(ExperiencePresentation.REFS))
+        assertTrue(notes.contains("谈到今天的加班"));assertFalse(notes.contains("已经看到"))
+        assertFalse(notes.contains("已读"));assertFalse(notes.contains("未读"));assertTrue(notes.contains("编号是 99，版本 2"))
+        assertTrue(notes.lines().single{it.startsWith("- [回复 56；")}.contains("来源消息 12，版本 7] 你选择倾听，回了「你慢慢说」"))
+        assertTrue(notes.lines().single{it.startsWith("- [变化 habit-abc，版本 3；")}.contains("来源消息 12，版本 7] 习惯：先听完再建议"))
     }
     @Test fun differentMessageStatesKeepTheirOwnSourceAndReplyNumbers(){
         val unread=action.copy(source=SourceRef("a",31,4),replyId=78,reply="另一条回应",readAt=null)
@@ -86,11 +87,31 @@ class ExperiencePresentationTest {
         val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult=error("No model calls")}
         val text=RolePlanner(client).replyNotes(ExperienceProposal(),view,UserPersona(),now)
         val lines=text.lines()
-        assertTrue(lines.single{it.startsWith("- 回应1：")}.contains("你慢慢说"))
-        assertTrue(lines.single{it.startsWith("- 回应2：")}.contains("另一条回应"))
+        assertTrue(lines.single{it.startsWith("- [回复 56；来源消息 12，版本 7]")}.contains("你慢慢说"))
+        assertTrue(lines.single{it.startsWith("- [回复 78；来源消息 31，版本 4]")}.contains("另一条回应"))
         assertFalse(text.contains("已读"));assertFalse(text.contains("未读"))
-        assertTrue(lines.single{it.startsWith("回应1：")}.contains("消息 12，版本 7；回复 56"))
-        assertTrue(lines.single{it.startsWith("回应2：")}.contains("消息 31，版本 4；回复 78"))
+        assertEquals(1,Regex("引用行动时，来源用消息编号，message 用回复编号").findAll(text).count())
         assertFalse(text.contains("不代表对方读过"))
+    }
+
+    @Test fun inlineReferencesKeepEntityTypesVersionsAndSourcesWithoutVisibleMaterial(){
+        val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult=error("No model calls")}
+        val orphan=SourceRef("a",81,6)
+        val view=context.copy(
+            knownSources=context.knownSources+(81L to orphan),
+            actions=listOf(action.copy(replyId=12)),
+            learning=listOf(context.learning.single().copy(id="12",version=4)),
+            relationRecent=listOf(mapOf("消息" to 12L,"内容" to "说好下次继续聊","未兑现约定" to true)))
+        val before=Gson().toJson(view)
+        val text=RolePlanner(client).replyNotes(ExperienceProposal(),view,UserPersona(),now)
+        val lines=text.lines()
+        assertTrue(lines.single{it.startsWith("- [经历；")}.contains("来源消息 12，版本 7] 那天聊到加班"))
+        assertTrue(lines.single{it.startsWith("- [回复 ")}.startsWith("- [回复 12；来源消息 12，版本 7]"))
+        assertTrue(lines.single{it.startsWith("- [变化 ")}.startsWith("- [变化 12，版本 4；来源消息 12，版本 7]"))
+        assertEquals("- [关系变化；消息 12] 说好下次继续聊（约好了还没兑现）",lines.single{it.startsWith("- [关系变化；")})
+        assertEquals("还能引用的消息编号：消息 12，版本 7；消息 81，版本 6。",lines.single{it.startsWith("还能引用的消息编号：")})
+        assertFalse("经历的来源消息不是记忆 ID",text.contains("[记忆 12]"))
+        assertEquals("不再在编号表重复摘录回应",1,Regex("你慢慢说").findAll(text).count())
+        assertEquals(before,Gson().toJson(view))
     }
 }

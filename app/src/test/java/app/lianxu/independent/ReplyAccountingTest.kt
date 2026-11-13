@@ -75,7 +75,7 @@ class ReplyAccountingTest {
                 val line=ExperiencePresentation.receipt(action.replyId,action.readAt,200000)
                 assertEquals(1,Regex.fromLiteral(line).findAll(text).count())
                 assertTrue(text.contains(action.reply))
-                assertTrue(text.contains("${ExperiencePresentation.reference(action.source)}；回复 ${action.replyId}"))
+                assertTrue(text.lines().any{it.startsWith("- [回复 ${action.replyId}；来源${ExperiencePresentation.reference(action.source)}]")&&action.reply in it})
             }
             assertEquals(1,Regex.fromLiteral(ExperiencePresentation.MESSAGE_STATE_LABEL).findAll(text).count())
             assertFalse(text.contains("；已读"));assertFalse(text.contains("；未读"))

@@ -91,7 +91,7 @@ internal class RolePlanner(client:TextChatClient) {
             聊天记录每条前面的时间（比如「[昨天 22:10]」）和「（隔了 3 天）」是程序加的，只给你参考，回话别照这种格式念出来。
             $accounting
             ${name}直接要你忘掉某件事、更正以前说过的话或别再提醒时，先用 companion_memory_control 去办，再照实际结果回答；没办成就别说办成了，结果程序会另外显示。
-            要翻更早的旧事、解释或弥补时，先用 relation_event_search 按线索查；查到编号再引用，没查到就坦白说不记得，不编编号。笔记末尾「工具引用表」中对应最近关系变化的编号可以直接用。
+            要翻更早的旧事、解释或弥补时，先用 relation_event_search 按线索查；查到编号再引用，没查到就坦白说不记得，不编编号。笔记中最近关系变化旁的消息编号可以直接用。
             ${name}告诉你的事是听来的，不是你亲眼看到的；你的推测只是推测，不知道的就是不知道。虚构和角色扮演里的情节不是现实里发生过的事，但你们一起编故事、你真实回过的话都算真实的交流。别编造自己在线下的生活，也别说自己上过网、用过没给你的工具。
             说到事实，只按${name}这次的原话和还有效的资料来，工具结果也不能编。
             ${name}的心情是${name}的，你的感受是你的：不用跟着${name}的情绪走，也不用每次都说自己有什么感受；先顾好${name}这会儿要你做的事、说过的界限和你能做的范围，再顾你的兴趣、你们一起的打算和心情；不同意也可以，温和地说出来就好。
@@ -116,19 +116,14 @@ internal class RolePlanner(client:TextChatClient) {
      *  relation_event_search when she actually needs to explain, make up for, or revisit something. */
     internal fun replyNotes(facts:ExperienceProposal,view:RoleContext,persona:UserPersona,now:Long):String = buildString {
         val name=persona.addressee()
-        val toolRefs=mutableListOf<String>()
         append("[这一轮的笔记，只给你参考，不是${name}说的话]\n")
-        toolRefs+="${name}这条消息的编号是 ${view.current.turnId}，版本 ${view.current.version}，记账时就用它当来源。"
+        append("${name}这条消息的编号是 ${view.current.turnId}，版本 ${view.current.version}，记账时就用它当来源。材料旁的编号只在调用工具时使用。\n")
         // Earlier numbers she may still cite as evidence: exactly the sources the program will accept
-        // (view.knownSources), each with a short hint. Old appraisal wording stays off the board.
-        val citable=view.knownSources.filterKeys{it!=view.current.turnId}.keys.sorted().map{id->
-            val hint=view.actions.lastOrNull{it.source.turnId==id}?.let{"你回过「${clip(it.reply,30)}」"}
-                ?:view.facts.firstOrNull{it.source.turnId==id}?.let{clip(it.text,30)}
-                ?:view.learning.firstOrNull{it.source.turnId==id}?.let{"你的${learningKinds[it.kind]?:"想法"}「${clip(it.content,30)}」出自这条"}
-                ?:if(view.entries.any{it.source.turnId==id})"上一轮你对这条有过理解" else "之前的消息"
-            "第 $id 条（$hint）"
+        // (view.knownSources), including sources whose material was trimmed. Do not repeat excerpts.
+        val citable=view.knownSources.filterKeys{it!=view.current.turnId}.toSortedMap().values.map{
+            ExperiencePresentation.reference(it)
         }
-        if(citable.isNotEmpty())toolRefs+="还能引用的消息编号：${citable.joinToString("；")}。"
+        if(citable.isNotEmpty())append("还能引用的消息编号：${citable.joinToString("；")}。\n")
         val happened=buildList{
             facts.memory.takeIf{it.isNotBlank()}?.let{add("值得记住的是：${clip(it,200)}")}
             emotions[facts.emotion]?.let{add("${name}看起来${it}")}
@@ -140,40 +135,35 @@ internal class RolePlanner(client:TextChatClient) {
         if(control!=null)append("${name}想让你${control}${facts.requestQuote.takeIf{it.isNotBlank()}?.let{"（原话：「${clip(it,80)}」）"}.orEmpty()}。\n")
         facts.reconsider?.reason?.takeIf{it.isNotBlank()}?.let{append("之后可以回头再聊：${clip(it,120)}。\n")}
         if(view.actions.isNotEmpty()){
-            append("你之前的回应：\n")
-            view.actions.forEachIndexed{i,a->val label="回应${i+1}"
-                append("- $label：你${actions[a.action]?.let{"选择$it，"}.orEmpty()}回了「${clip(a.reply,80)}」\n")
-                toolRefs+="$label：${ExperiencePresentation.reference(a.source)}；回复 ${a.replyId}（引用行动时，来源用消息编号，message 用回复编号）"
+            append("你之前的回应（引用行动时，来源用消息编号，message 用回复编号）：\n")
+            view.actions.forEach{a->
+                append("- [回复 ${a.replyId}；来源${ExperiencePresentation.reference(a.source)}] 你${actions[a.action]?.let{"选择$it，"}.orEmpty()}回了「${clip(a.reply,80)}」\n")
             }
         }
         if(view.learning.isNotEmpty()){
             append("你心里正在形成的看法和习惯：\n")
-            view.learning.forEachIndexed{i,l->val label="想法${i+1}"
-                append("- $label（${learningKinds[l.kind]?:"想法"}）：${clip(l.content,120)}${l.scope.takeIf{it.isNotBlank()}?.let{"（适用：${clip(it,40)}）"}.orEmpty()}，${learningStates[l.state]?:"进展还不明确"}\n")
-                toolRefs+="$label：变化 ${l.id}，版本 ${l.version}；${ExperiencePresentation.reference(l.source)}"
+            view.learning.forEach{l->
+                append("- [变化 ${l.id}，版本 ${l.version}；来源${ExperiencePresentation.reference(l.source)}] ${learningKinds[l.kind]?:"想法"}：${clip(l.content,120)}${l.scope.takeIf{it.isNotBlank()}?.let{"（适用：${clip(it,40)}）"}.orEmpty()}，${learningStates[l.state]?:"进展还不明确"}\n")
             }
         }
         if(view.facts.isNotEmpty()){
             append("你记得的经历：\n")
-            view.facts.forEachIndexed{i,f->val label="经历${i+1}"
-                append("- $label：${clip(f.text,160)}${f.quote.takeIf{it.isNotBlank()}?.let{"（${name}当时说「${clip(it,60)}」）"}.orEmpty()}\n")
-                toolRefs+="$label：${ExperiencePresentation.reference(f.source)}"
+            view.facts.forEach{f->
+                append("- [经历；来源${ExperiencePresentation.reference(f.source)}] ${clip(f.text,160)}${f.quote.takeIf{it.isNotBlank()}?.let{"（${name}当时说「${clip(it,60)}」）"}.orEmpty()}\n")
             }
         }
         if(view.relationRecent.isNotEmpty()){
             append("最近的关系变化：\n")
-            view.relationRecent.forEachIndexed{i,e->
+            view.relationRecent.forEach{e->
                 val marks=buildList{
                     if(e["可解释"]==true)add("还没说开")
                     if(e["可道歉和好"]==true)add("可以道歉和好")
                     if(e["可修复心结"]==true)add("可以弥补心结")
                     if(e["未兑现约定"]==true)add("约好了还没兑现")
                 }
-                append("- 关系变化${i+1}：${e["时间"]?.let{"$it "}.orEmpty()}${e["内容"]?.toString()?.let{clip(it,120)}.orEmpty()}${if(marks.isNotEmpty())"（${marks.joinToString("，")}）" else ""}\n")
-                toolRefs+="关系变化${i+1}：消息 ${e["消息"]}"
+                append("- [关系变化；消息 ${e["消息"]}] ${e["时间"]?.let{"$it "}.orEmpty()}${e["内容"]?.toString()?.let{clip(it,120)}.orEmpty()}${if(marks.isNotEmpty())"（${marks.joinToString("，")}）" else ""}\n")
             }
         }
-        append("${ExperiencePresentation.REFS}\n").append(toolRefs.joinToString("\n"))
     }.trimEnd()
     /** Shared with history planning so a long contract does not trigger repeated under-sized summaries.
      *  Exactly what [prepareReply] adds: the contract joins the opening system message (no new message),

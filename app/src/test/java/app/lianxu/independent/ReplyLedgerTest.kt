@@ -70,8 +70,8 @@ class ReplyLedgerTest {
     @Test fun notesStillListTheOlderNumbersSheMayCite(){
         val text=notes(prepared())
         val line=text.lines().first{it.startsWith("还能引用的消息编号：")}
-        assertTrue("上一轮理解的来源编号要在，不然引用会被判 UNKNOWN_SOURCE","第 5 条" in line)
-        assertFalse("当前消息另有一行，不重复列","第 9 条" in line)
+        assertTrue("上一轮理解的来源编号要在，不然引用会被判 UNKNOWN_SOURCE","消息 5，版本 1" in line)
+        assertFalse("当前消息另有一行，不重复列","消息 9，" in line)
         assertFalse("摘要不带旧评价原文","给个不施压的收尾" in line||"别施压" in line)
     }
 
@@ -85,7 +85,7 @@ class ReplyLedgerTest {
         val system=replySystem()
         assertTrue("更早的旧事要先查工具","relation_event_search" in system)
         assertTrue("查不到就坦诚，不编编号","不编编号" in system)
-        assertTrue("近期变化对应的工具编号可以直接用","「工具引用表」中对应最近关系变化的编号可以直接用" in system)
+        assertTrue("近期变化对应的工具编号可以直接用","最近关系变化旁的消息编号可以直接用" in system)
     }
 
     @Test fun recordGuideStillExplainsSeenSources(){
