@@ -7,6 +7,12 @@ internal data class LocalReleaseNote(val code:Long,val version:String,val title:
 /** Bundled facts about this build and earlier versions. Never polls or pushes. */
 internal object LocalReleaseNotes {
     private val entries=listOf(
+        LocalReleaseNote(60,"1.0.1","恋叙 1.0.1",listOf(
+            "主动联系的时间由模型结合对话安排，程序换算明确的自然时间；新消息会取消旧计划，到时再看最新情况决定发送、推迟或不发。",
+            "取消旧的每日配额、未回复次数和同一来源次数限制，撤下失效频率提案及卡片；保留历史原文、功能开关和重复发送保护。",
+            "只在她最新的一条消息下显示已读或未读；给模型的重复消息状态和无操作提示已精简，必要的来源与版本关联保留。",
+            "操作回执准确区分成功、失败、暂存和部分完成；阅读说明改成自然中文，普通回复笔记编号紧贴对应材料。"
+        ),listOf("Android后台可能延迟，不能保证准点联系。真实模型、真实手机和长期省电/熄屏后台尚未验收。请先备份资料，再覆盖安装；不要卸载存有资料的旧应用。")),
         LocalReleaseNote(59,"1.0.0","恋叙 1.0.0",listOf(
             "回复时可以继续输入并补发，新消息停止旧轮未完成的回复，已经显示的内容保留。修复连续发送重复提交与刷新漏显消息。",
             "提示材料使用自然的时间和间隔，减少程序用语；忘记和更正保留你的原话，并按实际操作结果说明。",
