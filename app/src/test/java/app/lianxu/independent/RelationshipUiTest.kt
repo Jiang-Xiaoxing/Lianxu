@@ -29,11 +29,27 @@ class RelationshipUiTest {
     @Test fun missingQuoteIsOmitted(){assertTrue(RelationshipQuery.knots(state()){null}.isEmpty())}
     @Test fun explainedButUnrepairedKnotStays(){val s=state().copy(explanations=listOf(RelationExplanation(SourceRef("r",2,1),ref,"其他",.7,1)));assertEquals(listOf(ref),RelationshipQuery.knots(s){"原话"})}
     @Test fun releasedDebtIsOmitted(){val s=RelationshipProjector.project(p,listOf(RelationInput(ref,0,0,"关于关系",v=.9),RelationInput(SourceRef("r",2,1),1,0,"关于关系",explains=ref,correction="不介意了",formatVersion=2,releaseKind="真误会")),1);assertTrue(RelationshipQuery.knots(s){"原话"}.isEmpty())}
-    @Test fun lessDirection(){assertEquals("晚星想少主动找你一点",parameterTitle("晚星",p,proposal("silenceDays" to "3","dailyMax" to "1")))}
-    @Test fun moreDirection(){assertEquals("晚星想多主动找你一点",parameterTitle("晚星",p,proposal("silenceDays" to "0.5")))}
-    @Test fun mixedDirection(){assertEquals("晚星想换一种方式找你",parameterTitle("晚星",p,proposal("silenceDays" to "3","dailyMax" to "4")))}
-    @Test fun toneOnly(){assertEquals("晚星想换一种方式找你",parameterTitle("晚星",p,proposal("tone" to "温柔")))}
-    @Test fun plainLanguageAndUnits(){assertEquals(listOf("想你时主动找你：1 天 → 3 天","每天最多主动发：3 条 → 1 条"),parameterLines(p,proposal("silenceDays" to "3","dailyMax" to "1")))}
+    @Test fun retiredFrequencyProposalsHaveNoDisplayLines(){
+        for(key in listOf("silenceDays","resendDays","resendCount","dailyMax"))assertTrue(parameterLines(p,proposal(key to "3")).isEmpty())
+        assertTrue(parameterLines(p,proposal("dailyMax" to "3","tone" to "温柔")).isEmpty())
+    }
+    @Test fun toneOnly(){assertEquals("晚星想换一种方式找你",parameterTitle("晚星"));assertEquals(listOf("主动找你的语气：${p.tone} → 温柔"),parameterLines(p,proposal("tone" to "温柔")))}
+    @Test fun retiredReceiptsStayInHistoryButCannotClaimToBeEffective(){
+        val frequency=ParameterReceipt(ref,p,keys=setOf("dailyMax"));val mixed=frequency.copy(source=ref.copy(turnId=2),keys=setOf("tone","resendCount"))
+        val tone=frequency.copy(source=ref.copy(turnId=3),keys=setOf("tone"));val legacy=frequency.copy(source=ref.copy(turnId=4),keys=null)
+        val h=RelationHistory(changes=listOf(RelationChange(0,p,p.copy(dailyMax=0),"旧",1)),receipts=listOf(frequency,mixed,tone,legacy))
+        val original=Gson().toJson(h);assertEquals(listOf(tone),h.activeParameterReceipts());assertEquals(original,Gson().toJson(h))
+    }
+    @Test fun ambiguousLegacyReceiptCannotBorrowAnEarlierToneChange(){
+        val tone=p.copy(tone="温柔")
+        for(later in listOf(p.copy(dailyMax=0),p.copy(dailyMax=0,tone="轻快"))){
+            val h=RelationHistory(changes=listOf(RelationChange(1,p,tone,"旧",1),RelationChange(2,tone,p,"撤销",2),RelationChange(3,p,later,"后一次",3)),receipts=listOf(ParameterReceipt(ref,p)))
+            val original=Gson().toJson(h);assertTrue(h.activeParameterReceipts().isEmpty());assertEquals(original,Gson().toJson(h))
+        }
+        val clear=RelationHistory(changes=listOf(RelationChange(1,p,tone,"语气",1)),receipts=listOf(ParameterReceipt(ref,p)))
+        assertEquals(clear.receipts,clear.activeParameterReceipts())
+        assertTrue(RelationHistory(receipts=clear.receipts).activeParameterReceipts().isEmpty())
+    }
     @Test fun receiptSurvivesSerialization(){val h=RelationHistory(receipts=listOf(ParameterReceipt(ref,p)));val restored=Gson().fromJson(Gson().toJson(h),RelationHistory::class.java);assertEquals(h,restored);assertFalse(restored.receipts.single().undone)}
     @Test fun reverseAppendsChangeAndCannotRepeat(){val next=p.copy(silenceDays=3.0);val original=RelationChange(1,p,next,"原模板",1);val h=RelationHistory(changes=listOf(original),receipts=listOf(ParameterReceipt(ref,p)));val reversed=h.reverseParameters(ref,next,"原模板",2,3)!!;assertEquals(original,reversed.changes.first());assertEquals(RelationChange(2,next,p,"原模板",3),reversed.changes.last());assertNull(reversed.reverseParameters(ref,p,"原模板",4,5));assertTrue(reversed.receipts.single().undone)}
     @Test fun queriesDoNotChangeScores(){val s=state();val before=s.copy();repeat(3){RelationshipQuery.metrics(s){"原话"};RelationshipQuery.knots(s){"原话"}};assertEquals(before,s);assertEquals(.5-.42*.9*.5,s.trust,1e-15)}

@@ -58,6 +58,9 @@ class ChatLedger(private val store:Store,private val session:String=processSessi
         db.execSQL("UPDATE chat_turns SET state='SUPERSEDED' WHERE friend_id=? AND user_message_id=(SELECT MAX(user_message_id) FROM chat_turns WHERE friend_id=?) AND state IN ('FAILED','CANCELLED','INTERRUPTED')",arrayOf(friendId,friendId))
         val message=db.insertOrThrow("messages",null,ContentValues().apply{put("friend_id",friendId);put("body",input);put("mine",1);put("created",System.currentTimeMillis())})
         db.insertOrThrow("chat_turns",null,ContentValues().apply{put("id",id);put("friend_id",friendId);put("user_message_id",message);put("state",TurnState.PENDING.name);put("attempt",1);put("config_id",configId);put("owner_session",session);put("source_zone",java.time.ZoneId.systemDefault().id)})
+        // Accepting this input and invalidating old plans is one transaction. A Worker
+        // already waiting on its model can no longer commit or requeue its old claim.
+        CompanionRepository.bump(db,friendId)
         ReplyAccountingQueue.enqueue(db,id)
         turn(db,id)!!
     }}

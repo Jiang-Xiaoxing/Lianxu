@@ -6,6 +6,8 @@ import java.time.ZoneId
 /** Model-facing wording only; identifiers, clocks and receipt semantics stay unchanged. */
 internal object ExperiencePresentation {
     const val REFS="[工具引用表，只在调用工具时使用]"
+    const val MESSAGE_STATE_LABEL="现有消息状态"
+    const val READ_STATE_RULE="已读/未读按聊天页显示记录；未回复不等于未读。"
     fun at(time:Long,now:Long,zone:ZoneId=ZoneId.systemDefault()):String =
         ChatTimeLabels.label(time,Instant.ofEpochMilli(now),zone).removeSurrounding("[","]")+
             if(time>now)"（记录时间晚于现在，需核对）"else ""
@@ -13,11 +15,11 @@ internal object ExperiencePresentation {
     fun experience(source:SourceRef,created:Long,text:String,now:Long,zone:ZoneId=ZoneId.systemDefault())=
         "${at(created,now,zone)}记下的经历：\n$text\n$REFS\n这段经历：${reference(source)}"
     fun visibility(readAt:Long?,now:Long,zone:ZoneId=ZoneId.systemDefault())=if(readAt==null)
-        "没有消息出现在聊天页面的记录，是否读过不确定"
-        else "${at(readAt,now,zone)}，消息曾出现在聊天页面；这不代表对方读过、理解或同意，也不能据此判断故意不回应"
+        "未读"
+        else "已读（${at(readAt,now,zone)}）"
     fun receipt(messageId:Long,readAt:Long?,now:Long,zone:ZoneId=ZoneId.systemDefault(),createdAt:Long?=null)=
-        (createdAt?.let{"这条消息发于${at(it,now,zone)}"+(if(it<=now)"，距现在约 ${ProactiveMaterial.ago(now-it)}"else "")+"。"}.orEmpty())+
-            visibility(readAt,now,zone)+"\n$REFS\n这条消息：回复 $messageId"
+        "回复 $messageId：${visibility(readAt,now,zone)}"+
+            createdAt?.let{"；发送于${at(it,now,zone)}"+(if(it<=now)"，距现在约 ${ProactiveMaterial.ago(now-it)}"else "")}.orEmpty()
     fun permission(policy:String)=when(policy){
         "enabled"->"对方允许主动联系"
         "paused_by_user"->"对方已暂停主动联系"

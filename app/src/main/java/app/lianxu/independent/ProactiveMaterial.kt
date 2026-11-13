@@ -32,7 +32,7 @@ internal object ProactiveMaterial {
         else append("[上次聊天] ").append(ChatTimeLabels.label(last.created,at,zone)).append("，距现在约 ").append(ago(now-last.created)).append('\n')
         if(recent.isNotEmpty()){
             append("[最近的聊天，时间是程序加的]\n")
-            recent.indices.forEach{i->val m=recent[i];append(ChatTimeLabels.prefix(recent,i,at,zone)).append(if(m.mine)addressee else "你").append("：").append(clip(m.text)).append('\n')}
+            recent.indices.forEach{i->val m=recent[i];append(ChatTimeLabels.prefix(recent,i,at,zone)).append(if(m.mine)"$addressee（消息 ${m.id}）"else"你（回复 ${m.id}）").append("：").append(clip(m.text)).append('\n')}
         }
         val own=ownReason(o)
         if(!relationship(o)){

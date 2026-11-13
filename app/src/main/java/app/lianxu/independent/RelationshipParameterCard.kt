@@ -8,31 +8,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.google.gson.Gson
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 
-internal fun parameterTitle(name:String,old:RelationParameters,proposal:RelationParameterProposal):String {
-    val before=Gson().toJsonTree(old).asJsonObject
-    val after=Gson().toJsonTree(RelationParameterRules.apply(old,proposal.values)).asJsonObject
-    val signs=proposal.values.keys.filter{it!="tone"}.map{key->
-        val delta=after[key].asDouble-before[key].asDouble
-        (if(key in setOf("silenceDays","resendDays"))-delta else delta).compareTo(0.0)
-    }.filter{it!=0}.toSet()
-    return name+when(signs){setOf(-1)->"想少主动找你一点";setOf(1)->"想多主动找你一点";else->"想换一种方式找你"}
-}
+internal fun parameterTitle(name:String)=name+"想换一种方式找你"
 internal fun parameterLines(old:RelationParameters,proposal:RelationParameterProposal):List<String>{
-    val before=Gson().toJsonTree(old).asJsonObject
-    val after=Gson().toJsonTree(RelationParameterRules.apply(old,proposal.values)).asJsonObject
-    val names=mapOf("silenceDays" to "想你时主动找你","resendDays" to "没回时隔多久再找你","resendCount" to "没回时最多再发","dailyMax" to "每天最多主动发","tone" to "主动找你的语气")
-    return proposal.values.keys.map{key->
-        fun value(j:com.google.gson.JsonObject):String {
-            if(key=="tone")return j[key].asString
-            val n=j[key].asDouble
-            return (if(n==n.toLong().toDouble())n.toLong().toString()else n.toString())+when(key){"silenceDays","resendDays"->" 天";"resendCount"->" 次";else->" 条"}
-        }
-        "${names[key]}：${value(before)} → ${value(after)}"
-    }
+    if(!RelationParameterRules.activeProposal(proposal.values))return emptyList()
+    return listOf("主动找你的语气：${old.tone} → ${RelationParameterRules.apply(old,proposal.values).tone}")
 }
 internal class ParameterCards {
     var proposals by mutableStateOf<List<RelationParameterProposal>>(emptyList())
@@ -50,7 +32,7 @@ internal class ParameterCards {
     return state
 }
 @Composable internal fun RelationshipParameterCard(vm:AppState,friend:Friend,message:Message,state:ParameterCards){
-    val proposal=state.proposals.firstOrNull{it.source?.turnId==message.id}
+    val proposal=state.proposals.firstOrNull{it.source?.turnId==message.id&&RelationParameterRules.activeProposal(it.values)}
     val receipt=state.receipts.lastOrNull{it.source.turnId==message.id}
     val scope=rememberCoroutineScope()
     var busy by remember{mutableStateOf(false)}
@@ -58,7 +40,7 @@ internal class ParameterCards {
     fun act(action:suspend ()->Unit){if(!busy){busy=true;scope.launch{try{action();error=false}catch(e:CancellationException){throw e}catch(_:Exception){error=true}finally{busy=false}}}}
     Column(Modifier.widthIn(max=300.dp),horizontalAlignment=Alignment.End){
         if(proposal!=null)RelationPaper {
-            Text(parameterTitle(friend.name,state.parameters,proposal),style=MaterialTheme.typography.titleSmall)
+            Text(parameterTitle(friend.name),style=MaterialTheme.typography.titleSmall)
             parameterLines(state.parameters,proposal).forEach{line->Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Text(line.substringBefore("："),Modifier.weight(1f),color=Muted);Text(line.substringAfter("："),color=Ink)}}
             Row(Modifier.height(IntrinsicSize.Min),horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 PrimaryAction("就这样",Modifier.weight(1f).fillMaxHeight(),enabled=!busy,onClick={act{vm.companion.confirmRelationshipParameters(friend.id,proposal,true)}})

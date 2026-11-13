@@ -70,10 +70,12 @@ class RelationshipV3AndroidTest {
         try{
             store.addConfigured(Friend("r","合成角色","成年"),RolePrompts(characterDefinition="成年合成人设",relationTemplate="DIRECT"))
             val core=CompanionRepository(store){now};val original=core.relationship("r").parameters
-            val proposal=RelationParameterProposal(null,mapOf("silenceDays" to "3"),"隔三天找你。",now)
+            val proposal=RelationParameterProposal(null,mapOf("tone" to "温柔些"),"说得温柔些。",now)
             assertEquals(original,core.relationship("r").parameters)
             assertTrue(core.confirmRelationshipParameters("r",proposal,false));assertEquals(original,core.relationship("r").parameters)
-            now++;assertTrue(core.confirmRelationshipParameters("r",proposal,true));assertEquals(3.0,core.relationship("r").parameters.silenceDays,0.0)
+            now++;assertTrue(core.confirmRelationshipParameters("r",proposal,true));assertEquals("温柔些",core.relationship("r").parameters.tone)
+            for(key in listOf("silenceDays","resendDays","resendCount","dailyMax"))assertFalse(core.confirmRelationshipParameters("r",proposal.copy(values=mapOf(key to "3")),true))
+            assertEquals(original.copy(tone="温柔些"),core.relationship("r").parameters)
             assertEquals(original.sensitivity,core.relationship("r").parameters.sensitivity,0.0)
             assertFalse(core.confirmRelationshipParameters("r",proposal.copy(values=mapOf("sensitivity" to "0")),true))
         }finally{store.close();context.deleteDatabase(name)}
@@ -110,28 +112,32 @@ class RelationshipV3AndroidTest {
             assertEquals("答应的事没做到",store.messages().single{it.id==real.turnId}.text)
         }finally{store.close();context.deleteDatabase(name)}
     }
-    @Test fun proactiveTemplateTimersDoNotRecordSilenceFeelingsAndReplyStillStopsWaiting():Unit=runBlocking{
+    @Test fun explicitContactDoesNotRecordSilenceFeelingsAndTemplatesCannotSchedule():Unit=runBlocking{
         for(template in listOf(RelationTemplate.DIRECT,RelationTemplate.RESERVED,RelationTemplate.STEADY)){
             val name="relationship-v3-proactive-${System.nanoTime()}.db";val store=Store(context,name);var now=2_000_000_000_000L
             try{
                 store.addConfigured(Friend("r","合成角色","成年"),RolePrompts(characterDefinition="成年合成人设",relationTemplate=template.name,relationStart="FRIENDS"))
                 val core=CompanionRepository(store){now};core.setPolicy("r",true,"test")
-                seed(store,core,now,"普通问候"){RelationInput(it,now,now/day,"普通信息")}
-                core.refreshRelationshipContacts();val queued=core.queued().single();val exact=now-kotlin.math.ln(1-RelationDecay.thetaBase(template.parameters.silenceDays))/RelationDecay.missingRate(.4)*RelationshipProjector.HOUR;assertTrue(queued.notBefore>=exact&&queued.notBefore-exact<=60_000)
+                val source=seed(store,core,now,"普通问候"){RelationInput(it,now,now/day,"普通信息")}
+                core.refreshRelationshipContacts();assertTrue(core.queued().isEmpty())
+                // Explicit model plan fixture; the relationship template no longer chooses its time.
+                val snapshot=core.snapshot("r")
+                store.writableDatabase.execSQL("INSERT INTO companion_opportunities(id,role,source_id,revision,epoch,policy_version,not_before,expires_at,reason,state) VALUES('explicit','r',?,?,?,?,?,?,'合成模型安排','queued')",arrayOf<Any>(source.turnId,source.version,snapshot.epoch,snapshot.policyVersion,now+3600000,Long.MAX_VALUE))
+                val queued=core.queued().single()
                 now=queued.notBefore;val claimed=core.claim(queued.id,"test")!!
                 val message=core.conclude(claimed,"test",OpportunityDecision("send","自然联系","最近怎么样？"),core.snapshot("r")){true}!!
                 now+=day;core.refreshRelationshipContacts()
                 val state=core.relationship("r").state;assertEquals(.5,state.trust,0.0);assertEquals(0.0,state.disappointment,0.0)
                 assertEquals(0.0,state.hurt,0.0);assertEquals(0.0,state.low,0.0)
                 assertTrue(ProcessingRepository(store).read{RelationStorage.read(it,"r").programInputs.isEmpty()})
-                val unseen=core.contactFacts("r");assertTrue(unseen.contains("是否读过不确定"));assertTrue(unseen.contains("回复 $message"));assertTrue(unseen.contains("距现在约 1 天"))
+                val unseen=core.contactFacts("r");assertTrue(unseen.contains("回复 $message：未读"));assertTrue(unseen.contains("距现在约 1 天"))
                 core.markRead("r",message)
-                val appeared=core.contactFacts("r");assertTrue(appeared.contains("消息曾出现在聊天页面"));assertTrue(appeared.contains("不代表对方读过"))
+                val appeared=core.contactFacts("r");assertTrue(appeared.contains("回复 $message：已读"));assertFalse(appeared.contains("不代表对方读过"))
                 for(adaptive in listOf(false,true)){
                     ProcessingRepository(store).saveMemoryRules(MemoryRules(adaptiveContext=adaptive))
                     val snapshot=core.snapshot("r")
                     val reply=if(adaptive)snapshot.references.joinToString("\n"){it.text}else snapshot.replyPrompt
-                    assertTrue(reply.contains(appeared));assertTrue(snapshot.proactivePrompt.contains(appeared))
+                    assertTrue(reply.contains(appeared));assertFalse(snapshot.proactivePrompt.contains(appeared))
                 }
                 assertEquals(state,core.relationship("r").state)
                 now++;val missingBefore=core.relationship("r").state.missing;seed(store,core,now,"我回来啦"){RelationInput(it,now,now/day,"普通信息")}

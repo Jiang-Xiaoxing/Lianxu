@@ -176,7 +176,7 @@ internal object RoleUnderstandingContract {
         val used=use?.first.orEmpty();val considered=use?.second.orEmpty()
         val future=part("future"){if(!root.has("future"))fail("MISSING_future");root.get("future")?.takeUnless{it.isJsonNull}?.asJsonObject?.let{f->
             val kind=f.text("kind");if(kind !in setOf("interest_share","shared_continuation","follow_up","actual_result"))fail("FUTURE_KIND")
-            val time=Reconsideration(f.text("reason"),f.number("notBefore"))
+            val time=Reconsideration(f.text("reason"),ContactTime.field(f,"when","notBefore",now))
             if(time.notBefore<now)fail("FUTURE_TIME")
             RoleFuture(kind,time,evidence(f))
         }}

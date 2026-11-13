@@ -29,5 +29,10 @@ internal object JointControl {
         }
         return CompanionContracts.experience(j.toString(),input,now,allowed+previous?.targets.orEmpty()).copy(controlChecked=true)
     }
-    fun receipt(p:ExperienceProposal):Map<String,Any> = mapOf("success" to true,"action" to p.control,"targets" to p.targets,"status" to "applied","note" to "程序已执行；按当前人设自然回应，不引用停用内容。原聊天仍保留供用户查看。")
+    fun receipt(p:ExperienceProposal):Map<String,Any> = mapOf("success" to true,"action" to p.control,"targets" to p.targets,"status" to "applied","note" to when(p.control){
+        "forget"->"指定经历和相关判断已经停止使用，相关回访也已取消。原聊天仍保留，没有永久删除；不要再引用已停用的内容。"
+        "correct"->"指定的旧来源和相关判断已经停用，相关回访也已取消，原聊天仍保留。这次操作没有把更正后的新内容写成记忆，是否记住要看后续实际写入结果。"
+        "stop_reminding"->"尚未发送的相关回访已经取消。经历记录和原聊天仍保留，这次没有忘掉这些内容。"
+        else->"这项操作返回了完成结果；具体操作和涉及的记录以回执中的 action 和 targets 为准，不据此推断其他内容也已修改。"
+    })
 }

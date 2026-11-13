@@ -97,7 +97,7 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
         // The reply round uses this body without the tone line; the control lookup keeps the full body.
         // Reply and proactive contact share the same state/evidence, without a prescribed tone.
         val contactFacts=contactFacts(db,role,materialNow)
-        fun legacy(includeTone:Boolean)=buildString{
+        fun legacy(includeTone:Boolean,includeMessageState:Boolean=true)=buildString{
             append("[${RelationshipPrompt.LABEL}]\n").append(relation.modelMaterial).append("\n")
             if(includeTone)append(relation.template.prompt(relation.parameters)).append("\n")
             if(selected.isNotEmpty())append("[以前记下的经历，只在有关时参考；对方更正或要求忘掉时，以有效记录为准]\n")
@@ -105,8 +105,8 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
             if(latest!=null)append("${ExperiencePresentation.at(latest.second,materialNow)}，当时观察到对方看起来${ExperiencePresentation.emotion(latest.third.first.emotion)}；这是过去的观察，不能断言现在仍然如此。\n${ExperiencePresentation.REFS}\n这次心情观察：${ExperiencePresentation.reference(latest.first)}\n")
             append("用户表达记录：${support.size}条明确感谢；${boundary}条明确边界。这不是角色感受、亲密分或信任分；不能靠计数替代角色评价。未回复不扣信任，不能威胁或惩罚。\n")
             if(!repo.memoryRules(db).first.adaptiveContext)append(roleState.prompt(materialNow)).append('\n')
-            append("${ExperiencePresentation.permission(s.third)}；记下的时间只是再次考虑的机会，不保证提醒或送达。消息出现在聊天页面不等于对方读过、理解或同意，没回复也不能说明故意不回应。")
-            append('\n').append(contactFacts)
+            append("${ExperiencePresentation.permission(s.third)}；记下的时间只是再次考虑的机会，不保证提醒或送达。${ExperiencePresentation.READ_STATE_RULE}")
+            if(includeMessageState)append('\n').append(contactFacts)
         }
         val legacyPrompt=legacy(true)
         val replyPrompt=legacy(false)
@@ -121,15 +121,15 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
         val stateView=if(adaptive)AdaptiveContext.roleView(roleState,query,viewBudget/2,semantic)else roleState
         val contextRefs=buildList{
             add(PromptReference(RelationshipPrompt.LABEL,relation.modelMaterial,true));add(PromptReference(CompanionPrompt.TONE_LABEL,relation.template.prompt(relation.parameters),true))
-            add(PromptReference("当前权限与交流边界","${ExperiencePresentation.permission(s.third)}；记下的时间只是再次考虑的机会，不保证提醒或送达。消息出现在聊天页面不等于对方读过、理解或同意，也不能据此判断故意不回应；未回复不扣信任，不能威胁或惩罚。",true))
-            if(contactFacts.isNotBlank())add(PromptReference("现有消息状态",contactFacts,true))
+            add(PromptReference("当前权限与交流边界","${ExperiencePresentation.permission(s.third)}；记下的时间只是再次考虑的机会，不保证提醒或送达。${ExperiencePresentation.READ_STATE_RULE}未回复不扣信任，不能威胁或惩罚。",true))
+            if(contactFacts.isNotBlank())add(PromptReference(ExperiencePresentation.MESSAGE_STATE_LABEL,contactFacts,true))
             add(PromptReference("本轮可用的角色状态","下面是过去的理解，以及仍有效的看法和习惯；没有提到的事不代表从未发生。\n"+stateView.prompt(materialNow),priority=1.1))
             facts.forEach{(ref,created,p)->add(PromptReference("${ExperiencePresentation.at(created,materialNow)}记下的经历",p.first.memory+"\n${ExperiencePresentation.REFS}\n这段经历：${ExperiencePresentation.reference(ref)}",mandatory=p.first.relationship=="boundary",memoryId="experience:${ref.turnId}@${ref.version}",related=true,sources=setOf(ref),priority=maxOf(semantic[ref]?:0.0,MemoryRecall.relevance(query,p.first.memory))))}
         }
         val prompt=if(adaptive)AdaptiveContext.references(query,contextRefs,viewBudget).joinToString("\n\n"){it.label+":\n"+it.text}else legacyPrompt
         // Same completed state as ordinary chat; the model interprets it alongside recent dialogue.
         val proactivePrompt=(if(adaptive)AdaptiveContext.references(query,proactiveReferences(contextRefs),viewBudget).joinToString("\n\n"){it.label+":\n"+it.text}
-            else replyPrompt)
+            else legacy(false,includeMessageState=false))
         val persona=store.persona(db)
         val prompts=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(RolePromptStore.key(role))).use{if(it.moveToFirst())RolePromptStore.decode(it.getString(0))else RolePrompts()}
         val profile=CompanionPrompt.profile(repo.friend(db,role),prompts,persona)
@@ -161,7 +161,7 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
         require(prior?.parameterProposal==null||request.parameters==null||prior.parameterProposal.values==request.parameters.values){"parameter_proposal_already_applied"}
         val flow=prior?.understanding?.let{old->if(future==null)old else old.copy(future=future,dependencies=(old.dependencies+future.evidence).distinct())}?:request.flow
         val p=(prior?:ExperienceProposal(claimKind="none")).copy(understanding=flow,reconsider=flow?.future?.timing,
-            timingReferenceAt=prior?.timingReferenceAt?:at,parameterProposal=prior?.parameterProposal?:request.parameters)
+            timingReferenceAt=if(prior?.understanding?.future!=null)prior.timingReferenceAt?:at else at,parameterProposal=prior?.parameterProposal?:request.parameters)
         check(saveProposal(db,turn,revision,p,expected,true))
         if(future!=null){
             val stored=db.rawQuery("SELECT proposal FROM companion_sources WHERE role=? AND source_id=? AND revision=?",arrayOf(source.characterId,source.turnId.toString(),source.version.toString())).use{check(it.moveToFirst());gson.fromJson(it.getString(0),ExperienceProposal::class.java)}
@@ -200,7 +200,7 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
             }}
         }
         val proposal=proposal.copy(understanding=flow,reconsider=if(proposal.understanding!=null)flow?.future?.timing else proposal.reconsider,
-            relationInput=relation?.copy(sourceHash=RelationshipBackup.hash(input)),parameterProposal=proposal.parameterProposal?.takeIf{it.source==source&&it.values.keys.all{key->key in RelationParameterRules.modelAllowed}},relationAttempted=proposal.relationAttempted||proposal.relationInput!=null,recordIssues=recordIssues.distinct(),relationIssues=relationIssues.distinct())
+            relationInput=relation?.copy(sourceHash=RelationshipBackup.hash(input)),parameterProposal=proposal.parameterProposal?.takeIf{it.source==source&&RelationParameterRules.activeProposal(it.values)},relationAttempted=proposal.relationAttempted||proposal.relationInput!=null,recordIssues=recordIssues.distinct(),relationIssues=relationIssues.distinct())
         val previous=if(old)db.rawQuery("SELECT proposal,committed FROM companion_sources WHERE role=? AND source_id=? AND revision=?",arrayOf(turn.friendId,turn.userMessageId.toString(),revision.toString())).use{it.moveToFirst();gson.fromJson(it.getString(0),ExperienceProposal::class.java) to it.getInt(1)}else null
         val controlFacts=previous?.first?.let{saved->saved.controlChecked&&saved.control in setOf("correct","stop_reminding")&&proposal.controlChecked&&proposal.control==saved.control&&proposal.targets==saved.targets&&proposal.controlQuote==saved.controlQuote&&proposal.requestQuote==saved.requestQuote}==true
         try {
@@ -338,21 +338,12 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
     }
     private fun opportunities(db:SQLiteDatabase,where:String,args:Array<String>)=db.rawQuery("SELECT id,role,source_id,revision,epoch,policy_version,not_before,expires_at,reason,state,attempt FROM companion_opportunities WHERE $where",args).use{c->buildList{while(c.moveToNext())add(CompanionOpportunity(c.getString(0),c.getString(1),c.getLong(2),c.getLong(3),c.getLong(4),c.getLong(5),c.getLong(6),c.getLong(7),c.getString(8),c.getString(9),c.getInt(10)))}}
     suspend fun queued()=repo.read{opportunities(it,"state='queued'",emptyArray())}
-    /** Transactional cap is checked both before model IO and immediately before sending. */
+    /** Source validity is checked before model IO and again before sending; no contact quota. */
     private fun contactAllowed(db:SQLiteDatabase,o:CompanionOpportunity):ContactPermission {
-        val (relation,forecast)=relationshipForecast(db,o.role)
-        val sent=relationshipSent(db,o.role).filterNot{m->db.rawQuery("SELECT 1 FROM companion_receipts WHERE message_id=? AND opportunity_id=?",arrayOf(m.source.turnId.toString(),o.id)).use{it.moveToFirst()}}
-        val midnight=relationshipDayStart(now())
-        if(o.id.startsWith("relationship:")){
-            val latest=db.rawQuery("SELECT MAX(user_message_id) FROM chat_turns WHERE friend_id=?",arrayOf(o.role)).use{it.moveToFirst();it.getLong(0)}
-            if(latest!=o.source)return ContactPermission.Denied
-        }else{
-            if(db.rawQuery("SELECT 1 FROM companion_receipts r JOIN companion_opportunities old ON old.id=r.opportunity_id WHERE r.role=? AND old.source_id=? AND old.id<>? LIMIT 1",arrayOf(o.role,o.source.toString(),o.id)).use{it.moveToFirst()})return ContactPermission.Denied
-            if(!relation.parameters.proactive&&relation.inputs.any{it.source.turnId==o.source&&((it.v?:0.0)>0||(it.b?:0.0)>0)})return ContactPermission.Denied
-        }
-        val dailyMax=relation.parameters.dailyMax.coerceIn(0,5)
-        return ContactPermission.evaluate(o,now(),dailyMax,sent.count{it.at>=midnight}>=dailyMax,midnight){
-            RelationshipProactive.next(relation.parameters,relation.state.lastContact,sent,now(),midnight,forecast)}
+        if(o.id.startsWith("relationship:"))return ContactPermission.Denied
+        val latest=db.rawQuery("SELECT MAX(user_message_id) FROM chat_turns WHERE friend_id=?",arrayOf(o.role)).use{it.moveToFirst();it.getLong(0)}
+        if(latest!=o.source)return ContactPermission.Denied
+        return ContactPermission.Allowed
     }
     private fun permission(db:SQLiteDatabase,o:CompanionOpportunity):ContactPermission {
         val s=state(db,o.role)
@@ -360,13 +351,11 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
         return contactAllowed(db,o)
     }
     private fun permitted(db:SQLiteDatabase,o:CompanionOpportunity)=permission(db,o)==ContactPermission.Allowed
-    /** Persist a temporary timing failure and fence any old worker attempt. */
+    /** Fence any old worker attempt when permission or source validity has changed. */
     private fun settlePermission(db:SQLiteDatabase,o:CompanionOpportunity):Boolean {
         val result=if(hasReceipt(db,o.id))ContactPermission.Denied else permission(db,o)
         if(result==ContactPermission.Allowed)return true
-        val next=(result as? ContactPermission.Deferred)?.at
-        db.execSQL("UPDATE companion_opportunities SET state=?,not_before=?,attempt=attempt+1,owner='' WHERE id=?",
-            arrayOf<Any>(if(next!=null)"queued" else "cancelled",next?:o.notBefore,o.id))
+        db.execSQL("UPDATE companion_opportunities SET state='cancelled',attempt=attempt+1,owner='' WHERE id=?",arrayOf<Any>(o.id))
         return false
     }
     private fun pending(db:SQLiteDatabase,role:String)=db.rawQuery("SELECT 1 FROM chat_turns WHERE friend_id=? AND state='PENDING'",arrayOf(role)).use{it.moveToFirst()}
@@ -409,6 +398,15 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
         s.sources.forEach{r->db.execSQL("INSERT OR IGNORE INTO companion_uses(role,turn_source,source_id,revision) VALUES(?,?,?,?)",arrayOf<Any>(o.role,message,r.turnId,r.version))}
         db.insertOrThrow("companion_receipts",null,ContentValues().apply{put("message_id",message);put("role",o.role);put("opportunity_id",o.id);put("delivery","ready")})
         db.insertOrThrow("companion_action_learning",null,ContentValues().apply{put("message_id",message);put("role",o.role);put("considered",ProactiveLearningUse.encode(d.consideredLearningIds));put("used",ProactiveLearningUse.encode(d.usedLearningIds));put("judgment",d.judgmentKind)})
+        // A new model-chosen opportunity, not a retry of this already-sent message.
+        // Receipt and successor commit together, so stale/repeated workers cannot create either twice.
+        d.nextAt?.let{next->
+            db.insertOrThrow("companion_opportunities",null,ContentValues().apply{
+                put("id","contact:$message");put("role",o.role);put("source_id",o.source);put("revision",o.revision)
+                put("epoch",o.epoch);put("policy_version",o.policyVersion);put("not_before",next);put("expires_at",0L)
+                put("reason",d.reason);put("state","queued")
+            })
+        }
         relationship(db,o.role)
         message
     }
@@ -454,4 +452,4 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
     suspend fun delivery(id:Long,value:String,observed:Boolean=false)=repo.tx{db->db.update("companion_receipts",ContentValues().apply{put("delivery",value);if(value=="requested")put("requested_at",now());if(observed)put("observed_at",now())},"message_id=? AND delivery='claimed'",arrayOf(id.toString()))}
 }
 internal const val RELATION_SUMMARY_LABEL="当前关系小结"
-internal fun proactiveReferences(values:List<PromptReference>)=values.filterNot{it.label==RELATION_SUMMARY_LABEL||it.label==CompanionPrompt.TONE_LABEL}
+internal fun proactiveReferences(values:List<PromptReference>)=values.filterNot{it.label==RELATION_SUMMARY_LABEL||it.label==CompanionPrompt.TONE_LABEL||it.label==ExperiencePresentation.MESSAGE_STATE_LABEL}

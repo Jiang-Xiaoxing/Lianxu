@@ -32,15 +32,23 @@ class ForgetReplyAndroidTest {
         val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest)=reply(request)}
         return ConversationRunner(scope,store,vault,client,repo,MemoryEngine(scope,repo,ModelAccess(vault),client,{}),{},{})
     }
-    private fun forget(id:Long=target)=TextChatResult.Success("",listOf(ChatToolCall("forget",JointControl.NAME,
-        JSONObject().put("action","forget").put("quote","请忘记我喜欢紫色风筝这件事").put("targets",org.json.JSONArray().put(id)).put("authorization","current_direct_request").toString())))
+    private fun control(action:String="forget",id:Long=target,quote:String="请忘记我喜欢紫色风筝这件事")=TextChatResult.Success("",listOf(ChatToolCall(action,JointControl.NAME,
+        JSONObject().put("action",action).put("quote",quote).put("targets",org.json.JSONArray().put(id)).put("authorization","current_direct_request").toString())))
+    private fun forget(id:Long=target)=control(id=id)
     private fun result(request:TextChatRequest,name:String)=request.messages.lastOrNull{it.role=="tool"&&it.name==name}?.let{JSONObject(it.content)}
     private fun outcome(request:TextChatRequest,success:Boolean):String {
         val system=request.messages.filter{it.role=="system"}.joinToString("\n"){it.content}
-        assertEquals(1,Regex.fromLiteral(ControlPresentation.LABEL).findAll(system).count())
-        assertEquals(!success,system.contains(ControlPresentation.NOT_COMPLETED))
+        assertEquals(if(success)1 else 0,Regex.fromLiteral(ControlPresentation.LABEL).findAll(system).count())
+        assertFalse(system.contains(ControlPresentation.NOT_COMPLETED))
         assertFalse(system.contains("本轮已执行工具回执"));assertFalse(system.contains("\"status\":\"applied\""))
         return system
+    }
+    @Test fun ordinaryReplyHasNoControlReferenceOrCapsule()=runBlocking {
+        val words="今天想聊聊散步的事。";var calls=0
+        val r=runner{request->calls++;assertEquals(words,request.latestUserText());outcome(request,false);assertNull(result(request,JointControl.NAME));TextChatResult.Success("好，想去哪里走走？")}
+        assertTrue(r.send("a",words){});val t=finished(r)
+        assertEquals(TurnState.COMPLETED,t.state);assertEquals(1,calls);assertTrue(t.toolActivities.isEmpty())
+        assertEquals(words,store.messages().single{it.id==t.userMessageId}.text)
     }
     private suspend fun finished(r:ConversationRunner,attempt:Int=1)=withTimeout(10000){
         while(true){val t=ChatLedger(store).all().last();if(t.userMessageId!=target&&t.attempt==attempt&&t.state!=TurnState.PENDING&&"a" !in r.sending)return@withTimeout t;delay(10)}
@@ -53,7 +61,7 @@ class ForgetReplyAndroidTest {
             assertFalse(request.messages.any{"用户已明确要求停止使用指定经历；操作已在手机完成，只确认结果。" in it.content})
             when(calls){
                 1->{outcome(request,false);forget()}
-                2->{outcome(request,true);assertEquals(true,result(request,JointControl.NAME)!!.getBoolean("success"));TextChatResult.Success("",listOf(ChatToolCall("rewrite","agent_memory_update","""{"op":"add","category":"STATE_FACT","about":"USER","content":"我喜欢紫色风筝","evidence":["S1"]}""")))}
+                2->{outcome(request,true);assertEquals(true,result(request,JointControl.NAME)!!.getBoolean("success"));assertTrue(result(request,JointControl.NAME)!!.getString("note").contains("没有永久删除"));TextChatResult.Success("",listOf(ChatToolCall("rewrite","agent_memory_update","""{"op":"add","category":"STATE_FACT","about":"USER","content":"我喜欢紫色风筝","evidence":["S1"]}""")))}
                 else->{assertEquals(false,result(request,"agent_memory_update")!!.getBoolean("success"));assertEquals("SOURCE_CHANGED",result(request,"agent_memory_update")!!.getString("error"));TextChatResult.Success("好，我们聊今天的天气。")}
             }
         }
@@ -71,6 +79,7 @@ class ForgetReplyAndroidTest {
         val r=runner{request->calls++;assertEquals(input,request.latestUserText())
             if(calls==1)forget(999999)else{
                 assertEquals(false,result(request,JointControl.NAME)!!.getBoolean("success"))
+                assertTrue(result(request,JointControl.NAME)!!.getString("detail").isNotBlank())
                 outcome(request,false)
                 TextChatResult.Success("还没找到那条记录，这次没有忘记操作。")
             }
@@ -79,6 +88,33 @@ class ForgetReplyAndroidTest {
         assertEquals(TurnState.COMPLETED,t.state);assertEquals(2,calls)
         assertEquals("failed",t.toolActivities.single().state)
         assertTrue(repo.memories("a").single().valid);assertEquals(oldText,core.experiences("a").single().text)
+    }
+    @Test fun actualCorrectionKeepsSuccessReceiptOriginalWordsAndCapsule()=runBlocking {
+        val words="更正之前那件事，我现在不喜欢紫色风筝了。";var calls=0
+        val r=runner{request->calls++;assertEquals(words,request.latestUserText())
+            if(calls==1){outcome(request,false);control("correct",quote=words)}else{
+                assertTrue(outcome(request,true).contains("以实际写入结果为准"))
+                val receipt=result(request,JointControl.NAME)!!;assertTrue(receipt.getBoolean("success"));assertEquals("correct",receipt.getString("action"))
+                assertTrue(receipt.getString("note").contains("没有把更正后的新内容写成记忆"))
+                TextChatResult.Success("好，之前那条不再作为依据。")
+            }
+        }
+        assertTrue(r.send("a",words){});val t=finished(r)
+        assertEquals(TurnState.COMPLETED,t.state);assertEquals(2,calls);assertEquals("success",t.toolActivities.single().state)
+        assertEquals(words,store.messages().single{it.id==t.userMessageId}.text);assertFalse(repo.memories("a").single().valid)
+    }
+    @Test fun rejectedCorrectionKeepsFailureReceiptOriginalWordsAndCapsule()=runBlocking {
+        val words="更正之前那件事，我现在不喜欢紫色风筝了。";var calls=0
+        val r=runner{request->calls++;assertEquals(words,request.latestUserText())
+            if(calls==1){outcome(request,false);control("correct",999999,words)}else{
+                outcome(request,false);val receipt=result(request,JointControl.NAME)!!
+                assertFalse(receipt.getBoolean("success"));assertTrue(receipt.getString("detail").isNotBlank())
+                TextChatResult.Success("还没找到那条记录，这次没有更正。")
+            }
+        }
+        assertTrue(r.send("a",words){});val t=finished(r)
+        assertEquals(TurnState.COMPLETED,t.state);assertEquals(2,calls);assertEquals("failed",t.toolActivities.single().state)
+        assertEquals(words,store.messages().single{it.id==t.userMessageId}.text);assertTrue(repo.memories("a").single().valid)
     }
     @Test fun retryReadsOriginalAndReusesSuccessEvenWhenModelCallsAgain()=runBlocking {
         var calls=0;var retry=false

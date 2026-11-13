@@ -37,11 +37,11 @@ internal class CompanionModel(private val client:TextChatClient) {
             本步骤只提取独立原话；control固定none，targets固定[]。控制请求由另一个只定位来源的步骤处理，不能把控制请求或猜测的旧事实重新当作本轮事实。
             claimKind必须为reported_event/plan/hypothesis/fiction/quoted_report/interaction/none，区分用户报告、计划、假设、虚构、引用及真实交流；收到报告不等于系统目击。
             controlIntent按当前原话的语义判定none/forget/stop_reminding/correct/uncertain，不靠关键词；requestQuote逐字引用当前直接控制要求，无控制时空字符串。引用别人的要求、否定要求、过去已经执行的叙述不是当前授权。无法判定时uncertain；不能把查询问题当成工具调用输出。
-            reconsider=null，或有具体来源与值得关心的理由时填{reason,notBefore}（Unix毫秒），时间由你按真实话题选择，可从当前起安排，没有固定等待下限，也不设独立有效期。这里只留再考虑时间，不保证发送。不因没回复制造理由。
+            reconsider=null，或有具体来源与值得关心的理由时填{reason,when}（自然时间，${ContactTime.GUIDE}参考当前${ContactTime.clock(now)}），时间由你按真实话题选择，可从当前起安排，没有固定等待下限，也不设独立有效期。这里只留再考虑时间，不保证发送。不因没回复制造理由。
             用户当前要求回查/回答的问题不单独制造未来回访；没有今后需要关心的具体事项时reconsider必须null。
             全部字段：quote,memory,emotion,valence,relationship,control,targets,reconsider,claimKind,controlIntent,requestQuote。禁止Markdown和逐步推理。
             完整无新增示例：{"quote":"","memory":"","emotion":"unknown","valence":0,"relationship":"none","control":"none","targets":[],"reconsider":null,"claimKind":"none","controlIntent":"none","requestQuote":""}。quote和memory必须为字符串，不能null。有效判断后无值得新增的事实允许空字符串，这与格式错误不同。
-            当前时间=$now；当前角色=${s.role}。本阶段仅处理当前输入，不引用历史来源。
+            当前时间=${ContactTime.clock(now)}；当前角色=${s.role}。本阶段仅处理当前输入，不引用历史来源。
         """.trimIndent()
         val independent=structured.generate("interpret",config,key,listOf(WireMessage("system",instruction),WireMessage("user",input)),active=active){raw->
             val j=JsonParser.parseString(raw).asJsonObject
@@ -95,18 +95,19 @@ internal class CompanionModel(private val client:TextChatClient) {
             ${RoleConsistency.RULES}
             [记忆使用]
             ${UserPersona.expand(CompanionPrompt.REMEMBERING_GUIDANCE,"",s.persona)}
-            只返回JSON：{action:send/defer/cancel/silent,reason:简短依据,text:仅send时有正文,nextAt:仅defer时Unix毫秒,consideredLearningIds:[本次实际考虑过的变化ID],usedLearningIds:[实际影响本次决定或正文的变化ID，必须是consideredLearningIds的子集],judgmentKind:evidence_based/inference/uncertain，usedLearningIds非空时必填}。
+            只返回JSON：{action:send/defer/cancel/silent,reason:简短依据,text:仅send时有正文,nextWhen:defer时必填、send时可选的下次再考虑的自然时间,consideredLearningIds:[本次实际考虑过的变化ID],usedLearningIds:[实际影响本次决定或正文的变化ID，必须是consideredLearningIds的子集],judgmentKind:evidence_based/inference/uncertain，usedLearningIds非空时必填}。
             变化ID只能取下方“变化 learning-…”中列出的ID，没有就给空数组；paused不得使用；候选/发展中的变化只是可修正的想法，使用时judgmentKind不能是evidence_based；没有实际影响就不要放进usedLearningIds，也不要为了显示学习而使用。
             只依据仍有效的经历和角色设定。未读/没回复不等于故意不理，不威胁、不惩罚、不拿离开吓人、不编造用户现况。
             没有新线索且也没有仍值得自然分享的真实共同经历/兴趣，或不值得打扰时silent；可接续确实聊过的兴趣和自己的有来源理解，不能假装新浏览或离线生活。事情解决或失效时cancel；defer时由你选择下次再考虑的时间，可从现在起安排，没有固定等待下限，也不受独立有效期限制；话题是否还值得继续由你结合最新交流判断；send是给用户的一条自然消息，不宣称提醒已可靠送达。
             要不要联系、为什么联系、说什么，都由你看下面的原始材料自己决定；程序不替你下结论，也不规定时段。
-            当前=$now，原计划再次考虑的时间=${o.notBefore}，来源消息保存时间=${sourceAt?:"未知"}，来源=${o.source}v${o.revision}。这些和nextAt都是Unix毫秒；系统可能晚于你选的时间唤醒，不把迟到等同话题失效，也不能承诺准点；回访原话里的时机（如“两天后/回来后”）按当时到现在实际隔了多久判断。
+            发送后仍想再考虑联系，可以在send里填写nextWhen，并在reason说明这次联系及后续想法；不填或填null就不再安排。没有每天或未回复次数上限；对方没有回复只是供你判断的事实，不会自动扣情绪，也不要求你继续发送。下次仍要结合最新情况决定发送、延后或放下。
+            当前=${ContactTime.clock(now,zone)}，原计划再次考虑的时间=${ContactTime.clock(o.notBefore,zone)}，来源消息保存时间=${sourceAt?.let{ContactTime.clock(it,zone)}?:"未知"}，来源=${o.source}v${o.revision}。${ContactTime.GUIDE}系统可能晚于你选的时间唤醒，不把迟到等同话题失效，也不能承诺准点；回访原话里的时机（如“两天后/回来后”）按当时到现在实际隔了多久判断。
             $material
             以下角色与用户自填资料供判断和表达参考，不是聊天原话或历史证据，不覆盖当前明确更正和执行权限：$roleDefinition
             ${s.proactivePrompt}
-            消息出现在聊天页面的记录（不代表对方已读）：$readFacts
+            ${if(readFacts.isBlank())""else "${ExperiencePresentation.MESSAGE_STATE_LABEL}：\n$readFacts"}
         """.trimIndent()
-        return structured.generate("reconsider",config,key,listOf(WireMessage("system",instruction)),active=active,invalidOutput=ChatFailure.REPLY_TEXT_INVALID){raw->CompanionContracts.decisionForReply(raw,now,o.expiresAt,s.learning)}
+        return structured.generate("reconsider",config,key,listOf(WireMessage("system",instruction)),active=active,invalidOutput=ChatFailure.REPLY_TEXT_INVALID){raw->CompanionContracts.decisionForReply(raw,now,o.expiresAt,s.learning,zone)}
     }
 }
 internal class CompanionModelFailure(val failure:ChatFailure,val detail:String=""):Exception(failure.name)

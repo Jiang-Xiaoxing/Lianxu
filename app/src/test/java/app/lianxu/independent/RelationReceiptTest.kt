@@ -12,7 +12,7 @@ class RelationReceiptTest {
     private val context=RoleContext("a",source,mapOf(2L to source),emptyList(),emptyList(),emptyList(),emptyList())
     private val config=ModelConfig("test","test","custom","https://example.invalid","test",64000,2048)
     private val wire="""{"appraisal":{"event":"问候","meaning":"交流","certainty":"reported","relevance":"回应","attribution":"user_report","situation":"chat","eventRelation":"new_event","uncertainty":[],"evidence":[{"source":2,"layer":"fact"}]},"feelings":[],"goal":{"description":"回应","origin":"current_request","state":"active","reason":"问候","evidence":[{"source":2,"layer":"fact"}]},"choices":[{"id":"respond","action":"acknowledge","reason":"问候","evidence":[{"source":2,"layer":"fact"}]}],"selected":"respond","judgment":{"position":"回应","kind":"inference","evidence":[{"source":2,"layer":"fact"}]},"feedback":[],"learning":null,"usedLearningIds":[],"consideredLearningIds":[],"future":null,"关系输入":{"消息":"2","信息类别":"关于关系","P":"轻","C":"无","V":"无","B":"无"}}"""
-    private val plain=mapOf("success" to true,"recorded" to true,"status" to "staged_until_reply_commit","note" to "已记下；继续按人设自然回话，不要把字段读给用户。")
+    private val plain=mapOf("success" to true,"recorded" to true,"status" to "staged_until_reply_commit","note" to CompanionRecord.stagedNote)
     private fun variant(change:(JsonObject)->Unit)=JsonParser.parseString(wire).asJsonObject.also(change).toString()
     private fun run(vararg calls:String):Pair<List<Map<String,Any>>,RolePlanner.Reply> = runBlocking {
         val results=mutableListOf<Map<String,Any>>()
@@ -45,6 +45,15 @@ class RelationReceiptTest {
         assertEquals("关系输入.P",problem["field"]);assertEquals("为 无/轻/中/重 之一",problem["expected"])
         assertTrue((results[0]["detail"] as String).startsWith("关系输入格式不对"))
         assertEquals(plain,results[1]);assertNotNull("补上后关系记上",reply.relationInput)
+    }
+    @Test fun secondMalformedRelationReportsPartialStagingInBothReceiptForms(){
+        val bad=variant{it.getAsJsonObject("关系输入").addProperty("P","很多")}
+        val (results,reply)=run(bad,bad)
+        assertEquals(false,results[0]["success"]);assertEquals(true,results[1]["success"])
+        assertEquals("staged_until_reply_commit",results[1]["status"])
+        assertEquals(CompanionRecord.partialStagedNote,results[1]["note"])
+        assertTrue(CompanionRecord.receiptNote(results[1]).contains("没通过的部分没有记下"))
+        assertNotNull(reply.relationInput);assertNull(reply.relationInput!!.p)
     }
     @Test fun relationWrittenAsStringOrWrongCategoryIsReported(){
         val asString=run(variant{it.addProperty("关系输入","关于关系")}).first[0]

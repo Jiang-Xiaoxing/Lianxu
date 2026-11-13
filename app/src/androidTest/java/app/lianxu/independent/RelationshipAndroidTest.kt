@@ -120,9 +120,9 @@ class RelationshipAndroidTest {
             core.changeRelationshipTemplate("r",RelationTemplate.STEADY);assertEquals(RelationTemplate.STEADY,core.relationship("r").template);assertEquals(1,calls)
         }finally{store.close();context.deleteDatabase("$name.db")}
     }
-    @Test fun proactiveCapIsEnforcedBeforeAnotherModelCall():Unit=runBlocking{
+    @Test fun anotherSameDayContactRemainsAvailableButCannotBeClaimedTwice():Unit=runBlocking{
         val name="relation-cap-${System.nanoTime()}";val store=Store(context,"$name.db")
-        var at=System.currentTimeMillis()
+        var at=2_000_000_000_000L
         try{
             store.add(listOf(Friend("r","合成角色","成年")),false)
             val core=CompanionRepository(store){at};core.setPolicy("r",true,"test")
@@ -135,8 +135,12 @@ class RelationshipAndroidTest {
             val first=opportunity();at+=2*RelationshipProjector.DAY+1000
             val claimed=core.claim(first.id,"test")!!
             assertNotNull(core.conclude(claimed,"test",OpportunityDecision("send","共同话题","自然分享"),core.snapshot("r")){true})
+            val firstSentAt=at
             val second=opportunity();at=second.notBefore+1
-            assertNull(core.claim(second.id,"test"))
+            assertEquals(firstSentAt/RelationshipProjector.DAY,at/RelationshipProjector.DAY)
+            val next=core.claim(second.id,"test")
+            assertNotNull("不再按每日次数拦截模型决定的联系",next)
+            assertNull("同一个机会仍不能被另一执行者重复领取",core.claim(second.id,"other-worker"))
         }finally{store.close();context.deleteDatabase("$name.db")}
     }
 }

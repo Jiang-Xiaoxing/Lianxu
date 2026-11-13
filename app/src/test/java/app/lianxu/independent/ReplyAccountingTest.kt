@@ -64,6 +64,25 @@ class ReplyAccountingTest {
         val afterNew=afterOld.finished(2,"new-prefix")
         assertEquals("done",afterNew.state);assertEquals("new-prefix",afterNew.reviewedHash)
     }
+    @Test fun batchKeepsOneReadStatePerActionAndItsOriginalReferences():Unit=runBlocking{
+        val rows=items(1).map{it.copy(input="第一条原文 第二条原文")}
+        val a=RoleActualAction(SourceRef("a",1,2),"listen","chat",2,"第一条原文",emptyList(),emptyList(),"current_request",100000L,null)
+        val b=a.copy(source=SourceRef("a",3,4),replyId=4,reply="第二条原文",readAt=null)
+        val view=context.copy(knownSources=context.knownSources+mapOf(1L to a.source,3L to b.source),actions=listOf(a,b))
+        val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
+            val text=request.messages.joinToString("\n"){it.content}
+            listOf(a,b).forEach{action->
+                val line=ExperiencePresentation.receipt(action.replyId,action.readAt,200000)
+                assertEquals(1,Regex.fromLiteral(line).findAll(text).count())
+                assertTrue(text.contains(action.reply))
+                assertTrue(text.lines().any{it.startsWith("- [回复 ${action.replyId}；来源${ExperiencePresentation.reference(action.source)}]")&&action.reply in it})
+            }
+            assertEquals(1,Regex.fromLiteral(ExperiencePresentation.MESSAGE_STATE_LABEL).findAll(text).count())
+            assertFalse(text.contains("；已读"));assertFalse(text.contains("；未读"))
+            return TextChatResult.Success(emptyBatch(rows))
+        }}
+        assertEquals(1,ReviewBatchModel(client).review(config,"fake",rows,view,"合成角色",200000){true}.size)
+    }
     @Test fun fiveTurnsUseOnePrivateModelRequest():Unit=runBlocking{
         val rows=items();val requests=mutableListOf<TextChatRequest>()
         val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{

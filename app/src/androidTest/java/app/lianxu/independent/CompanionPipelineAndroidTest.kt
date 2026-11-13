@@ -25,6 +25,85 @@ class CompanionPipelineAndroidTest {
         core.setPolicy("a",true,CompanionRuntime.owner)
     }
     @After fun close(){store.close();context.deleteDatabase(database)}
+    @Test fun retiredParameterCardsAreHiddenWithoutRewritingStoredHistory():Unit=runBlocking{
+        val turn=event("旧频率提案")
+        val revision=store.readableDatabase.rawQuery("SELECT revision FROM companion_sources WHERE role='a' AND source_id=?",arrayOf(turn.userMessageId.toString())).use{it.moveToFirst();it.getLong(0)}
+        val source=SourceRef("a",turn.userMessageId,revision)
+        val retired=RelationParameterProposal(source,mapOf("dailyMax" to "1"),"每天一次",now)
+        val raw=gson.toJson(ExperienceProposal(quote="旧频率提案",parameterProposal=retired))
+        val db=store.writableDatabase
+        db.execSQL("UPDATE companion_sources SET proposal=? WHERE role='a' AND source_id=?",arrayOf<Any>(raw,source.turnId))
+        assertTrue(core.relationshipParameterProposals("a").isEmpty())
+        assertFalse(core.confirmRelationshipParameters("a",retired,true))
+        assertEquals(raw,db.rawQuery("SELECT proposal FROM companion_sources WHERE role='a' AND source_id=?",arrayOf(source.turnId.toString())).use{it.moveToFirst();it.getString(0)})
+        val history=RelationHistory(receipts=listOf(ParameterReceipt(source,RelationTemplate.STEADY.parameters,keys=setOf("dailyMax"))))
+        RelationStorage.write(db,"a",history)
+        assertTrue(core.relationshipParameterReceipts("a").isEmpty());assertEquals(history,RelationStorage.read(db,"a"))
+        val tone=retired.copy(values=mapOf("tone" to "温柔些"),sentence="说得温柔些")
+        db.execSQL("UPDATE companion_sources SET proposal=? WHERE role='a' AND source_id=?",arrayOf<Any>(gson.toJson(ExperienceProposal(quote="旧频率提案",parameterProposal=tone)),source.turnId))
+        assertEquals(listOf(tone),core.relationshipParameterProposals("a"))
+        assertTrue(core.confirmRelationshipParameters("a",tone,true))
+        assertEquals(listOf(setOf("tone")),core.relationshipParameterReceipts("a").map{it.keys})
+        assertEquals("温柔些",core.relationship("a").parameters.tone)
+    }
+    @Test fun modelCanContinuePastDailyAndUnansweredLimitsThroughWorker():Unit=runBlocking{
+        core.changeRelationshipParameters("a",RelationTemplate.STEADY.parameters.copy(dailyMax=0,resendCount=0,resendDays=7.0),"合成旧限额")
+        workerScenario{first,_->
+            val day=relationshipDayStart(now);var calls=0
+            val before=RelationStorage.read(store.readableDatabase,"a").programInputs
+            AppServices.createTextClient={object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
+                calls++;val prompt=request.messages.single().content
+                assertTrue(prompt.contains("没有每天或未回复次数上限"))
+                if(calls>1)assertTrue(prompt.contains("连续联系${calls-1}"))
+                return TextChatResult.Success("""{"action":"send","reason":"想继续聊共同话题","text":"连续联系$calls","nextWhen":"1秒后"}""")
+            }}}
+            var plan=first
+            repeat(8){
+                now=plan.notBefore
+                assertEquals(androidx.work.ListenableWorker.Result.success(),worker(plan.id).doWork())
+                assertEquals("send",opportunityState(plan.id))
+                val next=core.queued().single();assertNotEquals(plan.id,next.id);assertEquals(first.source,next.source)
+                assertEquals(now+1000,next.notBefore);plan=next
+            }
+            assertEquals(day,relationshipDayStart(now));assertEquals(8,calls)
+            assertEquals(8,store.messages().count{it.text.startsWith("连续联系")})
+            assertEquals(1,store.messages().count{it.mine})
+            core.relationship("a",now+7*RelationshipProjector.DAY)
+            assertEquals(before,RelationStorage.read(store.readableDatabase,"a").programInputs)
+            // The next model may defer without sending, then choose silence; no automatic repeat.
+            AppServices.createTextClient={object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest)=TextChatResult.Success("""{"action":"defer","reason":"想再等一等","nextWhen":"三天后"}""")}}
+            now=plan.notBefore;worker(plan.id).doWork();assertEquals(now+3*86400000L,core.queued().single().notBefore)
+            now=core.queued().single().notBefore
+            AppServices.createTextClient={object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest)=TextChatResult.Success("""{"action":"silent","reason":"这次先不聊"}""")}}
+            worker(plan.id).doWork();assertTrue(core.queued().isEmpty());assertEquals(8,store.messages().count{it.text.startsWith("连续联系")})
+        }
+    }
+    @Test fun continuationRemainsIdempotentUnderConcurrentClaimsAndCommits():Unit=runBlocking{
+        event("继续聊这个话题",reconsider=true);now=core.queued().single().notBefore
+        val plan=core.queued().single()
+        val claimed=coroutineScope{listOf("worker-one","worker-two").map{owner->async(Dispatchers.Default){owner to core.claim(plan.id,owner)}}.awaitAll()}.filter{it.second!=null}.single()
+        val o=claimed.second!!;val snapshot=core.snapshot("a");val decision=OpportunityDecision("send","仍想再聊","唯一消息",now+1000)
+        val results=coroutineScope{List(2){async(Dispatchers.Default){core.conclude(o,claimed.first,decision,snapshot){true}}}.awaitAll()}
+        assertEquals(1,results.count{it!=null});assertEquals(1,core.queued().size)
+        assertEquals(1,store.messages().count{it.text=="唯一消息"});assertTrue(core.claimNotification(results.filterNotNull().single()))
+        assertFalse(core.claimNotification(results.filterNotNull().single()))
+    }
+    @Test fun disabledFeatureAndNewInputCancelModelContinuation():Unit=runBlocking{
+        suspend fun continuation():CompanionOpportunity{
+            event("继续聊",reconsider=true);now=core.queued().single().notBefore
+            val first=core.claim(core.queued().single().id,CompanionRuntime.owner)!!
+            core.conclude(first,CompanionRuntime.owner,OpportunityDecision("send","再想想","先说一句",now+1000),core.snapshot("a")){true}
+            return core.queued().single()
+        }
+        val next=continuation();now=next.notBefore
+        val running=core.claim(next.id,CompanionRuntime.owner)!!;val snapshot=core.snapshot("a")
+        core.setPolicy("a",false,CompanionRuntime.owner)
+        assertNull(core.conclude(running,CompanionRuntime.owner,OpportunityDecision("send","旧返回","不应发",now+1000),snapshot){true})
+        core.setPolicy("a",true,CompanionRuntime.owner);assertTrue(core.queued().isEmpty())
+        val another=continuation();ledger.begin("a","我来了",config.id)
+        now=another.notBefore;assertNull(core.claim(another.id,CompanionRuntime.owner));assertTrue(core.queued().isEmpty())
+        assertFalse(store.messages().any{it.text=="不应发"})
+    }
     @Test fun packageDoesNotRequestOrRegisterForegroundServiceCapability(){
         val info=context.packageManager.getPackageInfo(context.packageName,android.content.pm.PackageManager.GET_PERMISSIONS or android.content.pm.PackageManager.GET_SERVICES)
         assertFalse(info.requestedPermissions.orEmpty().contains("android.permission.FOREGROUND_SERVICE"))
@@ -34,6 +113,60 @@ class CompanionPipelineAndroidTest {
         event("合成已经过期的事件",reconsider=true)
         val opportunity=core.queued().single();now=opportunity.expiresAt
         assertNotNull(core.claim(opportunity.id,CompanionRuntime.owner));assertEquals(2,store.messages().size)
+    }
+    @Test fun newInputAtomicallyCancelsOldClaimAndItsLateModelResult():Unit=runBlocking{
+        event("旧计划",reconsider=true);now+=900000
+        val old=core.claim(core.queued().single().id,CompanionRuntime.owner)!!
+        val snapshot=core.snapshot("a")
+        core.setPolicy("b",true,CompanionRuntime.owner);event("另一个角色计划",role="b",reconsider=true)
+        val other=core.queued().single{it.role=="b"}
+        // Direct ledger entry proves cancellation does not depend on UI/WorkManager timing.
+        val input=ledger.begin("a","新消息到了",config.id,id="new-input")
+        assertNull(core.conclude(old,CompanionRuntime.owner,OpportunityDecision("send","旧模型晚返回","不应发出"),snapshot){true})
+        core.checkContinuity("another-process")
+        assertFalse(core.queued().any{it.role=="a"});assertTrue(core.queued().any{it.id==other.id})
+        assertFalse(store.messages().any{it.text=="不应发出"})
+        assertEquals(input,ledger.begin("a","新消息到了",config.id,id="new-input"))
+        assertTrue(core.receipts("a").none{it.delivery=="ready"})
+    }
+    @Test fun modelDeferralRequeuesOnePlanAndSilenceEndsIt():Unit=runBlocking{
+        event("稍后再聊",reconsider=true);now+=900000
+        val old=core.claim(core.queued().single().id,CompanionRuntime.owner)!!
+        val snapshot=core.snapshot("a")
+        val decision=CompanionContracts.decision("""{"action":"defer","reason":"还没聊完","nextWhen":"三天后"}""",now,0)
+        assertNull(core.conclude(old,CompanionRuntime.owner,decision,snapshot){true})
+        val queued=core.queued().single();assertEquals(old.id,queued.id);assertEquals(now+3*86400000L,queued.notBefore)
+        assertNull(core.conclude(old,CompanionRuntime.owner,OpportunityDecision("send","过期结果","不该发"),snapshot){true})
+        assertNull(core.claim(queued.id,CompanionRuntime.owner));now=queued.notBefore
+        val next=core.claim(queued.id,CompanionRuntime.owner)!!;assertTrue(next.attempt>old.attempt)
+        assertNull(core.conclude(next,CompanionRuntime.owner,OpportunityDecision("silent","现在不用联系"),core.snapshot("a")){true})
+        assertTrue(core.queued().isEmpty());assertNull(core.claim(next.id,CompanionRuntime.owner))
+    }
+    @Test fun scoresCannotCreatePlansAndDisabledPolicyCannotReviveThem():Unit=runBlocking{
+        event("没有安排的普通聊天");now+=30*86400000L
+        core.refreshRelationshipContacts();assertTrue(core.queued().isEmpty())
+        event("模型明确安排",reconsider=true)
+        val plan=core.queued().single()
+        store.writableDatabase.execSQL("INSERT INTO companion_opportunities(id,role,source_id,revision,epoch,policy_version,not_before,expires_at,reason,state) SELECT 'relationship:legacy',role,source_id,revision,epoch,policy_version,not_before,expires_at,reason,'queued' FROM companion_opportunities WHERE id=?",arrayOf(plan.id))
+        core.refreshRelationshipContacts();assertEquals(listOf(plan.id),core.queued().map{it.id})
+        core.setPolicy("a",false,CompanionRuntime.owner);now+=900000
+        assertNull(core.claim(plan.id,CompanionRuntime.owner))
+        core.setPolicy("a",true,CompanionRuntime.owner);core.refreshRelationshipContacts();assertTrue(core.queued().isEmpty())
+        event("重新聊天后的新决定",reconsider=true);assertEquals(1,core.queued().size)
+    }
+    @Test fun firstPlanOnRetryUsesCurrentClockAfterParameterOnlyAttempt():Unit=runBlocking{
+        val t=ledger.begin("a","过会儿再聊",config.id);val source=core.sourceFor(t)
+        val parameters=RelationParameterProposal(source,mapOf("tone" to "温柔些"),"过会儿再聊",now)
+        core.contact(t,ImmediateContact.Request(null,parameters),core.snapshot("a"),now){true}
+        assertTrue(core.queued().isEmpty());val oldClock=now
+        ledger.fail(t.id,t.attempt,ChatFailure.TIMEOUT);now+=3600000
+        val retry=ledger.retry(t.id,config.id)!!
+        val raw="""{"future":{"kind":"follow_up","reason":"回头聊","when":"半小时后","evidence":[{"source":${source.turnId},"layer":"fact"}]}}"""
+        val request=ImmediateContact.parse(raw,"过会儿再聊",core.roleContext("a",source),now)
+        core.contact(retry,request,core.snapshot("a"),now){true}
+        assertEquals(now+1800000,core.queued().single().notBefore)
+        assertEquals(now,core.cached(retry)!!.timingReferenceAt);assertNotEquals(oldClock,core.cached(retry)!!.timingReferenceAt)
+        core.contact(retry,request,core.snapshot("a"),now){true};assertEquals(1,core.queued().size)
     }
     @Test fun unresolvedControlCannotScheduleAContact():Unit=runBlocking{
         val input="更正那件事";core.beginInput("a");val t=ledger.begin("a",input,config.id)
@@ -169,26 +302,25 @@ class CompanionPipelineAndroidTest {
         assertFalse(core.claimNotification(message));assertEquals("unknown",core.receipts("a").single{it.messageId==message}.delivery)
         assertNull(core.claim(old.id,"third-synthetic-process"));assertEquals(1,store.messages().count{it.text=="唯一正式消息"})
     }
-    @Test fun unrelatedChatPreservesFutureReasonAndUsesLatestContext():Unit=runBlocking{
+    @Test fun laterChatCancelsOldReasonAndOnlyItsNewDecisionCanContact():Unit=runBlocking{
         event("明天合成面试",reconsider=true);val future=core.queued().single()
-        event("合成新消息：面试地点改到北门")
-        assertEquals(future,core.queued().single())
-        now=future.notBefore
-        val claimed=core.claim(future.id,CompanionRuntime.owner)!!;val latest=core.snapshot("a")
+        event("合成新消息：面试地点改到北门",reconsider=true)
+        assertNull(core.claim(future.id,CompanionRuntime.owner))
+        val replacement=core.queued().single();assertNotEquals(future.id,replacement.id)
+        now=replacement.notBefore
+        val claimed=core.claim(replacement.id,CompanionRuntime.owner)!!;val latest=core.snapshot("a")
         assertEquals(latest.epoch,claimed.epoch);assertTrue(latest.prompt.contains("北门"))
         assertNotEquals(future.epoch,claimed.epoch)
         assertNotNull(core.conclude(claimed,CompanionRuntime.owner,OpportunityDecision("send","按最新地点判断","北门的面试怎么样"),latest){true})
     }
-    @Test fun newInputRequeuesRunningAndPendingInputDoesNotCancelIt():Unit=runBlocking{
+    @Test fun cancelledOrFailedNewChatDoesNotResurrectTheOldPlan():Unit=runBlocking{
         event("合成正在判断的未来关心",reconsider=true);now+=900_000
         val old=core.claim(core.queued().single().id,CompanionRuntime.owner)!!;val stale=core.snapshot("a")
         core.beginInput("a");val pending=ledger.begin("a","合成普通新聊天",config.id)
         assertNull(core.conclude(old,CompanionRuntime.owner,OpportunityDecision("send","旧快照","旧结果"),stale){true})
-        assertNull(core.claim(old.id,CompanionRuntime.owner));assertEquals(old.id,core.queued().single().id)
-        assertEquals(old.notBefore,core.queued().single().notBefore);assertEquals(old.expiresAt,core.queued().single().expiresAt)
+        assertNull(core.claim(old.id,CompanionRuntime.owner));assertTrue(core.queued().isEmpty())
         ledger.cancel(pending.id,pending.attempt)
-        val fresh=core.claim(old.id,CompanionRuntime.owner)!!;assertTrue(fresh.attempt>old.attempt)
-        assertNotNull(core.conclude(fresh,CompanionRuntime.owner,OpportunityDecision("send","新快照重新评估","新结果"),core.snapshot("a")){true})
+        core.checkContinuity("restarted");assertNull(core.claim(old.id,"restarted"))
         assertFalse(store.messages().any{it.text=="旧结果"})
     }
     @Test fun closeReopenWithdrawalRevisionAndExpiryDoNotReviveReasons():Unit=runBlocking{
@@ -258,6 +390,64 @@ class CompanionPipelineAndroidTest {
         val preview=backup.preview(BackupArchive.read(bytes.inputStream()),"ADD",null)
         val id=backup.commit(preview,true,ChatAttemptLease()).single()
         assertFalse(core.snapshot(id).prompt.contains("合成撤回备份事件"));assertTrue(ledger.completedMessages(id).isEmpty());assertEquals("awaiting_user_resume",core.policy(id))
+    }
+    @Test fun compactReadStatesStayLinkedAndAppearOnceInReplyAndContact():Unit=runBlocking{
+        suspend fun sendContact(words:String):Long {
+            now+=RelationshipProjector.DAY // Keep both synthetic contacts within the existing daily quota.
+            event("合成回访来源：$words",reconsider=true);now+=900_000
+            val o=core.claim(core.queued().single().id,CompanionRuntime.owner)!!
+            return core.conclude(o,CompanionRuntime.owner,OpportunityDecision("send","合成联系",words),core.snapshot("a")){true}!!
+        }
+        val first=sendContact("第一条合成主动消息");val second=sendContact("第二条合成主动消息")
+        val stateBefore=core.relationship("a").state
+        val unread=core.contactFacts("a",now)
+        assertTrue(unread.contains("回复 $first：未读"));assertTrue(unread.contains("回复 $second：未读"))
+        core.markRead("a",first){false};core.markRead("b",first)
+        assertEquals(unread,core.contactFacts("a",now))
+        core.markRead("a",first);val readAt=core.receipts("a").single{it.messageId==first}.readAt
+        assertEquals(stateBefore,core.relationship("a").state)
+        now+=1000;core.markRead("a",first);assertEquals(readAt,core.receipts("a").single{it.messageId==first}.readAt)
+        // A later user reply neither clears the read marker nor marks the other message read.
+        event("我回复另一件事")
+        val facts=core.contactFacts("a",now)
+        assertTrue(facts.contains("回复 $first：已读"));assertTrue(facts.contains("回复 $second：未读"))
+        assertFalse(facts.contains("第一条合成主动消息"));assertFalse(facts.contains("不代表"))
+        val snapshots=mutableListOf<Pair<Boolean,CompanionSnapshot>>()
+        for(adaptive in listOf(false,true)){
+            ProcessingRepository(store).saveMemoryRules(MemoryRules(adaptiveContext=adaptive))
+            snapshots+=adaptive to core.snapshot("a")
+        }
+        // The Worker reads facts after taking its snapshot; a later read marker must win.
+        core.markRead("a",second);val latestFacts=core.contactFacts("a",now)
+        assertTrue(latestFacts.contains("回复 $second：已读"))
+        for((adaptive,snapshot) in snapshots){
+            val refs=if(adaptive)CompanionPrompt.replyReferences(snapshot.references)else listOf(PromptReference("经历",snapshot.replyPrompt,true))
+            val request=(CompanionPrompt.build(Friend("a","合成角色甲","合成设定"),RolePrompts(),emptyList(),"当前用户原话",refs,capacity=128000,adaptive=adaptive) as PromptBuild.Ready).request
+            val ordinary=request.messages.filter{it.role=="system"}.joinToString("\n"){it.content}
+            assertEquals(1,Regex.fromLiteral(facts).findAll(ordinary).count())
+            facts.lines().forEach{line->assertEquals(line,1,Regex.fromLiteral(line).findAll(ordinary).count())}
+            val ordinaryWithoutFacts=ordinary.replace(facts,"").replace(ExperiencePresentation.READ_STATE_RULE,"")
+            assertFalse(ordinaryWithoutFacts.contains("已读"));assertFalse(ordinaryWithoutFacts.contains("未读"))
+            assertEquals("当前用户原话",request.latestUserText())
+            assertFalse(snapshot.proactivePrompt.contains(facts))
+            val opportunity=CompanionOpportunity("relationship:a:test","a",ledger.all().last().userMessageId,1,0,0,now,now+900000,"","running",1)
+            var calls=0
+            val model=CompanionModel(object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
+                calls++;val text=request.messages.joinToString("\n"){it.content}
+                assertEquals(1,Regex.fromLiteral(latestFacts).findAll(text).count())
+                latestFacts.lines().forEach{line->assertEquals(line,1,Regex.fromLiteral(line).findAll(text).count())}
+                assertFalse(text.contains("回复 $second：未读"))
+                // General rules are not assertions about a message; every actual state must be in facts.
+                val withoutFacts=text.replace(latestFacts,"").replace(ExperiencePresentation.READ_STATE_RULE,"")
+                    .replace("未读/没回复不等于故意不理","")
+                assertFalse(withoutFacts.contains("已读"));assertFalse(withoutFacts.contains("未读"))
+                assertTrue(text.contains("你（回复 $first）：第一条合成主动消息"));assertTrue(text.contains("你（回复 $second）：第二条合成主动消息"))
+                assertFalse(text.contains("不代表对方读过"))
+                return TextChatResult.Success("""{"action":"silent","reason":"合成先不打扰"}""")
+            }})
+            model.reconsider(config,"synthetic-only",opportunity,snapshot,snapshot.roleProfile,now,latestFacts,recent=ProactiveMaterial.recent(core.contactHistory("a")))
+            assertEquals(1,calls)
+        }
     }
     private suspend fun workerScenario(block:suspend(CompanionOpportunity,ModelVault)->Unit){
         event("合成Worker恢复与调度",reconsider=true);now+=900_000
@@ -369,10 +559,10 @@ class CompanionPipelineAndroidTest {
         assertEquals("queued",opportunityState(o.id));assertFalse(store.messages().any{it.text=="合成不应提交"})
         assertEquals(o.notBefore,core.queued().single{it.id==o.id}.notBefore);assertEquals(o.expiresAt,core.queued().single{it.id==o.id}.expiresAt)
     }}
-    @Test fun workerPendingForegroundUsesBackoffAndKeepsReason():Unit=runBlocking{workerScenario{o,_->
+    @Test fun workerForPlanCancelledByPendingInputFinishesWithoutRetry():Unit=runBlocking{workerScenario{o,_->
         val pending=ledger.begin("a","合成忙碌中的新输入",config.id)
-        assertEquals(androidx.work.ListenableWorker.Result.retry(),worker(o.id).doWork())
-        assertEquals("queued",opportunityState(o.id));assertEquals(o.notBefore,core.queued().single().notBefore)
+        assertEquals(androidx.work.ListenableWorker.Result.success(),worker(o.id).doWork())
+        assertEquals("cancelled",opportunityState(o.id));assertTrue(core.queued().isEmpty())
         ledger.cancel(pending.id,pending.attempt)
     }}
     @Test fun workerRecoversOrphanForegroundWithoutAppActivity():Unit=runBlocking{workerScenario{o,_->
@@ -380,7 +570,21 @@ class CompanionPipelineAndroidTest {
         AppServices.createTextClient={object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest)=TextChatResult.Success("""{"action":"silent","reason":"按最新有效经历保持安静"}""")}}
         worker(o.id).doWork()
         assertEquals(TurnState.INTERRUPTED,ledger.all().single{it.id==orphan.id}.state)
-        assertEquals("silent",opportunityState(o.id));assertEquals(3,store.messages().size)
+        assertEquals("cancelled",opportunityState(o.id));assertEquals(3,store.messages().size)
+    }}
+    @Test fun newUserInputDuringWorkerModelCallFencesItsLateReturn():Unit=runBlocking{workerScenario{o,_->
+        val entered=CompletableDeferred<Unit>();val release=CompletableDeferred<Unit>()
+        AppServices.createTextClient={object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
+            entered.complete(Unit);release.await()
+            return TextChatResult.Success("""{"action":"send","reason":"旧判断","text":"不该发出的旧联系"}""")
+        }}}
+        coroutineScope{
+            val job=async(Dispatchers.Default){worker(o.id).doWork()}
+            try{withTimeout(5000){entered.await()};ledger.begin("a","我现在来聊天了",config.id);release.complete(Unit);withTimeout(5000){job.await()}}
+            finally{release.complete(Unit);job.cancelAndJoin()}
+        }
+        assertEquals("cancelled",opportunityState(o.id));assertFalse(store.messages().any{it.text=="不该发出的旧联系"})
+        core.checkContinuity("next-process");assertFalse(core.queued().any{it.id==o.id})
     }}
     @Test fun missingWorkerConfigTerminatesInsteadOfLeavingRunning():Unit=runBlocking{workerScenario{o,vault->
         vault.setPurpose(ModelPurpose.CHAT,"")
