@@ -10,7 +10,10 @@ import org.junit.Assert.*
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-class LiveChatRaceUiTest {
+@org.junit.runner.RunWith(org.junit.runners.Parameterized::class)
+class LiveChatRaceUiTest(private val repetition:Int) {
+    // Keep the warm-process path: the old test passed cold but clicked inside the guard when warm.
+    companion object { @JvmStatic @org.junit.runners.Parameterized.Parameters(name="pressure-{0}") fun repetitions()=(1..8).map{arrayOf(it)} }
     private class Replies:TextChatClient {
         val pending=ConcurrentLinkedQueue<CompletableDeferred<TextChatResult>>();val calls=AtomicInteger()
         fun queue()=CompletableDeferred<TextChatResult>().also{pending.add(it)}
@@ -23,7 +26,7 @@ class LiveChatRaceUiTest {
     @get:Rule(order=0) val mock=MockChatFixture({client})
     @get:Rule(order=1) val ui=createAndroidComposeRule<MainActivity>()
     private fun app():AppState {lateinit var value:AppState;ui.activityRule.scenario.onActivity{value=ViewModelProvider(it)[AppState::class.java]};return value}
-    @Test fun doubleSendImmediateCancelRetryFailureAndLateCallback(){
+    @Test fun doubleSendThenExplicitCancelRetryFailureAndLateCallback(){
         ui.waitUntil(15000){app().ready}
         ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("创建角色").performClick()
         ui.onNodeWithTag("friend-name").performTextInput("合成·取消测试");ui.onNodeWithTag("friend-bio").performTextInput("仅供自动测试")
@@ -36,6 +39,11 @@ class LiveChatRaceUiTest {
             val jobs=ConversationRunner::class.java.getDeclaredField("jobs").apply{isAccessible=true}.get(runner) as Map<*,*>
             oldJob=requireNotNull(jobs[turn.friendId] as? Job)
         }
+        val submittedAt=app().chatDrafts.getValue(turn.friendId).submittedAt.longValue
+        assertTrue("第 $repetition 次双击不能把发送变成停止",app().chatSending)
+        // The UI intentionally ignores the second Send tap while the button becomes Stop.
+        // Wait for that existing gesture boundary, not for the deliberately held transport.
+        ui.waitUntil(10000){android.os.SystemClock.uptimeMillis()-submittedAt>android.view.ViewConfiguration.getDoubleTapTimeout()}
         ui.onNodeWithTag("cancel-turn-${turn.id}").performClick()
         ui.waitUntil(10000){!app().chatSending}
         // Stop ends this answer. A new user message can start before the old transport returns;
