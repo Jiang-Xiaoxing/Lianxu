@@ -259,6 +259,64 @@ class CompanionPipelineAndroidTest {
         val id=backup.commit(preview,true,ChatAttemptLease()).single()
         assertFalse(core.snapshot(id).prompt.contains("合成撤回备份事件"));assertTrue(ledger.completedMessages(id).isEmpty());assertEquals("awaiting_user_resume",core.policy(id))
     }
+    @Test fun compactReadStatesStayLinkedAndAppearOnceInReplyAndContact():Unit=runBlocking{
+        suspend fun sendContact(words:String):Long {
+            now+=RelationshipProjector.DAY // Keep both synthetic contacts within the existing daily quota.
+            event("合成回访来源：$words",reconsider=true);now+=900_000
+            val o=core.claim(core.queued().single().id,CompanionRuntime.owner)!!
+            return core.conclude(o,CompanionRuntime.owner,OpportunityDecision("send","合成联系",words),core.snapshot("a")){true}!!
+        }
+        val first=sendContact("第一条合成主动消息");val second=sendContact("第二条合成主动消息")
+        val stateBefore=core.relationship("a").state
+        val unread=core.contactFacts("a",now)
+        assertTrue(unread.contains("回复 $first：未读"));assertTrue(unread.contains("回复 $second：未读"))
+        core.markRead("a",first){false};core.markRead("b",first)
+        assertEquals(unread,core.contactFacts("a",now))
+        core.markRead("a",first);val readAt=core.receipts("a").single{it.messageId==first}.readAt
+        assertEquals(stateBefore,core.relationship("a").state)
+        now+=1000;core.markRead("a",first);assertEquals(readAt,core.receipts("a").single{it.messageId==first}.readAt)
+        // A later user reply neither clears the read marker nor marks the other message read.
+        event("我回复另一件事")
+        val facts=core.contactFacts("a",now)
+        assertTrue(facts.contains("回复 $first：已读"));assertTrue(facts.contains("回复 $second：未读"))
+        assertFalse(facts.contains("第一条合成主动消息"));assertFalse(facts.contains("不代表"))
+        val snapshots=mutableListOf<Pair<Boolean,CompanionSnapshot>>()
+        for(adaptive in listOf(false,true)){
+            ProcessingRepository(store).saveMemoryRules(MemoryRules(adaptiveContext=adaptive))
+            snapshots+=adaptive to core.snapshot("a")
+        }
+        // The Worker reads facts after taking its snapshot; a later read marker must win.
+        core.markRead("a",second);val latestFacts=core.contactFacts("a",now)
+        assertTrue(latestFacts.contains("回复 $second：已读"))
+        for((adaptive,snapshot) in snapshots){
+            val refs=if(adaptive)CompanionPrompt.replyReferences(snapshot.references)else listOf(PromptReference("经历",snapshot.replyPrompt,true))
+            val request=(CompanionPrompt.build(Friend("a","合成角色甲","合成设定"),RolePrompts(),emptyList(),"当前用户原话",refs,capacity=128000,adaptive=adaptive) as PromptBuild.Ready).request
+            val ordinary=request.messages.filter{it.role=="system"}.joinToString("\n"){it.content}
+            assertEquals(1,Regex.fromLiteral(facts).findAll(ordinary).count())
+            facts.lines().forEach{line->assertEquals(line,1,Regex.fromLiteral(line).findAll(ordinary).count())}
+            val ordinaryWithoutFacts=ordinary.replace(facts,"").replace(ExperiencePresentation.READ_STATE_RULE,"")
+            assertFalse(ordinaryWithoutFacts.contains("已读"));assertFalse(ordinaryWithoutFacts.contains("未读"))
+            assertEquals("当前用户原话",request.latestUserText())
+            assertFalse(snapshot.proactivePrompt.contains(facts))
+            val opportunity=CompanionOpportunity("relationship:a:test","a",ledger.all().last().userMessageId,1,0,0,now,now+900000,"","running",1)
+            var calls=0
+            val model=CompanionModel(object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
+                calls++;val text=request.messages.joinToString("\n"){it.content}
+                assertEquals(1,Regex.fromLiteral(latestFacts).findAll(text).count())
+                latestFacts.lines().forEach{line->assertEquals(line,1,Regex.fromLiteral(line).findAll(text).count())}
+                assertFalse(text.contains("回复 $second：未读"))
+                // General rules are not assertions about a message; every actual state must be in facts.
+                val withoutFacts=text.replace(latestFacts,"").replace(ExperiencePresentation.READ_STATE_RULE,"")
+                    .replace("未读/没回复不等于故意不理","")
+                assertFalse(withoutFacts.contains("已读"));assertFalse(withoutFacts.contains("未读"))
+                assertTrue(text.contains("你（回复 $first）：第一条合成主动消息"));assertTrue(text.contains("你（回复 $second）：第二条合成主动消息"))
+                assertFalse(text.contains("不代表对方读过"))
+                return TextChatResult.Success("""{"action":"silent","reason":"合成先不打扰"}""")
+            }})
+            model.reconsider(config,"synthetic-only",opportunity,snapshot,snapshot.roleProfile,now,latestFacts,recent=ProactiveMaterial.recent(core.contactHistory("a")))
+            assertEquals(1,calls)
+        }
+    }
     private suspend fun workerScenario(block:suspend(CompanionOpportunity,ModelVault)->Unit){
         event("合成Worker恢复与调度",reconsider=true);now+=900_000
         val o=core.queued().single()

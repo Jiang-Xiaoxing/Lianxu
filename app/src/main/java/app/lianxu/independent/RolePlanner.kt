@@ -142,7 +142,7 @@ internal class RolePlanner(client:TextChatClient) {
         if(view.actions.isNotEmpty()){
             append("你之前的回应：\n")
             view.actions.forEachIndexed{i,a->val label="回应${i+1}"
-                append("- $label：你${actions[a.action]?.let{"选择$it，"}.orEmpty()}回了「${clip(a.reply,80)}」；${ExperiencePresentation.visibility(a.readAt,now)}\n")
+                append("- $label：你${actions[a.action]?.let{"选择$it，"}.orEmpty()}回了「${clip(a.reply,80)}」\n")
                 toolRefs+="$label：${ExperiencePresentation.reference(a.source)}；回复 ${a.replyId}（引用行动时，来源用消息编号，message 用回复编号）"
             }
         }

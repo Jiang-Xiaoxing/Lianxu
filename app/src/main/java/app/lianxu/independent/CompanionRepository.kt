@@ -97,7 +97,7 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
         // The reply round uses this body without the tone line; the control lookup keeps the full body.
         // Reply and proactive contact share the same state/evidence, without a prescribed tone.
         val contactFacts=contactFacts(db,role,materialNow)
-        fun legacy(includeTone:Boolean)=buildString{
+        fun legacy(includeTone:Boolean,includeMessageState:Boolean=true)=buildString{
             append("[${RelationshipPrompt.LABEL}]\n").append(relation.modelMaterial).append("\n")
             if(includeTone)append(relation.template.prompt(relation.parameters)).append("\n")
             if(selected.isNotEmpty())append("[以前记下的经历，只在有关时参考；对方更正或要求忘掉时，以有效记录为准]\n")
@@ -105,8 +105,8 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
             if(latest!=null)append("${ExperiencePresentation.at(latest.second,materialNow)}，当时观察到对方看起来${ExperiencePresentation.emotion(latest.third.first.emotion)}；这是过去的观察，不能断言现在仍然如此。\n${ExperiencePresentation.REFS}\n这次心情观察：${ExperiencePresentation.reference(latest.first)}\n")
             append("用户表达记录：${support.size}条明确感谢；${boundary}条明确边界。这不是角色感受、亲密分或信任分；不能靠计数替代角色评价。未回复不扣信任，不能威胁或惩罚。\n")
             if(!repo.memoryRules(db).first.adaptiveContext)append(roleState.prompt(materialNow)).append('\n')
-            append("${ExperiencePresentation.permission(s.third)}；记下的时间只是再次考虑的机会，不保证提醒或送达。消息出现在聊天页面不等于对方读过、理解或同意，没回复也不能说明故意不回应。")
-            append('\n').append(contactFacts)
+            append("${ExperiencePresentation.permission(s.third)}；记下的时间只是再次考虑的机会，不保证提醒或送达。${ExperiencePresentation.READ_STATE_RULE}")
+            if(includeMessageState)append('\n').append(contactFacts)
         }
         val legacyPrompt=legacy(true)
         val replyPrompt=legacy(false)
@@ -121,15 +121,15 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
         val stateView=if(adaptive)AdaptiveContext.roleView(roleState,query,viewBudget/2,semantic)else roleState
         val contextRefs=buildList{
             add(PromptReference(RelationshipPrompt.LABEL,relation.modelMaterial,true));add(PromptReference(CompanionPrompt.TONE_LABEL,relation.template.prompt(relation.parameters),true))
-            add(PromptReference("当前权限与交流边界","${ExperiencePresentation.permission(s.third)}；记下的时间只是再次考虑的机会，不保证提醒或送达。消息出现在聊天页面不等于对方读过、理解或同意，也不能据此判断故意不回应；未回复不扣信任，不能威胁或惩罚。",true))
-            if(contactFacts.isNotBlank())add(PromptReference("现有消息状态",contactFacts,true))
+            add(PromptReference("当前权限与交流边界","${ExperiencePresentation.permission(s.third)}；记下的时间只是再次考虑的机会，不保证提醒或送达。${ExperiencePresentation.READ_STATE_RULE}未回复不扣信任，不能威胁或惩罚。",true))
+            if(contactFacts.isNotBlank())add(PromptReference(ExperiencePresentation.MESSAGE_STATE_LABEL,contactFacts,true))
             add(PromptReference("本轮可用的角色状态","下面是过去的理解，以及仍有效的看法和习惯；没有提到的事不代表从未发生。\n"+stateView.prompt(materialNow),priority=1.1))
             facts.forEach{(ref,created,p)->add(PromptReference("${ExperiencePresentation.at(created,materialNow)}记下的经历",p.first.memory+"\n${ExperiencePresentation.REFS}\n这段经历：${ExperiencePresentation.reference(ref)}",mandatory=p.first.relationship=="boundary",memoryId="experience:${ref.turnId}@${ref.version}",related=true,sources=setOf(ref),priority=maxOf(semantic[ref]?:0.0,MemoryRecall.relevance(query,p.first.memory))))}
         }
         val prompt=if(adaptive)AdaptiveContext.references(query,contextRefs,viewBudget).joinToString("\n\n"){it.label+":\n"+it.text}else legacyPrompt
         // Same completed state as ordinary chat; the model interprets it alongside recent dialogue.
         val proactivePrompt=(if(adaptive)AdaptiveContext.references(query,proactiveReferences(contextRefs),viewBudget).joinToString("\n\n"){it.label+":\n"+it.text}
-            else replyPrompt)
+            else legacy(false,includeMessageState=false))
         val persona=store.persona(db)
         val prompts=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(RolePromptStore.key(role))).use{if(it.moveToFirst())RolePromptStore.decode(it.getString(0))else RolePrompts()}
         val profile=CompanionPrompt.profile(repo.friend(db,role),prompts,persona)
@@ -454,4 +454,4 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
     suspend fun delivery(id:Long,value:String,observed:Boolean=false)=repo.tx{db->db.update("companion_receipts",ContentValues().apply{put("delivery",value);if(value=="requested")put("requested_at",now());if(observed)put("observed_at",now())},"message_id=? AND delivery='claimed'",arrayOf(id.toString()))}
 }
 internal const val RELATION_SUMMARY_LABEL="当前关系小结"
-internal fun proactiveReferences(values:List<PromptReference>)=values.filterNot{it.label==RELATION_SUMMARY_LABEL||it.label==CompanionPrompt.TONE_LABEL}
+internal fun proactiveReferences(values:List<PromptReference>)=values.filterNot{it.label==RELATION_SUMMARY_LABEL||it.label==CompanionPrompt.TONE_LABEL||it.label==ExperiencePresentation.MESSAGE_STATE_LABEL}

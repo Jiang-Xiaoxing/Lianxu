@@ -124,14 +124,14 @@ class RelationshipV3AndroidTest {
                 val state=core.relationship("r").state;assertEquals(.5,state.trust,0.0);assertEquals(0.0,state.disappointment,0.0)
                 assertEquals(0.0,state.hurt,0.0);assertEquals(0.0,state.low,0.0)
                 assertTrue(ProcessingRepository(store).read{RelationStorage.read(it,"r").programInputs.isEmpty()})
-                val unseen=core.contactFacts("r");assertTrue(unseen.contains("是否读过不确定"));assertTrue(unseen.contains("回复 $message"));assertTrue(unseen.contains("距现在约 1 天"))
+                val unseen=core.contactFacts("r");assertTrue(unseen.contains("回复 $message：未读"));assertTrue(unseen.contains("距现在约 1 天"))
                 core.markRead("r",message)
-                val appeared=core.contactFacts("r");assertTrue(appeared.contains("消息曾出现在聊天页面"));assertTrue(appeared.contains("不代表对方读过"))
+                val appeared=core.contactFacts("r");assertTrue(appeared.contains("回复 $message：已读"));assertFalse(appeared.contains("不代表对方读过"))
                 for(adaptive in listOf(false,true)){
                     ProcessingRepository(store).saveMemoryRules(MemoryRules(adaptiveContext=adaptive))
                     val snapshot=core.snapshot("r")
                     val reply=if(adaptive)snapshot.references.joinToString("\n"){it.text}else snapshot.replyPrompt
-                    assertTrue(reply.contains(appeared));assertTrue(snapshot.proactivePrompt.contains(appeared))
+                    assertTrue(reply.contains(appeared));assertFalse(snapshot.proactivePrompt.contains(appeared))
                 }
                 assertEquals(state,core.relationship("r").state)
                 now++;val missingBefore=core.relationship("r").state.missing;seed(store,core,now,"我回来啦"){RelationInput(it,now,now/day,"普通信息")}

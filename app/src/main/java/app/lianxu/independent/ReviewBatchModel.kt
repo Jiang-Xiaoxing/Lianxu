@@ -26,7 +26,11 @@ internal class ReviewBatchModel(private val client:TextChatClient) {
         val remaining=AdaptiveContext.inputLimit(config.contextTokens,config.outputTokens)-fixed.sumOf{ConservativeTokens.tokens(it.content)+8}
         if(remaining<0)throw CompanionModelFailure(ChatFailure.CONTEXT_CAPACITY)
         val state=AdaptiveContext.roleView(context,items.joinToString("\n"){it.input},remaining)
-        val notes=state.prompt(now)+"\n"+RolePlanner(client).replyNotes(ExperienceProposal(interpretationUnknown=true),state,UserPersona(),now)
+        // Batch review has no chat snapshot facts; retain its existing action states once,
+        // separately from the shared action descriptions (which no longer repeat them).
+        val readStates=state.actions.distinctBy{it.replyId}.joinToString("\n"){ExperiencePresentation.receipt(it.replyId,it.readAt,now)}
+        val notes=state.prompt(now)+"\n"+RolePlanner(client).replyNotes(ExperienceProposal(interpretationUnknown=true),state,UserPersona(),now)+
+            if(readStates.isBlank())""else "\n${ExperiencePresentation.MESSAGE_STATE_LABEL}：\n${ExperiencePresentation.READ_STATE_RULE}\n$readStates"
         val messages=if(ConservativeTokens.tokens(notes)+8<=remaining)listOf(fixed.first(),WireMessage("system",notes),fixed.last())else fixed
         return StructuredModelCall(client).generate("reply_batch_review",config,key,messages,active=active){parse(it,items,now)}
     }
