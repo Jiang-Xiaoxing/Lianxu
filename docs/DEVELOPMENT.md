@@ -20,4 +20,3 @@ keytool -genkeypair -alias localhost -keyalg RSA -keysize 2048 -validity 3650 -d
 `mkdir -p` 创建测试资源目录；`keytool -genkeypair` 生成 RSA 测试密钥和证书，`-keystore` 指定输出文件，`-storepass` 与 `-keypass` 指定公开的测试密码。证书只用于 `localhost` 和 `127.0.0.1` 的回环测试，不应用于真实服务，也不应提交生成的私钥文件。
 
 完整设备测试还包括需要外部交付夹具、指定升级阶段或真实模型配置的用例；缺少条件时不能计作通过。真实服务商测试应单独明确授权，不要把全部设备测试直接接到存有个人资料的手机上。
-
