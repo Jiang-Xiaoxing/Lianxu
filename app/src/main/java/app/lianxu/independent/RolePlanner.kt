@@ -243,7 +243,7 @@ internal class RolePlanner(client:TextChatClient) {
                 // What is valid stays staged either way; only the receipt changes when 关系输入 could not be read.
                 val relationMiss=parsed.relationProblems
                 if(relationMiss.isNotEmpty()&&!relationNudged){relationNudged=true;RelationReceipt.resend(relationMiss,view.current.turnId)}
-                else mapOf("success" to true,"recorded" to true,"status" to "staged_until_reply_commit","note" to "已记下；继续按人设自然回话，不要把字段读给用户。")+(if(relationMiss.isNotEmpty()&&parsed.relationMissing)mapOf("relation" to RelationReceipt.GIVEN_UP) else emptyMap())
+                else mapOf("success" to true,"recorded" to true,"status" to "staged_until_reply_commit","note" to if(relationMiss.isNotEmpty()&&!parsed.relationMissing)CompanionRecord.partialStagedNote else CompanionRecord.stagedNote)+(if(relationMiss.isNotEmpty()&&parsed.relationMissing)mapOf("relation" to RelationReceipt.GIVEN_UP) else emptyMap())
             }catch(e:RoleContractViolation){
                 ToolArgumentDiagnosis.failure(mapOf("success" to false,"error" to e.code,"hint" to repairHint(e.code)),e){ToolArgumentDiagnosis.diagnoseRecord(RecordArguments.normalize(args),input,facts.interpretationUnknown)}
             }catch(e:kotlinx.coroutines.CancellationException){throw e}

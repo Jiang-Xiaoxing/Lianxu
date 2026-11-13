@@ -14,7 +14,7 @@ internal object RelationReceipt {
     val formatCodes=setOf("OBJECT_REQUIRED","CURRENT_SOURCE_REQUIRED","OPTION_REQUIRED","INVALID_OPTION","BOOLEAN_REQUIRED","INCOMPLETE_GROUP")
     /** Whether this record needs the honest receipt: 关系输入 missing, unreadable or with a shape error. */
     fun needed(parsed:RelationInput?,issues:List<RelationIssue>)=parsed==null||issues.any{it.code in formatCodes}
-    const val GIVEN_UP="关系输入还是没收到，这轮关系就不记了；其余内容已记下，照常回话就好。"
+    const val GIVEN_UP="关系部分仍未接收成功，这轮没有记下这部分；其余通过检查的内容只是暂存，要等本轮回复成功保存后才会正式写入。"
     /** Why 关系输入 could not be read; [issues] are the ones RelationInputContract.parse reported. */
     fun problems(value:JsonElement?,issues:List<RelationIssue>,current:Long):List<Problem> {
         if(value==null||value.isJsonNull)return listOf(Problem("关系输入","必填，放在参数顶层的对象",actual(value)))
@@ -37,6 +37,6 @@ internal object RelationReceipt {
         val fields=problems.joinToString("；"){"${it.field}：${it.actual}，应${it.expected}"}
         return mapOf("success" to false,"error" to if(missing)"RELATION_INPUT_MISSING" else "RELATION_INPUT_INVALID",
             "problems" to problems.map{mapOf("field" to it.field,"expected" to it.expected,"actual" to it.actual)},
-            "detail" to "$head（$fields）。其余内容已经暂存，只是这轮关系还没记上。请把整份参数连同参数顶层的“关系输入”对象（例如 ${RelationInputContract.example(current)}）再调用一次 companion_record；只补这一次，补不上就照常回话。")
+            "detail" to "$head（$fields）。其余内容已经暂存，尚未正式保存；关系部分还没有接收成功。请把整份参数连同参数顶层的“关系输入”对象（例如 ${RelationInputContract.example(current)}）再调用一次 companion_record；只补这一次，补不上就照常回话。")
     }
 }

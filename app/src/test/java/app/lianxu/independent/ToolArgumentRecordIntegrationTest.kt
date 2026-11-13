@@ -53,7 +53,7 @@ class ToolArgumentRecordIntegrationTest {
             val raw="""{"关系输入":"错误类型","appraisal":{"uncertainty":{}}}"""
             val first=record!!(raw)
             assertEquals(false,first["success"]);assertEquals("RELATION_INPUT_INVALID",first["error"])
-            assertEquals(mapOf("success" to true,"recorded" to true,"status" to "staged_until_reply_commit","note" to "已记下；继续按人设自然回话，不要把字段读给用户。","relation" to RelationReceipt.GIVEN_UP),record(raw))
+            assertEquals(mapOf("success" to true,"recorded" to true,"status" to "staged_until_reply_commit","note" to CompanionRecord.stagedNote,"relation" to RelationReceipt.GIVEN_UP),record(raw))
             TextChatResult.Success("你好")
         }
     }

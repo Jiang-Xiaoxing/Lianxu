@@ -24,7 +24,7 @@ internal fun syntheticCompanionStage(request:TextChatRequest):TextChatResult? {
 internal fun TextChatRequest.latestUserText()=messages.last{it.role=="user"}.content.removeSuffix("\n\n"+CompanionPrompt.THINKING_REMINDER)
 
 /** Protocol C: true when this request already carries a successful record (raw tool result or the compact note). */
-internal fun TextChatRequest.recordTaken()=messages.any{(it.role=="tool"&&it.name==CompanionRecord.NAME&&runCatching{JSONObject(it.content).optBoolean("success")}.getOrDefault(false))||it.content==CompanionRecord.receiptNote}
+internal fun TextChatRequest.recordTaken()=messages.any{(it.role=="tool"&&it.name==CompanionRecord.NAME&&runCatching{JSONObject(it.content).optBoolean("success")}.getOrDefault(false))||it.content.startsWith(CompanionRecord.receiptNote)}
 
 /** The current source turn: the record tool guide names it as 「当前来源 N」 (older contracts ended with a current_source JSON line). */
 internal fun TextChatRequest.currentSourceTurn():Long {

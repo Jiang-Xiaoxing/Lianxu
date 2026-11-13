@@ -30,6 +30,31 @@ class MemoryPortTest {
     private fun receipt(d:JSONObject,ops:JSONArray)=TextChatResult.Success(JSONObject().put("batch_id",d.getString("batch_id")).put("character_id","a").put("operations",ops).put("operation_count",ops.length()).put("complete",true).put("end_marker",d.getString("batch_id")).toString())
     private fun args(op:String="add",target:String?=null,text:String="我记得对方喜欢花园。")=JSONObject().put("op",op).put("category","PREFERENCE_BOUNDARY").put("about","USER").put("content",text).put("evidence",JSONArray().put("S1")).apply{target?.let{put("target",it)}}
     private fun request(input:String)=TextChatRequest(listOf(WireMessage("system","Synthetic rules"),WireMessage("user",input),WireMessage("system","Synthetic time")))
+    @Test fun compactAccountingKeepsFullAndPartialStagingFactsWithoutChangingCapsules():Unit=runBlocking{
+        val outputs=listOf(
+            mapOf<String,Any>("success" to true,"recorded" to true,"status" to "staged_until_reply_commit","note" to CompanionRecord.stagedNote),
+            mapOf<String,Any>("success" to true,"recorded" to true,"status" to "staged_until_reply_commit","note" to CompanionRecord.partialStagedNote),
+            mapOf<String,Any>("success" to true,"recorded" to true,"status" to "staged_until_reply_commit","note" to CompanionRecord.stagedNote,"relation" to RelationReceipt.GIVEN_UP))
+        for(output in outputs){
+            val ledger=ChatLedger(store);val t=ledger.begin("a","合成原话保持不变",config.id)
+            val refs=repo.references("a","合成原话保持不变",t.userMessageId)
+            val tools=MemoryTools(repo,t,"合成原话保持不变",refs,recordTool={output}){true}
+            var calls=0;val activities=mutableListOf<ChatToolActivity>();val before=com.google.gson.Gson().toJson(output)
+            val response=tools.run(config,"synthetic-only",request("合成原话保持不变"),client{r->
+                if(calls++==0)TextChatResult.Success("",listOf(ChatToolCall("record",CompanionRecord.NAME,"{}")))else{
+                    val note=r.messages.single{it.content.startsWith("[companion_record]")}.content
+                    assertEquals(CompanionRecord.receiptNote(output),note);assertTrue(note.contains("尚未正式保存"))
+                    assertFalse(r.messages.any{it.role=="tool"&&it.name==CompanionRecord.NAME})
+                    assertTrue(r.messages.single{it.role=="user"}.content.startsWith("合成原话保持不变"))
+                    TextChatResult.Success("合成角色自己的回复")
+                }
+            },onToolActivity={activities+=it})
+            assertTrue(response is TextChatResult.Success);assertEquals(2,calls)
+            assertEquals("staged",activities.last().state);assertEquals("回话成功后保存",activities.last().detail)
+            assertEquals(before,com.google.gson.Gson().toJson(output));assertTrue(repo.memories("a").isEmpty())
+            ledger.cancel(t.id,t.attempt)
+        }
+    }
     private suspend fun runtime(turn:ChatTurn)=MemoryTools(repo,turn,ChatLedger(store).context(turn.id).input,repo.references(turn.friendId,ChatLedger(store).context(turn.id).input,turn.userMessageId)){true}
     private suspend fun write(tools:MemoryTools,turn:ChatTurn,arguments:JSONObject,fail:Boolean=false):TextChatResult{
         var n=0
