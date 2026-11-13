@@ -1,5 +1,7 @@
 # 项目开发规范
 
+当前后续开发入口是本仓库的 `codex/local-development` 分支，入口与历史边界见 `DEVELOPMENT.md`，本机交接见未入库的 `HANDOFF.md`。这是 2026-11-13 用户要求整理唯一开发入口后的约定，替代外层历史规则中的旧开发目录和只在 main 提交的限制；其余工作约定继续遵守。本地开发不授权推送、线上合并或发布。
+
 使用仓库 Gradle wrapper、JDK 21 与 Android SDK 37。构建与验证见 README，不提交个人路径、密钥、本机配置、聊天资料、数据库或内部交接。
 
 UI 使用原生 Material3/Compose，沿用当前 AppTheme.kt、UiComponents.kt、UiSpace 的白灰绿配色、语义色、字号和留白。行楷仅用于已有授权字标，底栏顺序为聊天、通讯录、设置、我的；模型配置保留独立入口。历史 docs 中的旧设计不代表当前基线。
