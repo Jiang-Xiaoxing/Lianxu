@@ -161,7 +161,7 @@ internal object CompanionHints {
     }
 }
 
-@Composable internal fun CompanionReadMarker(vm:AppState,message:Message,bounds:Rect,viewport:Rect,enabled:Boolean){
+@Composable internal fun CompanionReadMarker(vm:AppState,message:Message,bounds:Rect,viewport:Rect,enabled:Boolean,showLabel:Boolean){
     val receipt=vm.companionReceipts.firstOrNull{it.messageId==message.id}?:return
     val lifecycle by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val focused=LocalWindowInfo.current.isWindowFocused
@@ -170,5 +170,6 @@ internal object CompanionHints {
     LaunchedEffect(message.id,visible,bounds,viewport,receipt.readAt){
         if(visible&&receipt.readAt==null){delay(600);vm.companionRead(message.friendId,message.id){currentlyVisible.value}}
     }
-    Text(if(receipt.readAt==null)"未读"else"已读",Modifier.testTag("read-${message.id}"),style=MaterialTheme.typography.labelSmall,color=Muted)
+    // Older messages still become read when visible; only their label is hidden.
+    if(showLabel)Text(if(receipt.readAt==null)"未读"else"已读",Modifier.testTag("read-${message.id}"),style=MaterialTheme.typography.labelSmall,color=Muted)
 }
