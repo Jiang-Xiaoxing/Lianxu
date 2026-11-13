@@ -251,7 +251,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
                 if(recordOnly&&output["success"]==true){
                     messages.removeAt(messages.lastIndex)          // the assistant tool_calls payload
                     if(result.text.isNotBlank())messages+=WireMessage("assistant",result.text,continuation=result.continuation)
-                    messages+=WireMessage("system",CompanionRecord.receiptNote)
+                    messages+=WireMessage("system",CompanionRecord.receiptNote(output))
                 }else messages+=WireMessage("tool",gson.toJson(output),toolCallId=call.id,name=call.name)
                 @Suppress("UNCHECKED_CAST")
                 val returned=((output["results"]?:output["messages"]) as? List<Map<String,Any>>).orEmpty()

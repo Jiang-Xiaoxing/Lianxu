@@ -61,7 +61,7 @@ class ForgetReplyAndroidTest {
             assertFalse(request.messages.any{"用户已明确要求停止使用指定经历；操作已在手机完成，只确认结果。" in it.content})
             when(calls){
                 1->{outcome(request,false);forget()}
-                2->{outcome(request,true);assertEquals(true,result(request,JointControl.NAME)!!.getBoolean("success"));TextChatResult.Success("",listOf(ChatToolCall("rewrite","agent_memory_update","""{"op":"add","category":"STATE_FACT","about":"USER","content":"我喜欢紫色风筝","evidence":["S1"]}""")))}
+                2->{outcome(request,true);assertEquals(true,result(request,JointControl.NAME)!!.getBoolean("success"));assertTrue(result(request,JointControl.NAME)!!.getString("note").contains("没有永久删除"));TextChatResult.Success("",listOf(ChatToolCall("rewrite","agent_memory_update","""{"op":"add","category":"STATE_FACT","about":"USER","content":"我喜欢紫色风筝","evidence":["S1"]}""")))}
                 else->{assertEquals(false,result(request,"agent_memory_update")!!.getBoolean("success"));assertEquals("SOURCE_CHANGED",result(request,"agent_memory_update")!!.getString("error"));TextChatResult.Success("好，我们聊今天的天气。")}
             }
         }
@@ -95,6 +95,7 @@ class ForgetReplyAndroidTest {
             if(calls==1){outcome(request,false);control("correct",quote=words)}else{
                 assertTrue(outcome(request,true).contains("以实际写入结果为准"))
                 val receipt=result(request,JointControl.NAME)!!;assertTrue(receipt.getBoolean("success"));assertEquals("correct",receipt.getString("action"))
+                assertTrue(receipt.getString("note").contains("没有把更正后的新内容写成记忆"))
                 TextChatResult.Success("好，之前那条不再作为依据。")
             }
         }

@@ -8,7 +8,11 @@ package app.lianxu.independent
 internal object CompanionRecord {
     const val NAME="companion_record"
     /** Follow-up round note: the accounting landed, so its payload is replaced by this line. */
-    const val receiptNote="[companion_record] 这轮已经记下。继续按人设自然回话，不要把字段读给用户。"
+    const val stagedNote="这次通过检查的内容已暂存，尚未正式保存；本轮回复成功保存时才会一并写入，回复失败或取消就不会保存这次记录。"
+    const val partialStagedNote="$stagedNote 关系部分只接收了通过检查的内容，没通过的部分没有记下。"
+    const val receiptNote="[companion_record] $stagedNote"
+    /** Preserve a partial result when the successful tool exchange is folded into a short note. */
+    fun receiptNote(result:Map<String,Any>)="[companion_record] "+(result["note"] as? String?:stagedNote)+(result["relation"]?.let{"\n$it"}?:"")
     /**
      * The field guide travels with the tool instead of the reply prompt: the visible reply stays
      * instructions about talking, and the accounting rules sit next to the fields they describe.

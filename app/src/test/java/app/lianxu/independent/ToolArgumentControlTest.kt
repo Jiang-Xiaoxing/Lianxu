@@ -19,7 +19,9 @@ class ToolArgumentControlTest {
     @Test fun validControlRetainsReceiptAndDoesNotDiagnose(){
         val args=JSONObject("""{"authorization":"current_direct_request","action":"forget","quote":"忘掉","targets":[1]}""")
         val p=JointControl.parse(args,"忘掉",0,setOf(1L),null)
-        assertEquals(mapOf("success" to true,"action" to "forget","targets" to listOf(1L),"status" to "applied","note" to "程序已执行；按当前人设自然回应，不引用停用内容。原聊天仍保留供用户查看。"),JointControl.receipt(p))
+        val receipt=JointControl.receipt(p)
+        assertEquals(mapOf("success" to true,"action" to "forget","targets" to listOf(1L),"status" to "applied"),receipt-"note")
+        assertTrue((receipt["note"] as String).contains("指定经历和相关判断已经停止使用"))
         assertTrue(ToolArgumentDiagnosis.diagnoseControl(args,"忘掉",setOf(1L)).isEmpty())
         assertTrue(runCatching{JointControl.parse(args,"忘掉",0,emptySet(),null)}.isFailure)
         assertEquals("targets[0]",ToolArgumentDiagnosis.diagnoseControl(args,"忘掉",emptySet()).single().field)

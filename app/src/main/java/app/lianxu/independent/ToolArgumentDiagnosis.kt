@@ -29,8 +29,8 @@ internal object ToolArgumentDiagnosis {
     fun failure(base:Map<String,Any>,error:Exception,diagnose:()->List<Problem>):Map<String,Any> = try {
         val all=diagnose();val shown=all.take(12)
         base+mapOf("problems" to shown.map{mapOf("field" to it.field,"expected" to it.expected,"actual" to it.actual)},
-            "detail" to if(all.isEmpty())"没能定位到具体字段（程序报错：${error.javaClass.simpleName}）" else
-                "参数有 ${all.size} 处不对："+shown.joinToString("；"){"${it.field}：${it.actual}，应${it.expected}"}+(if(all.size>12)"；另有 ${all.size-12} 处" else ""))
+            "detail" to if(all.isEmpty())"这次调用报告失败，还不能确认已经完成；没有查明具体哪个字段出了问题（${error.javaClass.simpleName}），不要猜原因。" else
+                "这次调用没有通过检查。参数有 ${all.size} 处不对："+shown.joinToString("；"){"${it.field}：${it.actual}，应${it.expected}"}+(if(all.size>12)"；另有 ${all.size-12} 处" else ""))
     }catch(_:Exception){base}
 
     fun diagnoseRecord(raw:String,input:String,needsExperience:Boolean):List<Problem> {
