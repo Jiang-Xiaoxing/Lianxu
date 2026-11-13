@@ -14,6 +14,7 @@ import org.junit.Rule
  */
 class ToolReceiptFlowUiTest {
     private val toolFirst=java.util.concurrent.atomic.AtomicInteger()
+    private val finishReply=kotlinx.coroutines.CompletableDeferred<Unit>()
     private val client=object:TextChatClient{
         override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
             syntheticCompanionStage(request)?.let{return it}
@@ -23,6 +24,7 @@ class ToolReceiptFlowUiTest {
                     """{"op":"add","target":"","category":"PREFERENCE_BOUNDARY","about":"USER","content":"喜欢吃意大利面","evidence":["S1"]}""")),
                     displayReasoning="先想一想。")
             }
+            finishReply.await()
             return TextChatResult.Success("记下了，意面我也爱吃。",displayReasoning="然后再说。")
         }
     }
@@ -48,6 +50,11 @@ class ToolReceiptFlowUiTest {
         ui.onNodeWithText("林间").performClick()
         waitFor("message-input")
     }
+    /** Scrolling can move every node between separate test API calls. Read one UI-frame snapshot. */
+    private fun tops(vararg texts:String):List<Float>{
+        val nodes=texts.map{ui.onNodeWithText(it).fetchSemanticsNode()}
+        return ui.runOnIdle{nodes.map{it.positionInRoot.y}}
+    }
     private fun assertOrderAndState(){
         ui.waitUntil(20000){ui.onAllNodesWithText("记下了，意面我也爱吃。").fetchSemanticsNodes().isNotEmpty()}
         // 回执先按「暂存」出现，提交结算后同一页自动变成已保存——不用手动刷新。
@@ -57,10 +64,7 @@ class ToolReceiptFlowUiTest {
         assertTrue("提交后不能再显示暂存文案",staged.isEmpty())
         val unsaved=ui.onAllNodesWithText("回话没完成，这条没存下").fetchSemanticsNodes()
         assertTrue("提交成功后不能显示未保存",unsaved.isEmpty())
-        val capsule=ui.onAllNodesWithText("嗯…我记住了").onFirst().getUnclippedBoundsInRoot().top.value
-        val first=ui.onNodeWithText("先想一想。").getUnclippedBoundsInRoot().top.value
-        val second=ui.onNodeWithText("然后再说。").getUnclippedBoundsInRoot().top.value
-        val body=ui.onNodeWithText("记下了，意面我也爱吃。").getUnclippedBoundsInRoot().top.value
+        val (first,capsule,second,body)=tops("先想一想。","嗯…我记住了","然后再说。","记下了，意面我也爱吃。")
         assertTrue("思考A要在胶囊上面：$first / $capsule",first<capsule)
         assertTrue("胶囊要在思考B上面：$capsule / $second",capsule<second)
         assertTrue("思考B要在正文上面：$second / $body",second<body)
@@ -73,9 +77,13 @@ class ToolReceiptFlowUiTest {
         ui.onNodeWithTag("send-message").performClick()
         // 生成中（还没提交）就要按断点排：思考A 在胶囊上面，暂存文案如实出现。
         ui.waitUntil(20000){ui.onAllNodesWithText("候选已暂存，尚未正式保存").fetchSemanticsNodes().isNotEmpty()}
-        val liveThinking=ui.onNodeWithText("先想一想。").getUnclippedBoundsInRoot().top.value
-        val liveCapsule=ui.onAllNodesWithText("嗯…我记住了").onFirst().getUnclippedBoundsInRoot().top.value
+        runBlocking{
+            val store=Store(context,mock.database)
+            try{Assert.assertEquals(TurnState.PENDING,ChatLedger(store).all().single().state)}finally{store.close()}
+        }
+        val (liveThinking,liveCapsule)=tops("先想一想。","嗯…我记住了")
         assertTrue("生成中也是思考A在胶囊上面：$liveThinking / $liveCapsule",liveThinking<liveCapsule)
+        finishReply.complete(Unit)
         assertOrderAndState()
         shot("01-completed");android.os.SystemClock.sleep(4000)
         // 退出再进来
