@@ -15,7 +15,7 @@ import com.google.gson.reflect.TypeToken
  * agreed outcome ("没想起来" / "没记下"), never glued on as "让我想一想，没想起来", so it never reads
  * as giving up before thinking. [kind] chooses the replacement text only (reads vs writes).
  */
-data class ChatToolActivity(val id:String,val attempt:Int,val title:String,val state:String,val before:String="",val detail:String="",val kind:String?=null,val tool:String?=null,val reasoningAt:Int=0,val reasoningKnown:Boolean=false,val operation:String?=null,val memoryId:String?=null,val recallGroup:String?=null) {
+data class ChatToolActivity(val id:String,val attempt:Int,val title:String,val state:String,val before:String="",val detail:String="",val kind:String?=null,val tool:String?=null,val reasoningAt:Int=0,val reasoningKnown:Boolean=false,val operation:String?=null,val memoryId:String?=null,val recallGroup:String?=null,val recallRefs:List<RecallContentRef?>?=null) {
     fun label():String = when(state){
         "failed"->when(kind){WRITE->"没记下";READ->"没想起来";else->title}
         // A turn that ended before the tool reported keeps the honest "not confirmed" wording.
@@ -59,7 +59,7 @@ internal object ChatToolJournal {
     fun key(turn:String)=PREFIX+turn
     /** One turn never shows more pills than this; a backup carrying more is not one of ours. */
     private const val MAX_BACKUP_ROWS=200
-    private val BACKUP_FIELDS=setOf("id","attempt","title","state","before","detail","kind","tool","reasoningAt","reasoningKnown","operation","memoryId","recallGroup")
+    private val BACKUP_FIELDS=setOf("id","attempt","title","state","before","detail","kind","tool","reasoningAt","reasoningKnown","operation","memoryId","recallGroup","recallRefs")
     /** A finished turn only ever keeps settled receipts; running/staged are settled before export. */
     private val BACKUP_STATES=setOf("success","failed","unknown")
     private val TOOL_NAME=Regex("[A-Za-z0-9_.\\-]{1,100}")
@@ -70,12 +70,12 @@ internal object ChatToolJournal {
      * running or staged is settled exactly as an interrupted turn would settle it; a link to a memory row
      * that is not in this export is dropped, leaving a pill that shows but cannot be opened.
      */
-    fun forBackup(raw:String,memoryIds:Set<String>):String = Gson().toJson(rows(raw).map{row->
+    fun forBackup(raw:String,memoryIds:Set<String>,messageIds:Set<Long> = emptySet()):String = Gson().toJson(rows(raw).map{row->
         val settled=if(row.state=="running"||row.state=="staged")settleRows(listOf(row),row.attempt,committed=false,recordSaved=false,memorySaved=false).single() else row
-        if(settled.memoryId!=null&&settled.memoryId !in memoryIds)settled.copy(memoryId=null) else settled
+        settled.copy(memoryId=settled.memoryId?.takeIf{it in memoryIds},recallRefs=settled.recallRefs?.map{ref->ref?.takeIf{if(it.kind=="memory")it.id in memoryIds else it.id.toLongOrNull() in messageIds}}?.takeIf{refs->refs.any{it!=null}})
     })
     /** Strict format check for a backup value: only the fields and states a receipt really has, within their limits. */
-    fun validateBackup(raw:String,memoryIds:Set<String>){
+    fun validateBackup(raw:String,memoryIds:Set<String>,messageIds:Set<Long> = emptySet()){
         fun fail():Nothing=throw IllegalArgumentException("工具胶囊回执格式无效")
         val rows=runCatching{JsonParser.parseString(raw)}.getOrNull()?.takeIf{it.isJsonArray}?.asJsonArray?:fail()
         if(rows.size()>MAX_BACKUP_ROWS)fail()
@@ -104,15 +104,33 @@ internal object ChatToolJournal {
             o.get("reasoningKnown")?.takeUnless{it.isJsonNull}?.let{if(!it.isJsonPrimitive||!it.asJsonPrimitive.isBoolean)fail()}
             text("operation",200)
             text("recallGroup",100,blank=false)
+            o.get("recallRefs")?.takeUnless{it.isJsonNull}?.let{refs->
+                if(!refs.isJsonArray||refs.asJsonArray.size() !in 1..MAX_RECALL_CONTENT_REFS)fail()
+                refs.asJsonArray.filterNot{it.isJsonNull}.forEach{element->
+                    val ref=element.takeIf{it.isJsonObject}?.asJsonObject?:fail()
+                    if(ref.keySet()!=setOf("kind","id","version","mode","digest","start","length"))fail()
+                    listOf("kind","id","mode","digest").forEach{k->if(ref[k]?.isJsonPrimitive!=true||!ref[k].asJsonPrimitive.isString)fail()}
+                    listOf("version","start","length").forEach{k->val v=ref[k]?:fail();if(!v.isJsonPrimitive||!v.asJsonPrimitive.isNumber||v.asDouble!=v.asInt.toDouble())fail()}
+                    val value=runCatching{Gson().fromJson(ref,RecallContentRef::class.java)}.getOrNull()?:fail()
+                    if(!value.valid()||(value.kind=="memory"&&value.id !in memoryIds)||(value.kind=="message"&&value.id.toLongOrNull() !in messageIds))fail()
+                }
+            }
             text("memoryId",200)?.let{if(it !in memoryIds)fail()}
         }
     }
     /** Restore: the memory rows got new ids, so each link follows its row; a link with no row is dropped. */
-    fun remapBackup(raw:String,memoryIds:Map<String,String>):String {
+    fun remapBackup(raw:String,memoryIds:Map<String,String>,messageIds:Map<Long,Long> = emptyMap()):String {
         val rows=JsonParser.parseString(raw).asJsonArray
         val out=JsonArray()
         rows.forEach{e->val o=e.asJsonObject.deepCopy()
             o.get("memoryId")?.takeUnless{it.isJsonNull}?.asString?.let{old->val next=memoryIds[old];if(next==null)o.remove("memoryId") else o.addProperty("memoryId",next)}
+            o.get("recallRefs")?.takeUnless{it.isJsonNull}?.asJsonArray?.let{refs->
+                refs.forEachIndexed{index,element->if(!element.isJsonNull){val ref=element.asJsonObject;val old=ref["id"].asString
+                    val next=if(ref["kind"].asString=="memory")memoryIds[old]else old.toLongOrNull()?.let{messageIds[it]?.toString()}
+                    if(next==null)refs.set(index,com.google.gson.JsonNull.INSTANCE)else ref.addProperty("id",next)
+                }}
+                if(refs.none{!it.isJsonNull})o.remove("recallRefs")
+            }
             out.add(o)
         }
         return out.toString()

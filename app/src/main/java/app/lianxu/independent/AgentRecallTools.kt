@@ -45,14 +45,18 @@ internal data class AgentRecallCandidate(
     val importance: Int = 0,
     val current: Boolean = true,
     /** 向量相似度（0～1），未开启向量或未命中时为 0。 */
-    val vectorScore: Float = 0f
+    val vectorScore: Float = 0f,
+    /** Internal display provenance; deliberately absent from the tool wire map. */
+    @Transient val displayVersion:Int?=null,
+    @Transient val displayMode:String?=null
 )
 
 internal data class AgentHistoryMessage(
     val id: String,
     val role: String,
     val content: String,
-    val timestamp: String
+    val timestamp: String,
+    @Transient val displayVersion:Int?=null
 )
 
 internal val agentRecallToolIds = setOf(
@@ -129,8 +133,10 @@ internal class AgentRecallToolHandler(
     // One request-local snapshot per query, so subsequent pages do not repeat embedding calls or reshuffle.
     private val recallPages = mutableMapOf<String,List<AgentRecallCandidate>>()
     private val historyPages = mutableMapOf<String,List<AgentHistoryMessage>>()
+    var displayOrigins:List<RecallContentOrigin> = emptyList();private set
 
     suspend fun execute(toolName: String, args: Map<String, Any>): Map<String, Any> {
+        displayOrigins=emptyList()
         if (toolName !in agentRecallToolIds) return failure("未知的记忆回查工具")
         if (!reader.isAvailable(sessionId)) return failure("当前会话未开启长期记忆回查")
         return when (toolName) {
@@ -174,6 +180,7 @@ internal class AgentRecallToolHandler(
             val size = gson.toJson(item).length
             if (used + size > budget) break
             matches += item
+            displayOrigins=displayOrigins+RecallContentOrigin("memory",candidate.id,candidate.displayVersion,candidate.displayMode)
             used += size
         }
         return success(
@@ -219,6 +226,7 @@ internal class AgentRecallToolHandler(
             val size = gson.toJson(item).length
             if (used + size > budget) break
             matches += item
+            displayOrigins=displayOrigins+RecallContentOrigin("message",message.id,message.displayVersion,"full")
             used += size
         }
         return success(

@@ -74,7 +74,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
         val turns=tables["chat_turns"].asJsonArray.map{it.asJsonObject["id"].asString}.toSet();val batches=tables["memory_batches"].asJsonArray.map{it.asJsonObject["id"].asString}.toSet()
         val memoryIds=tables["memory_current"].asJsonArray.map{it.asJsonObject["id"].asString}.toSet()
         val preferences=JsonObject();prefs(db).filterKeys{roleKey(it,id,turns,batches)}.forEach{(k,raw)->
-            val v=if(k.startsWith(ChatToolJournal.PREFIX))ChatToolJournal.forBackup(raw,memoryIds) else raw
+            val v=if(k.startsWith(ChatToolJournal.PREFIX))ChatToolJournal.forBackup(raw,memoryIds,tables["messages"].asJsonArray.map{it.asJsonObject["id"].asLong}.toSet()) else raw
             // Retired example records remain opaque history; there is no picker to resume.
             budget.json(JsonPrimitive(v));preferences.addProperty(k,v)
         }
@@ -130,7 +130,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
             val candidateIds=tables["memory_candidates"].asJsonArray.map{it.asJsonObject["id"].asString}.toSet()
             val proposedIds=tables["memory_candidates"].asJsonArray.map{JsonParser.parseString(it.asJsonObject["json"].asString).asJsonObject["proposed"].asJsonObject["id"].asString}.toSet()
             role["preferences"].asJsonObject.entrySet().forEach{(k,value)->require(roleKey(k,id,turns,batches)&&value.isJsonPrimitive&&value.asJsonPrimitive.isString);RoleArchive.parse(("{\"value\":"+value.asString+"}").toByteArray())
-                if(k.startsWith(ChatToolJournal.PREFIX))ChatToolJournal.validateBackup(value.asString,memoryIds)}
+                if(k.startsWith(ChatToolJournal.PREFIX))ChatToolJournal.validateBackup(value.asString,memoryIds,tables["messages"].asJsonArray.map{it.asJsonObject["id"].asLong}.toSet())}
             for(table in extra+companionTables){if(!tables.has(table))continue;val schema=db.rawQuery("PRAGMA table_info($table)",null).use{c->buildMap{while(c.moveToNext())put(c.getString(1),c.getString(2))}}
                 val rows=tables[table].asJsonArray;total+=rows.size();require(total<=200000)
                 rows.forEach{r->val j=r.asJsonObject;require(j.keySet().all{it in schema.keys});j.entrySet().forEach{(k,x)->if(!x.isJsonNull){if(schema[k]=="INTEGER")RoleArchive.integer(x)else if(schema[k]=="REAL")require(x.isJsonPrimitive&&x.asJsonPrimitive.isNumber&&x.asDouble.isFinite())else require(x.isJsonPrimitive&&x.asJsonPrimitive.isString)}};if(j.has("friend_id"))require(j["friend_id"].asString==id)
@@ -287,6 +287,6 @@ internal class BackupRemapper(private val old:String,private val id:String,priva
         if(key.startsWith(ChatToolJournal.PREFIX))return ChatToolJournal.key(strings[key.removePrefix(ChatToolJournal.PREFIX)]?:error("轮次引用缺失"))
         error("不支持的角色设置")
     }
-    fun toolDisplayValue(raw:String)=runCatching{ChatToolJournal.remapBackup(raw,strings)}.getOrElse{error("角色设置格式无效")}
+    fun toolDisplayValue(raw:String)=runCatching{ChatToolJournal.remapBackup(raw,strings,messages)}.getOrElse{error("角色设置格式无效")}
     fun preferenceValue(raw:String)=runCatching{json(JsonParser.parseString(raw)).toString()}.getOrElse{error("角色设置格式无效")}
 }

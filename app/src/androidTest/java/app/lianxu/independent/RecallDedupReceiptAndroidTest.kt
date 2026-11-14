@@ -114,4 +114,24 @@ class RecallDedupReceiptAndroidTest {
         assertNotNull(rows[0].recallGroup);assertNotNull(rows[1].recallGroup)
         assertNotEquals(rows[0].recallGroup,rows[1].recallGroup)
     }
+    @Test fun actualToolLoopRetainsEightDeduplicatedChatHitsAndTheirMemoryContent()=runBlocking{
+        val ledger=ChatLedger(store)
+        val originals=(1..8).map{"听雨合成线索，第${it}次聊天。"}
+        originals.forEach{text->val turn=ledger.begin("a",text,"fake");assertTrue(ledger.finish(turn.id,turn.attempt,"合成回答"))}
+        val memory=repo.manualSave("a",null,"听雨合成线索是共同回忆。".repeat(50),MemoryCategory.STATE_FACT,false,false,MemoryAbout.USER)
+        var rawHistory:String?=null
+        val r=runner{request->
+            if(request.messages.none{it.role=="tool"})TextChatResult.Success("",listOf(
+                ChatToolCall("history","agent_history_search","""{"query":"听雨合成线索","limit":8}"""),
+                ChatToolCall("memory","agent_memory_read","""{"query":"听雨合成线索"}""")))
+            else{rawHistory=request.messages.first{it.role=="tool"&&it.name=="agent_history_search"}.content;TextChatResult.Success("找到了。")}
+        }
+        assertTrue(r.send("a","回想听雨合成线索"){});idle(r)
+        val turn=done();assertEquals(TurnState.COMPLETED,turn.state)
+        val output=JSONObject(requireNotNull(rawHistory));assertEquals("found",output.getString("status"));assertEquals(8,output.getInt("visible_duplicates"));assertEquals(0,output.getJSONArray("results").length())
+        val rows=turn.toolActivities;assertEquals(2,rows.size);assertTrue(rows.all{it.state=="success"&&!it.recallRefs.isNullOrEmpty()})
+        assertEquals(1,recallReceiptGroups(rows).values.distinct().size)
+        val texts=repo.recallContents("a",rows).filterIsInstance<RecallContentPart.Text>().map{it.value}
+        assertTrue(texts.containsAll(originals));assertTrue(texts.any{memory.text.startsWith(it)&&it.length<=120})
+    }
 }

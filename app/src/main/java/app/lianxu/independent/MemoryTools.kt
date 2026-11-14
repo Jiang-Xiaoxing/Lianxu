@@ -24,6 +24,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
     private val recalled=linkedMapOf<String,RecallSource>()
     private val deliveredMemories=mutableSetOf<String>()
     private val clarities=mutableMapOf<String,Double>()
+    private val recallContent=RecallContentCapture(repo,turn.friendId)
     private fun remembered(db:SQLiteDatabase,m:StoredMemory):String {
         val clarity=clarities.getOrPut(m.id){MemoryForgetting.state(db,m,recallAt).clarity(recallAt)}
         return MemoryForgetting.text(m,clarity){repo.describe(m)}
@@ -72,14 +73,17 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
             val scores=memoryVectors?.scores(sessionId,terms.firstOrNull().orEmpty(),queryCache).orEmpty()
             return (repo.read{db->
             repo.usableMemories(db,sessionId).filter{m->terms.any{it in (m.text+" "+m.tags.joinToString(" ")+" "+m.eventDate.orEmpty()).lowercase()}||(scores["${m.id}@${m.version}"]?:0.0)>=AdaptiveContext.MIN_RELEVANCE}
-                .map{m->val body=remembered(db,m);AgentRecallCandidate(m.id,"companion_memory",if(clarities.getValue(m.id)>60)m.category.label else "",body,if(clarities.getValue(m.id)>60)m.tags else emptyList(),sessionId,startMessageId=if(clarities.getValue(m.id)>60)m.evidence.firstOrNull()?.source?.turnId?.toString()else null,startedAt=if(clarities.getValue(m.id)>60)m.eventDate else null,current=true,vectorScore=(scores["${m.id}@${m.version}"]?:0.0).toFloat())}
+                .map{m->val body=remembered(db,m);AgentRecallCandidate(m.id,"companion_memory",if(clarities.getValue(m.id)>60)m.category.label else "",body,if(clarities.getValue(m.id)>60)m.tags else emptyList(),sessionId,startMessageId=if(clarities.getValue(m.id)>60)m.evidence.firstOrNull()?.source?.turnId?.toString()else null,startedAt=if(clarities.getValue(m.id)>60)m.eventDate else null,current=true,vectorScore=(scores["${m.id}@${m.version}"]?:0.0).toFloat(),displayVersion=m.version,displayMode=if(clarities.getValue(m.id)>60)"full"else if(clarities.getValue(m.id)>=20)"gist"else"trace")}
                 .filter{it.content.isNotBlank()}
                 .sortedWith(compareByDescending<AgentRecallCandidate>{recallScore(it,terms)}.thenBy{it.id}).take(limit)
         }+(companionIndex?.search(sessionId,terms.firstOrNull().orEmpty(),limit,queryCache)?:CompanionRepository(repo.store).recall(sessionId,terms,limit))).sortedWith(compareByDescending<AgentRecallCandidate>{recallScore(it,terms)}.thenBy{it.id}).take(limit)
         }
-        override suspend fun searchHistory(sessionId:String,terms:List<String>,limit:Int)=repo.sources(sessionId).flatMap{it.messages}
-            .filter{m->terms.any{it in m.text.lowercase()}}.sortedWith(compareByDescending<Message>{m->terms.sumOf{if(it in m.text.lowercase())it.length.coerceAtMost(8) else 0}}.thenByDescending{it.created})
-            .take(limit).map(::history)
+        override suspend fun searchHistory(sessionId:String,terms:List<String>,limit:Int)=repo.read{db->recallReadSnapshot(db){
+            val versions=db.rawQuery("SELECT m.id,COALESCE(s.revision,1) FROM messages m LEFT JOIN message_state s ON s.message_id=m.id WHERE m.friend_id=?",arrayOf(sessionId)).use{c->buildMap{while(c.moveToNext())put(c.getLong(0),c.getInt(1))}}
+            repo.sources(db,sessionId).flatMap{it.messages}
+                .filter{m->terms.any{it in m.text.lowercase()}}.sortedWith(compareByDescending<Message>{m->terms.sumOf{if(it in m.text.lowercase())it.length.coerceAtMost(8) else 0}}.thenByDescending{it.created})
+                .take(limit).map{m->history(m).copy(displayVersion=versions[m.id])}
+        }}
         override suspend fun readHistory(sessionId:String,anchorMessageId:String,before:Int,after:Int):List<AgentHistoryMessage>{
             val rows=repo.sources(sessionId).flatMap{it.messages};val index=rows.indexOfFirst{it.id.toString()==anchorMessageId}
             if(index<0)return emptyList();return rows.subList((index-before).coerceAtLeast(0),(index+after+1).coerceAtMost(rows.size)).map(::history)
@@ -208,6 +212,8 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
                 onToolActivity?.invoke(activity)
                 Diagnostics.event("tool.call",mapOf("character" to turn.friendId,"turn" to turn.id,"step" to step,"call_id" to call.id,"name" to call.name,"arguments" to Diagnostics.raw(call.arguments)))
                 if(!active()||repo.memoryRules(repo.store.readableDatabase)!=rulesState)return TextChatResult.Failure(ChatFailure.SOURCE_CHANGED)
+                var rawRecallRows:List<Map<String,Any>>?=null
+                var rawRecallOrigins:List<RecallContentOrigin> = emptyList()
                 val rawOutput=try {
                     val args=JSONObject(call.arguments)
                     if(call.name==ImmediateContact.NAME){contactAttempts++;contactTool!!.invoke(call.arguments)} else if(call.name==JointControl.NAME){controlAttempts++;controlTool!!.invoke(args)} else if(call.name==CompanionRecord.NAME){recordAttempts++;recordTool!!.invoke(call.arguments)} else if(call.name==RelationshipRecall.NAME){budget.read(actor){searchRelation(args).also{if(it["status"]=="quota_exhausted")relationCalls++}}}
@@ -219,6 +225,8 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
                         val name=if(call.name=="agent_memory_read")"agent_recall_search" else call.name
                         val raw=recall.execute(name,converted);completedReads++
                         @Suppress("UNCHECKED_CAST")
+                        if(call.name in ChatToolActivity.RECALL_TOOLS){rawRecallRows=raw["results"] as? List<Map<String,Any>>;rawRecallOrigins=recall.displayOrigins}
+                        @Suppress("UNCHECKED_CAST")
                         val rows=(raw["results"] as? List<Map<String,Any>>)?.map{row->
                             val id=row["id"] as? String
                             val m=id?.let{repo.read{db->repo.memory(db,turn.friendId,it)}}
@@ -229,7 +237,12 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
                 }catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:RecallContextCapacity){if(call.name==RelationshipRecall.NAME)mapOf("status" to "context_full")else return TextChatResult.Failure(ChatFailure.CONTEXT_CAPACITY)}catch(e:Exception){ToolArgumentDiagnosis.writeFailure(call.name,call.arguments,input,targets.keys,mapOf("success" to false,"error" to ((e as? ProcessingRejected)?.code?:"invalid_arguments")),e)}
                 currentCoroutineContext().ensureActive()
                 val output=ToolArgumentDiagnosis.retryExhausted(call.name,if(call.name==JointControl.NAME)controlAttempts else recordAttempts,rawOutput)
-                val shown=ChatToolJournal.result(activity,output)
+                val resultActivity=ChatToolJournal.result(activity,output)
+                val shown=if(call.name in ChatToolActivity.RECALL_TOOLS&&resultActivity.state=="success"){
+                    val refs=try{recallContent.capture(rawRecallRows,output,rawRecallOrigins)}
+                    catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:Exception){null}
+                    resultActivity.copy(recallRefs=refs)
+                }else resultActivity
                 onToolActivity?.invoke(shown)
                 if(call.name=="agent_memory_update"&&shown.state=="staged")stagedMemory[shown.id]=shown
                 if(call.name in CompanionRecallBudget.readNames){progress.accept(output);progress.stopped?.let{Diagnostics.event("recall.stopped",mapOf("reason" to it,"turn" to turn.id,"step" to step))}}
