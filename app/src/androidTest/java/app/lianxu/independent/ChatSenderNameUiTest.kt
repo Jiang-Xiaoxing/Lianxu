@@ -11,16 +11,19 @@ import org.junit.Rule
 import org.junit.Test
 import java.io.File
 
-/** 她每组回复最上面、头像右侧显示角色名（类似微信）；用户自己的消息不显示名字。合成数据。 */
+/** 角色名只留在聊天顶部；消息、思考和工具保留，分组不重复显示姓名。合成数据。 */
 class ChatSenderNameUiTest {
     private val reply = "哟，就一个“hi”，这才想起我？\n\n这会儿快四点了，手上的活还在吗？"
     private val client = object : TextChatClient {
-        override suspend fun complete(config: ModelConfig, key: String, request: TextChatRequest): TextChatResult =
-            syntheticCompanionStage(request) ?: TextChatResult.Success(reply, displayReasoning = "他就发了个hi，我先逗他一句，再问问他手上的活。")
+        override suspend fun complete(config: ModelConfig, key: String, request: TextChatRequest): TextChatResult {
+            syntheticCompanionStage(request)?.let{return it}
+            if(request.tools.any{toolNameOf(it)=="agent_recall_search"}&&request.messages.none{it.role=="tool"&&it.name=="agent_recall_search"})return TextChatResult.Success("",listOf(ChatToolCall("name-ui-recall","agent_recall_search","""{"query":"合成记忆"}""")))
+            return TextChatResult.Success(reply, displayReasoning = "他就发了个hi，我先逗他一句，再问问他手上的活。")
+        }
     }
     @get:Rule(order = 1) val mock = MockChatFixture({ client })
     @get:Rule(order = 2) val ui = createAndroidComposeRule<MainActivity>()
-    @Test fun roleGroupShowsNameAboveEverythingAndUserGroupDoesNot() {
+    @Test fun roleNameStaysInHeaderWithoutRepeatedGroupNames() {
         ui.waitUntil(30000) { ui.onAllNodesWithTag("tab-0").fetchSemanticsNodes().isNotEmpty() }
         ui.onNodeWithTag("tab-0").performClick()
         ui.waitUntil(30000) { ui.onAllNodesWithText("林间").fetchSemanticsNodes().isNotEmpty() }
@@ -36,27 +39,27 @@ class ChatSenderNameUiTest {
         val turn = requireNotNull(completed())
         val id = requireNotNull(turn.assistantMessageId)
         ui.waitUntil(15000) { ui.onAllNodesWithTag("message-$id").fetchSemanticsNodes().isNotEmpty() }
+        ui.runOnIdle{ui.activity.getSystemService(android.view.inputmethod.InputMethodManager::class.java).hideSoftInputFromWindow(ui.activity.window.decorView.windowToken,0)}
         ui.waitForIdle()
         val names = ui.onAllNodes(SemanticsMatcher("sender-name") { n ->
             n.config.getOrElse(androidx.compose.ui.semantics.SemanticsProperties.TestTag) { "" }.startsWith("sender-name-")
         }, useUnmergedTree = true).fetchSemanticsNodes()
-        assertEquals("只有她的那一组显示名字，用户的 hi 不显示", 1, names.size)
-        val name = ui.onNodeWithTag("sender-name-$id", useUnmergedTree = true)
-        name.assertTextEquals("林间")
-        val nameBox = name.getUnclippedBoundsInRoot()
-        val bodyTop = ui.onNodeWithTag("message-$id").getUnclippedBoundsInRoot().top
-        assertTrue("名字必须在正文气泡上面", nameBox.bottom <= bodyTop)
-        val pills = ui.onAllNodesWithText("嗯…我记住了")
-        repeat(pills.fetchSemanticsNodes().size) { i ->
-            assertTrue("名字必须在胶囊上面", nameBox.bottom <= pills[i].getUnclippedBoundsInRoot().top)
-        }
-        val think = ui.onAllNodesWithTag("thinking-card-message-$id", useUnmergedTree = true)
+        assertEquals("消息上方不再重复角色名，也不新增用户姓名", 0, names.size)
+        ui.onNodeWithTag("chat-title").assertTextEquals("林间")
+        ui.onNodeWithTag("chat-role-detail").assertHasClickAction()
+        ui.onNodeWithTag("back").assertHasClickAction()
+        ui.onNodeWithTag("message-$id").assertTextEquals(reply)
+        ui.onNodeWithTag("bubble-$id-0",useUnmergedTree=true).assertIsDisplayed()
+        ui.onNodeWithTag("bubble-$id-1",useUnmergedTree=true).assertIsDisplayed()
+        assertTrue("角色头像仍显示",ui.onAllNodesWithTag("role-avatar-seed-lin").fetchSemanticsNodes().isNotEmpty())
+        val think = ui.onAllNodes(SemanticsMatcher("thinking card") {it.config.getOrElse(androidx.compose.ui.semantics.SemanticsProperties.TestTag){""}.startsWith("thinking-card-message-$id")}, useUnmergedTree = true)
         val thinkCount = think.fetchSemanticsNodes().size
         assertTrue("应有思考框", thinkCount > 0)
-        repeat(thinkCount) { i -> assertTrue("名字必须在思考框上面", nameBox.bottom <= think[i].getUnclippedBoundsInRoot().top) }
+        val recall=turn.toolActivities.first{it.tool=="agent_recall_search"}
+        ui.onNodeWithTag("tool-result-${recall.id}",true).assertIsDisplayed()
         val dir = requireNotNull(instrument.targetContext.getExternalFilesDir("names")).apply { mkdirs() }
         val bitmap = instrument.uiAutomation.takeScreenshot()
-        File(dir, "name_added.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        File(dir, "name_removed.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         bitmap.recycle()
     }
 }

@@ -133,7 +133,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
     Column(Modifier.fillMaxSize().background(ChatPageBackground)){
         Row(Modifier.fillMaxWidth().heightIn(min=68.dp).background(ChatBarBackground).padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically){
             IconButton(onClick={vm.back()},modifier=Modifier.size(UiSpace.action).testTag("back").semantics{contentDescription="返回"}){ControlIcon("back",Ink)}
-            Text(if(typing)"对方正在输入…" else friend.name,Modifier.weight(1f).padding(horizontal=8.dp,vertical=8.dp).testTag("chat-title"),style=PageTitleStyle,maxLines=2,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            Text(if(typing)"对方正在输入…" else friend.name,Modifier.weight(1f).padding(horizontal=8.dp,vertical=8.dp).testTag("chat-title"),style=MaterialTheme.typography.titleLarge,maxLines=2,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             IconButton(onClick={vm.open("detail",friend.id)},modifier=Modifier.size(UiSpace.action).testTag("chat-role-detail").semantics{contentDescription="角色资料"}){ControlIcon("more")}
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned{val p=it.localToWindow(Offset.Zero);viewport=Rect(p,it.size.toSize())}){
@@ -163,7 +163,6 @@ private suspend fun LazyListState.showEndOf(index:Int){
                         Row(Modifier.fillMaxWidth(),horizontalArrangement=if(group.mine)Arrangement.End else Arrangement.Start,verticalAlignment=Alignment.Top){
                             if(!group.mine){Avatar(friend,32);Spacer(Modifier.width(8.dp))}
                             Column(horizontalAlignment=if(group.mine)Alignment.End else Alignment.Start,verticalArrangement=Arrangement.spacedBy(4.dp)){
-                                if(!group.mine)Text(friend.name,Modifier.padding(start=4.dp).testTag("sender-name-${group.messages.first().id}"),style=MaterialTheme.typography.labelMedium,color=Muted,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                 group.messages.forEach{message->
                                     var bounds by remember(message.id){mutableStateOf(Rect.Zero)}
                                     val shape=RoundedCornerShape(topStart=if(!group.mine)6.dp else 18.dp,topEnd=if(group.mine)6.dp else 18.dp,bottomStart=18.dp,bottomEnd=18.dp)
