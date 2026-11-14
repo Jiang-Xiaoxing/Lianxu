@@ -44,10 +44,10 @@ private suspend fun LazyListState.showEndOf(index:Int){
 }
 
 /** Centered history state for a committed memory batch; one line, wraps instead of clipping at large font scales. */
-@Composable internal fun MemorySummaryPill(pill:MemoryPill){
+@Composable internal fun MemorySummaryPill(pill:MemoryPill,onClick:(()->Unit)?=null){
     val shape=RoundedCornerShape(50)
     Row(Modifier.fillMaxWidth().padding(vertical=2.dp).testTag("memory-pill-${pill.batchId}"),horizontalArrangement=Arrangement.Center){
-        Row(Modifier.widthIn(max=280.dp).clip(shape).background(Paper).border(.5.dp,Line,shape).padding(horizontal=12.dp,vertical=6.dp).testTag("memory-pill-box-${pill.batchId}"),
+        Row(Modifier.widthIn(max=280.dp).clip(shape).background(Paper).border(.5.dp,Line,shape).then(if(onClick==null)Modifier else Modifier.clickable(role=Role.Button,onClick=onClick)).padding(horizontal=12.dp,vertical=6.dp).testTag("memory-pill-box-${pill.batchId}"),
             verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){
             ControlIcon("memory",GreenText,16.dp)
             Text(pill.text,style=MaterialTheme.typography.labelMedium,color=GreenText,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
@@ -58,6 +58,8 @@ private suspend fun LazyListState.showEndOf(index:Int){
 @OptIn(ExperimentalMaterial3Api::class,androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable internal fun Chat(vm:AppState){
     val friend=vm.friends.find{it.id==vm.activeId}?:return
+    var memoryBatch by remember(friend.id){mutableStateOf<String?>(null)}
+    memoryBatch?.let{batch->ChatMemoryPillDetails(vm,friend.id,batch){memoryBatch=null}}
     val parameterCards=rememberParameterCards(vm,friend.id)
     // Pending prefixes are durable already, but the attempt preview owns their one visible copy.
     val pendingBodies=vm.turns.filter{it.friendId==friend.id&&it.state==TurnState.PENDING&&vm.chatPreview?.let{p->p.turnId==it.id&&p.attempt==it.attempt}==true}.mapNotNull{it.assistantMessageId}.toSet()
@@ -157,7 +159,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
             LazyColumn(Modifier.fillMaxSize().testTag("chat-history"),state=list,contentPadding=PaddingValues(horizontal=UiSpace.page,vertical=20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
                 items(timeline,key={it.key}){row->when(row){
                     is ChatRow.Date->{val date=LocalDate.ofEpochDay(row.day);Text(if(date==LocalDate.now())"今天" else date.format(DateTimeFormatter.ofPattern("M月d日")),Modifier.fillMaxWidth().padding(bottom=8.dp),style=MaterialTheme.typography.labelSmall,color=Muted,textAlign=androidx.compose.ui.text.style.TextAlign.Center)}
-                    is ChatRow.Pill->MemorySummaryPill(row.value)
+                    is ChatRow.Pill->MemorySummaryPill(row.value){memoryBatch=row.value.batchId}
                     is ChatRow.Group->{val group=row.value
                         Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
                         Row(Modifier.fillMaxWidth(),horizontalArrangement=if(group.mine)Arrangement.End else Arrangement.Start,verticalAlignment=Alignment.Top){
