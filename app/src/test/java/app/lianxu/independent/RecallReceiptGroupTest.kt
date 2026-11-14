@@ -67,6 +67,7 @@ class RecallReceiptGroupTest {
         val item=ChatToolJournal.start(call,2,"原话","batch")
         assertEquals("batch",item.recallGroup);assertEquals("running",item.state)
         assertEquals(before,call)
-        assertNull(ChatToolJournal.start(call.copy(name="agent_history_search"),2,"","batch").recallGroup)
+        assertEquals("batch",ChatToolJournal.start(call.copy(name="agent_history_search"),2,"","batch").recallGroup)
+        assertNull(ChatToolJournal.start(call.copy(name="agent_history_read"),2,"","batch").recallGroup)
     }
 }

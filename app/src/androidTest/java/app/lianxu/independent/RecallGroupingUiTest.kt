@@ -18,6 +18,7 @@ import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
+import com.google.gson.Gson
 
 /** Production receipt components; synthetic journals only, no API or account. */
 class RecallGroupingUiTest {
@@ -67,9 +68,10 @@ class RecallGroupingUiTest {
         shot("recall-miss-error.png")
     }
     @Test fun separateResponsesAndLegacyRowsStaySeparateAlongsideOtherTools(){
-        render(listOf(row("a",group="first"),row("b",group="second"),row("old1",group=null),row("old2",group=null),row("write",tool="agent_memory_update").copy(title="嗯…我记住了",kind=ChatToolActivity.WRITE)))
+        render(listOf(row("a",group="first"),row("b",group="second"),row("old1","failed",null,"没找到符合的内容","agent_history_search"),row("old2",group=null),row("write",tool="agent_memory_update").copy(title="嗯…我记住了",kind=ChatToolActivity.WRITE)))
         listOf("a","b","old1","old2","write").forEach{ui.onNodeWithTag("tool-result-$it").assertIsDisplayed()}
-        assertEquals(4,ui.onAllNodesWithText("想起来了").fetchSemanticsNodes().size)
+        assertEquals(3,ui.onAllNodesWithText("想起来了").fetchSemanticsNodes().size)
+        ui.onNodeWithText("没找到").assertIsDisplayed();ui.onNodeWithText("回想出错").assertDoesNotExist()
     }
     @Test fun interleavedThinkingKeepsItsTextAndOnlyOneSameResponseCapsule(){
         render(listOf(row("a"),row("b")),thinking=true)
@@ -92,5 +94,29 @@ class RecallGroupingUiTest {
         ui.onNodeWithTag("recall-toggle-m1").performClick()
         ui.onNodeWithTag("recall-outcome-m8").performScrollTo().assertIsDisplayed()
         shot("recall-eight-last.png")
+    }
+    @Suppress("UNCHECKED_CAST")
+    private fun incidentHistory():ChatToolActivity {
+        val raw=Gson().fromJson("""{"success":true,"status":"found","visible_duplicates":8,"results":[]}""",Map::class.java) as Map<String,Any>
+        return ChatToolJournal.result(ChatToolJournal.start(ChatToolCall("history","agent_history_search","""{"query":"合成查询"}"""),1,"","incident-response"),raw)
+    }
+    @Test fun incidentHistoryDuplicatesAndMemoryReadShowOneSuccessfulGreenCapsule(){
+        val history=incidentHistory();val memory=row("incident-memory",group="incident-response")
+        render(listOf(history,memory))
+        ui.onNodeWithText("想起来了").assertIsDisplayed()
+        ui.onNodeWithTag("tool-result-${history.id}").assertIsDisplayed();ui.onNodeWithTag("tool-result-${memory.id}").assertDoesNotExist()
+        ui.onNodeWithText("没找到").assertDoesNotExist();ui.onNodeWithText("回想出错").assertDoesNotExist()
+        shot("incident-history-memory-collapsed.png")
+        ui.onNodeWithTag("recall-toggle-${history.id}").performClick()
+        ui.onNodeWithText("1. 想起来了").assertIsDisplayed();ui.onNodeWithText("2. 想起来了").assertIsDisplayed()
+        shot("incident-history-memory-expanded.png")
+    }
+    @Test fun incidentHistoryHitAndMemoryErrorStillWarnWhileCollapsed(){
+        val history=incidentHistory();val memory=row("incident-error","failed","incident-response","操作未完成")
+        render(listOf(history,memory))
+        ui.onNodeWithText("想起来了 · 部分失败").assertIsDisplayed()
+        ui.onNodeWithTag("recall-toggle-${history.id}").performClick()
+        ui.onNodeWithText("1. 想起来了").assertIsDisplayed();ui.onNodeWithText("2. 回想出错").assertIsDisplayed()
+        shot("incident-history-memory-mixed.png")
     }
 }

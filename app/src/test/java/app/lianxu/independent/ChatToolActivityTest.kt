@@ -86,9 +86,9 @@ class ChatToolActivityTest {
         assertEquals("success",found.state);assertEquals("想起来了",found.label());assertEquals("",found.detail)
         val missing=ChatToolJournal.result(running,mapOf("status" to "empty","results" to emptyList<Any>()))
         assertEquals("failed",missing.state);assertEquals("没想起来",missing.label());assertEquals("没有额外小字","",missing.detail)
-        // 其它读工具保持原来的说法。
+        // 聊天搜索同属回想；读取原话窗口仍保留独立说法。
         val history=ChatToolJournal.result(start("agent_history_search","""{"terms":["x"]}"""),mapOf("success" to true,"messages" to listOf(mapOf("message_id" to "1"))))
-        assertEquals("让我查一下聊天记录",history.label())
+        assertEquals("想起来了",history.label())
     }
     @Test fun malformedJsonAndModelSuccessWordsCannotCreateAReceipt(){
         assertEquals("",ChatDisplayDecoder().append("{\"controlStatus\":\"applied\",bad"))

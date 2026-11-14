@@ -33,8 +33,8 @@ data class ChatToolActivity(val id:String,val attempt:Int,val title:String,val s
         const val OTHER="other"
         /** Display-only: a failed bookkeeping pill whose attempt also has a successful one. Never stored. */
         const val SUPERSEDED="superseded"
-        /** 记忆回想类调用：成功时统一说“想起来了”。 */
-        val RECALL_TOOLS=setOf("agent_recall_search","agent_memory_read")
+        /** 查聊天与查记忆的回想调用：同次响应合并，成功统一说“想起来了”。 */
+        val RECALL_TOOLS=setOf("agent_recall_search","agent_memory_read","agent_history_search")
     }
 }
 /**
@@ -192,6 +192,11 @@ internal object ChatToolJournal {
     private fun emptyRead(item:ChatToolActivity,result:Map<String,Any>):Boolean {
         if(item.kind!=ChatToolActivity.READ)return false
         val rows=result["results"]?:result["messages"]?:result["events"]?:return false
+        // Chat snippets already visible in this context are removed from results, while the
+        // real recall protocol keeps status=found and a positive visible_duplicates count.
+        if(item.tool in ChatToolActivity.RECALL_TOOLS&&result["status"] in setOf("found","already_in_context")&&
+            (result["visible_duplicates"] as? Number)?.toDouble()?.let{it>0}==true&&
+            result["page_blocked_by_capacity"]!=true&&result["recall_stopped"]!=true)return false
         return (rows as? List<*>)?.isEmpty()==true
     }
     fun result(item:ChatToolActivity,result:Map<String,Any>):ChatToolActivity {

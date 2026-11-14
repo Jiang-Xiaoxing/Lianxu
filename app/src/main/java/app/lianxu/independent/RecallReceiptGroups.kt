@@ -7,8 +7,9 @@ internal enum class RecallDisplayOutcome(val label:String) {
 
 internal fun ChatToolActivity.recallOutcome():RecallDisplayOutcome=when(state){
     "success"->RecallDisplayOutcome.FOUND
-    // Current result mapping leaves a real miss empty; execution/capacity failures retain detail.
-    "failed"->if(detail.isBlank())RecallDisplayOutcome.NOT_FOUND else RecallDisplayOutcome.ERROR
+    // Current misses have empty detail. Older ungrouped chat searches kept this fixed miss text;
+    // preserve that recorded meaning without guessing whether an old lost payload had duplicates.
+    "failed"->if(detail.isBlank()||(tool=="agent_history_search"&&recallGroup==null&&detail=="没找到符合的内容"))RecallDisplayOutcome.NOT_FOUND else RecallDisplayOutcome.ERROR
     "running"->RecallDisplayOutcome.RUNNING
     else->RecallDisplayOutcome.UNKNOWN
 }
