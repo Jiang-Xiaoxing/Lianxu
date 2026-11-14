@@ -75,7 +75,12 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     }
     internal suspend fun exportBackup(id:String?,includeKeys:Boolean,password:CharArray?=null)=Diagnostics.span("backup.export",mapOf("scope" to if(id==null)"all" else "role","include_keys" to includeKeys)) {backup.export(id,includeKeys,password)}
     internal suspend fun importBackup(plan:BackupRepository.Preview,confirmed:Boolean,lease:ChatAttemptLease,password:CharArray?=null):List<String> = withContext(NonCancellable){Diagnostics.span("backup.import",mapOf("mode" to plan.mode,"scope" to if(plan.pack.all)"all" else "role")) {
-        val ids=backup.commit(plan,confirmed,lease,password=password)
+        val ids=if(plan.mode=="REPLACE"&&plan.pack.all)diagnosticSave.withLock{
+            val detailed=plan.pack.root["preferences"].asJsonObject["diagnostic-detailed"]?.asString=="1"
+            val restored=backup.commit(plan,confirmed,lease,password=password)
+            diagnosticChoice++;diagnosticDetailed=detailed;savedDiagnosticDetailed=detailed;Diagnostics.detailed=detailed
+            restored
+        }else backup.commit(plan,confirmed,lease,password=password)
         if(plan.mode=="REPLACE"){
             val replaced=if(plan.pack.all)friends.map{it.id}else listOf(requireNotNull(plan.target))
             replaced.forEach{runner.cancel(it);memory.cancel(it)}

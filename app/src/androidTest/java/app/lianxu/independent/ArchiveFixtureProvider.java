@@ -13,6 +13,7 @@ public final class ArchiveFixtureProvider extends ContentProvider {
     @Override public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
         String name = uri.getLastPathSegment();
         if (uri.getPath() != null && uri.getPath().startsWith("/saved/") && name != null && name.matches("capture-[0-9]+")) {
+            if ("r".equals(mode) && "1".equals(uri.getQueryParameter("slow"))) android.os.SystemClock.sleep(1800);
             File captured = new File(getContext().getCacheDir(), name);
             int flags = "r".equals(mode) ? ParcelFileDescriptor.MODE_READ_ONLY : ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_TRUNCATE | ParcelFileDescriptor.MODE_WRITE_ONLY;
             return ParcelFileDescriptor.open(captured, flags);

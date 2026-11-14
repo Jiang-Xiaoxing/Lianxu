@@ -96,6 +96,14 @@ private val IconStroke=Stroke(1.65f,cap=StrokeCap.Round,join=StrokeJoin.Round)
                     };drawCircle(iconColor,2.5f,Offset(12f,12f),style=IconStroke)
                 }
                 "list"->{for(y in listOf(6f,12f,18f)){drawCircle(iconColor,.8f,Offset(4f,y));drawLine(iconColor,Offset(8f,y),Offset(20f,y),IconStroke.width,cap=StrokeCap.Round)}}
+                "database"->{
+                    drawPath(Path().apply{moveTo(4f,6f);cubicTo(4f,1f,20f,1f,20f,6f);cubicTo(20f,11f,4f,11f,4f,6f);lineTo(4f,18f);cubicTo(4f,23f,20f,23f,20f,18f);lineTo(20f,6f);moveTo(4f,12f);cubicTo(4f,17f,20f,17f,20f,12f)},iconColor,style=IconStroke)
+                }
+                "document","import-file"->{
+                    drawPath(Path().apply{moveTo(5f,3f);lineTo(14f,3f);lineTo(19f,8f);lineTo(19f,21f);lineTo(5f,21f);close();moveTo(14f,3f);lineTo(14f,8f);lineTo(19f,8f)},iconColor,style=IconStroke)
+                    if(kind=="document"){for(y in listOf(12f,16f))drawLine(iconColor,Offset(8f,y),Offset(16f,y),IconStroke.width,cap=StrokeCap.Round)}
+                    else drawPath(Path().apply{moveTo(12f,19f);lineTo(12f,11f);moveTo(8.5f,14.5f);lineTo(12f,11f);lineTo(15.5f,14.5f)},iconColor,style=IconStroke)
+                }
                 "storage"->{
                     drawPath(Path().apply {addRoundRect(androidx.compose.ui.geometry.RoundRect(Rect(5f,8f,19f,21f),2f,2f));addRoundRect(androidx.compose.ui.geometry.RoundRect(Rect(3.5f,3.5f,20.5f,8f),1.5f,1.5f))},iconColor,style=IconStroke)
                     drawLine(iconColor,Offset(9.5f,12f),Offset(14.5f,12f),IconStroke.width,cap=StrokeCap.Round)

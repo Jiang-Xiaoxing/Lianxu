@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -40,10 +41,31 @@ private val AvatarPaper=Color(0xFFFFF8F0)
 private val AvatarStroke=Color(0xFFC9B08A)
 private val AvatarSilhouette=Color(0xFFD8C7A8)
 
+/** Imported role resources can have huge dimensions despite a small file size. Bound every decode. */
+internal fun decodeAvatar(bytes:ByteArray,target:Int):android.graphics.Bitmap?=runCatching decode@{
+    val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+    BitmapFactory.decodeByteArray(bytes,0,bytes.size,bounds)
+    if(bounds.outWidth<=0||bounds.outHeight<=0)return@decode null
+    val maxEdge=(target.coerceIn(1,512)*2).coerceIn(128,1024)
+    if(bounds.outWidth!=bounds.outHeight){
+        val region=runCatching{android.graphics.BitmapRegionDecoder.newInstance(bytes,0,bytes.size,false)}.getOrNull()
+        if(region!=null)try{
+            val side=minOf(bounds.outWidth,bounds.outHeight);val left=(bounds.outWidth-side)/2;val top=(bounds.outHeight-side)/2
+            var sample=1;while(side/sample>maxEdge)sample*=2
+            val cropped=region.decodeRegion(android.graphics.Rect(left,top,left+side,top+side),BitmapFactory.Options().apply{inSampleSize=sample})
+            if(cropped!=null)return@decode cropped
+        }finally{region.recycle()}
+    }
+    var sample=1
+    while(maxOf(bounds.outWidth,bounds.outHeight)/sample>maxEdge)sample*=2
+    BitmapFactory.decodeByteArray(bytes,0,bytes.size,BitmapFactory.Options().apply{inSampleSize=sample})
+}.getOrNull()
+
 /** Set photo if the role has one; otherwise a soft default silhouette, never a character from the name. */
 @Composable internal fun Avatar(friend:Friend,size:Int=48,modifier:Modifier=Modifier){
     val bytes=LocalRoleAvatars.current[friend.id]
-    val image=remember(bytes){bytes?.let{BitmapFactory.decodeByteArray(it,0,it.size)?.asImageBitmap()}}
+    val target=(size*LocalDensity.current.density).toInt().coerceAtLeast(1)
+    val image=remember(bytes,target){bytes?.let{decodeAvatar(it,target)?.asImageBitmap()}}
     val shape=RoundedCornerShape((size*.30f).dp)
     Box(modifier.size(size.dp).clip(shape).testTag("role-avatar-${friend.id}"),contentAlignment=Alignment.Center){
         if(image!=null)Image(image,friend.name,Modifier.fillMaxSize(),contentScale=ContentScale.Crop)

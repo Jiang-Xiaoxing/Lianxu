@@ -234,8 +234,9 @@ class BackupDocumentsUiTest {
         show()
         val before = vm.friends.toList()
         val filename = "lx-doc-${System.nanoTime().toString(36)}.zip"
+        ui.onNodeWithTag("backup-role-entry").performClick()
         ui.onNodeWithTag("archive-export-seed-lin").performScrollTo().performClick()
-        ui.onNodeWithTag("archive-export").performScrollTo().performClick()
+        ui.onNodeWithTag("archive-export").assertIsDisplayed().performClick()
         awaitNode("save-dialog") { true }.also { @Suppress("DEPRECATION") it.recycle() }
         downloads()
         setText(awaitNode("filename") { it.className?.toString() == "android.widget.EditText" }, filename)
