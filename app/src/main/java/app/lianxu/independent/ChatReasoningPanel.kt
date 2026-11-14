@@ -61,6 +61,7 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
 @Composable internal fun ChatThinkingStream(owner:String,text:String,inProgress:Boolean,breaks:List<ChatThinkingBreak>,tools:List<ChatToolActivity>,modifier:Modifier=Modifier,loadMemory:(suspend(String)->StoredMemory?)?=null){
     val parts=chatThinkingParts(text,breaks,tools)
     if(parts==null){ChatReasoningPanel(owner,text,inProgress,modifier);return}
+    val recallGroups=remember(tools){recallReceiptGroups(tools)}
     var textIndex=0
     Column(modifier.testTag("thinking-stream-$owner"),verticalArrangement=Arrangement.spacedBy(8.dp)){
         parts.forEachIndexed{index,part->
@@ -69,7 +70,7 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
                     ChatThinkingCard("$owner-$textIndex",part.text,inProgress&&index==parts.lastIndex,defaultExpanded=true)
                     textIndex++
                 }
-                is ChatThinkingPart.Tool->ChatToolReceipt(part.item,Modifier.padding(horizontal=14.dp),loadMemory)
+                is ChatThinkingPart.Tool->ChatToolReceipt(part.item,Modifier.padding(horizontal=14.dp),loadMemory,recallGroups[part.item.id])
             }
         }
     }
@@ -134,8 +135,13 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
 
 /** The small receipt pill. Display only; it never becomes dialogue, a memory or a relationship event.
  *  One pill from start to finish: on failure its text is replaced, not extended with a second line. */
-@Composable internal fun ChatToolReceipt(item:ChatToolActivity,modifier:Modifier=Modifier,loadMemory:(suspend(String)->StoredMemory?)?=null){
+@Composable internal fun ChatToolReceipt(item:ChatToolActivity,modifier:Modifier=Modifier,loadMemory:(suspend(String)->StoredMemory?)?=null,recallGroup:RecallReceiptGroup?=null){
     if(item.state==ChatToolActivity.SUPERSEDED)return
+    if(item.tool in ChatToolActivity.RECALL_TOOLS){
+        val group=recallGroup?:RecallReceiptGroup(listOf(item))
+        if(group.id==item.id)ChatRecallReceipt(group,modifier)
+        return
+    }
     // Only a committed write linked to a stored row may open; staged/failed/candidate receipts stay shut.
     val canOpen=item.canOpenMemory&&loadMemory!=null
     // A collapse default must survive a page rebuild: plain remember drops the state on recreation.
@@ -199,12 +205,13 @@ internal fun memoryPeekOf(saved:StoredMemory?):ChatMemoryPeek = when{
 
 @Composable internal fun ChatToolActivities(items:List<ChatToolActivity>,modifier:Modifier=Modifier,capsules:Boolean=true,loadMemory:(suspend(String)->StoredMemory?)?=null){
     if(items.isEmpty())return
+    val recallGroups=remember(items){recallReceiptGroups(items)}
     Column(modifier,verticalArrangement=Arrangement.spacedBy(8.dp)){
         items.forEach{item->
             if(item.before.isNotBlank())Surface(shape=RoundedCornerShape(topStart=6.dp,topEnd=18.dp,bottomStart=18.dp,bottomEnd=18.dp),color=ChatRoleBubble){
                 Text(item.before,Modifier.padding(UiSpace.bubble).testTag("tool-before-${item.id}"),style=MaterialTheme.typography.bodyLarge,color=ChatRoleText)
             }
-            if(capsules)ChatToolReceipt(item,loadMemory=loadMemory)
+            if(capsules)ChatToolReceipt(item,loadMemory=loadMemory,recallGroup=recallGroups[item.id])
         }
     }
 }
