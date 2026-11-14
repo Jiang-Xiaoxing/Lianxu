@@ -173,7 +173,7 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
         val staged=mutableListOf<JSONObject>();val raws=mutableListOf<JSONObject>()
         fun current()=taskCurrent()&&access.memoryCurrent(credentials.stamp)&&(embedding==null||access.current(ModelPurpose.EMBEDDING,embedding.stamp))
         fun late():Nothing{discardLate(attempt);throw ProcessingRejected("LATE_DISCARDED")}
-        val issues=mutableListOf<MemoryRepairFeedback.Issue>();val buffer=StringBuilder();val received=linkedMapOf<String,String>();val allKeys=accepted.map{it.getString("id")}.toMutableSet();var receipt:JSONObject?=null
+        val issues=mutableListOf<MemoryRepairFeedback.Issue>();val buffer=StringBuilder();val received=linkedMapOf<String,String>();val allKeys=accepted.map{it.getString("id")}.toMutableSet();var receipt:JSONObject?=null;var operationPosition=0;var headerProblem=false
         fun issue(name:String,code:String,detail:String){issues+=MemoryRepairFeedback.Issue(name,code,detail.ifBlank{MemoryRepairFeedback.hint(code,"","")})}
         suspend fun operation(raw:JSONObject){
             val op=MemoryNumberedReferences(work.targets,work.existingVersions.keys).normalize(raw)
@@ -194,15 +194,28 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
             if(code in setOf("SOURCE_CHANGED","STALE_TASK","CANCELLED","BATCH_REVIEW_REQUIRED","LATE_DISCARDED"))throw e
             issue(name,code,(e as? ProcessingRejected)?.detail.orEmpty())
         }
-        suspend fun safeOperation(op:JSONObject){try{operation(op)}catch(e:Exception){rejected(e,op.optString("id").ifBlank{"#${raws.size+issues.size+1}"})}}
+        suspend fun safeOperation(value:Any?,structureOnly:Boolean=false){
+            val position=++operationPosition;val op=value as? JSONObject
+            if(op==null){issue("operations[$position]","FORMAT","该项必须是完整JSON操作对象");return}
+            if(op.toString().contains(credentials.key)||Regex("(?i)</?think").containsMatchIn(op.toString())){issue("operations[$position]","FORMAT","操作内容不能包含思考标签或配置内容");return}
+            val fields=MemoryOperationFormat.issues(op,position)
+            if(fields.isNotEmpty()){issues+=fields;return}
+            if(structureOnly)return // Wrong batch headers may report fields but never stage/resolve operations.
+            try{operation(op)}catch(e:Exception){rejected(e,op.optString("id").ifBlank{"operations[$position]"})}
+        }
         suspend fun recordUnsafe(line:String){
             if(line.isBlank())return
             if(receipt!=null)throw ProcessingRejected("AFTER_COMPLETE");val j=JSONObject(line)
-            if(j.optString("batch_id")!=work.id||j.optString("character_id")!=work.friendId)throw ProcessingRejected("FORMAT","batch_id 和 character_id 必须等于指定值 ${work.id} / ${work.friendId}")
+            if(j.optString("batch_id")!=work.id||j.optString("character_id")!=work.friendId){
+                headerProblem=true
+                j.optJSONArray("operations")?.let{ops->if(ops.length()<=64)for(i in 0 until ops.length())safeOperation(ops.opt(i),structureOnly=true)}
+                    ?:if(j.optString("type")=="operation")safeOperation(j.opt("operation"),structureOnly=true)else Unit
+                return
+            }
             if(j.has("operations")){
-                val ops=j.getJSONArray("operations");if(ops.length()>64)throw ProcessingRejected("FORMAT","单批最多 64 项操作");for(i in 0 until ops.length())safeOperation(ops.getJSONObject(i));receipt=j
-            }else when(j.getString("type")){
-                "operation"->safeOperation(j.getJSONObject("operation"));"complete"->receipt=j;else->throw ProcessingRejected("FORMAT","type 只能是 operation 或 complete")
+                val ops=j.optJSONArray("operations")?:throw ProcessingRejected("FORMAT","operations 必须是JSON数组");if(ops.length()>64)throw ProcessingRejected("FORMAT","单批最多 64 项操作");for(i in 0 until ops.length())safeOperation(ops.opt(i));receipt=j
+            }else when(j.optString("type")){
+                "operation"->safeOperation(j.optJSONObject("operation"));"complete"->receipt=j;else->throw ProcessingRejected("FORMAT","type 必须是 operation 或 complete")
             }
         }
         suspend fun record(line:String){
@@ -226,11 +239,15 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
             val root=tokens.nextValue() as? JSONObject?:throw ProcessingRejected("FORMAT","输出必须是一个完整 JSON 对象")
             if(tokens.nextClean()!='\u0000')throw ProcessingRejected("FORMAT","JSON 对象之后还有多余内容")
             // Validate the receipt before staging any operations, including pretty-printed responses.
-            if(!(root.opt("complete")==true&&root.optJSONArray("operations")!=null))throw ProcessingRejected("INCOMPLETE")
-            rejectUnless(root.opt("operation_count") is Number&&root.getInt("operation_count").toDouble()==(root.opt("operation_count") as Number).toDouble(),"FORMAT")
-            if(root.getString("end_marker")!=work.id)throw ProcessingRejected("FORMAT","end_marker 必须等于 batch_id ${work.id}")
-            record(root.toString())
+            val receiptProblems=mutableListOf<String>();val incomplete=!(root.opt("complete")==true&&root.optJSONArray("operations")!=null)
+            if(incomplete)receiptProblems+="顶层必须包含 complete=true 和 operations 数组"
+            if(!(root.opt("operation_count") is Number&&root.getInt("operation_count").toDouble()==(root.opt("operation_count") as Number).toDouble()))receiptProblems+="operation_count 必须是本批去重后的整数总数"
+            if(root.optString("end_marker")!=work.id)receiptProblems+="end_marker 必须等于 batch_id ${work.id}"
+            // Collect readable operation errors as well as receipt errors; neither can publish.
+            if(root.optJSONArray("operations")!=null)record(root.toString())
+            if(receiptProblems.isNotEmpty())issue("receipt",if(incomplete)"INCOMPLETE"else"FORMAT",receiptProblems.joinToString("；"))
         }else if(buffer.isNotBlank())record(buffer.toString())
+        if(headerProblem)issue("header","FORMAT","batch_id 和 character_id 必须等于指定值 ${work.id} / ${work.friendId}")
         if(issues.isNotEmpty())throw ProcessingRejected(issues.first().code,MemoryRepairFeedback.encode(issues))
         val end=receipt?:throw ProcessingRejected("INCOMPLETE",MemoryRepairFeedback.encode(listOf(MemoryRepairFeedback.Issue("receipt","INCOMPLETE","缺少完整结束回执（complete=true，end_marker 等于 batch_id）"))))
         rejectUnless(end.opt("complete")==true&&allKeys.size<=64,"INCOMPLETE")
@@ -290,7 +307,7 @@ date_type 可为 day/habit/birthday；habit 不设置事件日期。生日必须
         // History stays in the database; old snapshots are not a second copy of current fact context.
         val fillAt=AppServices.companionClock()
         val gistMissing=existing.filter{(it.gist.isNullOrBlank()||it.trace.isNullOrBlank())}.sortedByDescending{MemoryForgetting.state(repo.store.readableDatabase,it,fillAt).clarity(fillAt)}.take(MemoryForgetting.GIST_BATCH).map{it.id}.toSet()
-        val data=JSONObject().put("memory_schema",2).put("batch_id",id).put("character_id",friendId).put("target_dialogue",JSONArray().apply{targets.forEach{put(it.json())}}).put("auxiliary_dialogue",JSONArray().apply{auxiliary.forEachIndexed{i,s->put(s.json().put("ref","R${i+1}").put("evidence_allowed",false))}}).put("existing_memories",JSONArray().apply{existing.forEach{put(it.copy(evidence=emptyList()).json().put("ref",numbered.memoryRef(it.id)).put("gist_missing",(it.gist.isNullOrBlank()||it.trace.isNullOrBlank())&&it.id in gistMissing))}}).put("already_saved_operations",JSONArray().apply{applied.forEach{put(JSONObject().put("id",it.getString("id")).put("op",it.getString("op")).put("target",it.getString("target")))}})
+        val data=JSONObject().put("memory_schema",2).put("batch_id",id).put("character_id",friendId).put("target_dialogue",JSONArray().apply{targets.forEach{put(it.json())}}).put("auxiliary_dialogue",JSONArray().apply{auxiliary.forEachIndexed{i,s->put(s.json().put("ref","R${i+1}").put("evidence_allowed",false))}}).put("existing_memories",JSONArray().apply{existing.sortedBy{it.id}.forEach{put(it.copy(evidence=emptyList()).json().put("ref",numbered.memoryRef(it.id)).put("gist_missing",(it.gist.isNullOrBlank()||it.trace.isNullOrBlank())&&it.id in gistMissing))}}).put("already_saved_operations",JSONArray().apply{applied.forEach{put(JSONObject().put("id",it.getString("id")).put("op",it.getString("op")).put("target",it.getString("target")))}})
             .put("core_maintenance",JSONObject().put("goal_tokens",core.goal).put("current_tokens",core.used).put("protected_tokens",core.protected).put("protected_ids",JSONArray(core.protectedIds.toList())).put("strategy","核心记忆由程序按回想和重要程度选择，你不用维护容量，也不要为了容量降级任何记忆"))
         data.put("target_sources",numbered.sourceRows())
         if(feedback.isNotEmpty())data.put("validation_feedback",JSONObject().put("attempt",attempt).put("max_attempts",MemoryRepairFeedback.MAX_ATTEMPTS)
@@ -301,7 +318,7 @@ date_type 可为 day/habit/birthday；habit 不设置事件日期。生日必须
             put(JSONObject().put("id",m.id).put("version",m.version).put("text",m.text.take(800)).put("tags",JSONArray(m.tags)))
         }}).put("association_limits",JSONObject().put("candidates",MemoryRecall.RELATION_CANDIDATE_LIMIT).put("per_operation",MemoryRecall.LINKS_PER_OPERATION).put("per_batch",MemoryRecall.LINKS_PER_BATCH))
         val repair=if(feedback.isEmpty())"" else "\n本次是第${attempt}次（共${MemoryRepairFeedback.MAX_ATTEMPTS}次）：validation_feedback 列出上一次的校验错误，按其修正后重新输出整批。"
-        return TextChatRequest(listOf(WireMessage("system",instruction+protocol+repair),WireMessage("user",data.toString())),output,90000,jsonObject=jsonDocument)
+        return TextChatRequest(listOf(WireMessage("system",instruction+protocol+MemorySummaryExample.text(jsonDocument)+repair),WireMessage("user",data.toString())),output,90000,jsonObject=jsonDocument)
     }
 }
 

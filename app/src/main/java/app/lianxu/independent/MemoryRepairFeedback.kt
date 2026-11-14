@@ -17,7 +17,8 @@ internal object MemoryRepairFeedback {
     /** Structural or source-reference errors that the model can fix when told exactly what was wrong. */
     fun repairable(code:String)=code in repairable
     fun retry(attempt:Int,code:String)=attempt<MAX_ATTEMPTS&&code !in final
-    fun encode(issues:List<Issue>)=issues.take(12).joinToString("\n"){it.line()}
+    // At most 64 operation rows plus one grouped header and one grouped document receipt.
+    fun encode(issues:List<Issue>)=issues.take(66).joinToString("\n"){it.line()}
     fun decode(detail:String)=detail.lines().mapNotNull{Issue.parse(it)}
     /** Specific, model-facing description. Raw model values are quoted, never executed. */
     fun hint(code:String,target:String,evidence:String):String=when(code){

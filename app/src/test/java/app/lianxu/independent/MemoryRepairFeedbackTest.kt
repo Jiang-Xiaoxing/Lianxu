@@ -19,7 +19,7 @@ class MemoryRepairFeedbackTest {
         val issues=listOf(MemoryRepairFeedback.Issue("one","UNKNOWN_TARGET","target「M7」不是\n已有编号"),MemoryRepairFeedback.Issue("two","EVIDENCE","S9 无效"))
         val decoded=MemoryRepairFeedback.decode(MemoryRepairFeedback.encode(issues))
         assertEquals(2,decoded.size);assertEquals("UNKNOWN_TARGET",decoded[0].code);assertFalse(decoded[0].detail.contains("\n"));assertEquals("S9 无效",decoded[1].detail)
-        assertEquals(12,MemoryRepairFeedback.decode(MemoryRepairFeedback.encode((1..20).map{MemoryRepairFeedback.Issue("op$it","FORMAT","bad")})).size)
+        assertEquals(66,MemoryRepairFeedback.decode(MemoryRepairFeedback.encode((1..80).map{MemoryRepairFeedback.Issue("op$it","FORMAT","bad")})).size)
     }
     @Test fun hintsNameTheOffendingValueAndReasonsAreReadable(){
         assertTrue(MemoryRepairFeedback.hint("UNKNOWN_TARGET","M7","").contains("M7"))
