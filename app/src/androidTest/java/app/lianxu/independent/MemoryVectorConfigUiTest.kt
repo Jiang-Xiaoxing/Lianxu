@@ -33,6 +33,7 @@ class MemoryVectorConfigUiTest {
     @After fun close(){ui.runOnIdle{models.clear()};vault.list().forEach{vault.delete(it.id)}}
     @Test fun existingModelPurposeControlSelectsAndClearsEmbeddingWithoutNetwork(){
         assertEquals("",vault.purposeId(ModelPurpose.EMBEDDING))
+        ui.onNodeWithTag("config-tab-purposes").performClick()
         ui.onNodeWithTag("purpose-select-embedding").performScrollTo().performClick()
         ui.onNodeWithTag("purpose-unknown-embedding").performClick();ui.onNodeWithTag("purpose-option-embedding-embedding-ui").performClick()
         ui.waitUntil(10000){state.purposes[ModelPurpose.EMBEDDING]==model.id&&!state.busy}

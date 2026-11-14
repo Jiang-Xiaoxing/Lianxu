@@ -59,7 +59,7 @@ class UnifiedUiTest {
         assertTrue(app().candidates.isEmpty());ui.onNodeWithTag("back").performClick()
         ui.onNodeWithTag("tab-2").performClick();shot("08-settings")
         ui.onNodeWithTag("settings-models").performClick();shot("09-models")
-        ui.onNodeWithTag("config-add-top").performClick();shot("10-providers")
+        ui.onNodeWithTag("config-add").performScrollTo().performClick();shot("10-providers")
         ui.onNodeWithTag("provider-deepseek").performScrollTo().performClick()
         ui.onNodeWithTag("config-key").performTextInput("synthetic-key-only")
         ui.onNodeWithTag("config-model").performScrollTo().performTextInput("synthetic-model")

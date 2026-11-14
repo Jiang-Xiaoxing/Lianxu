@@ -71,6 +71,16 @@ private val IconStroke=Stroke(1.65f,cap=StrokeCap.Round,join=StrokeJoin.Round)
                 "chat"->{drawPath(Path().apply{addRoundRect(androidx.compose.ui.geometry.RoundRect(Rect(4f,4.5f,20f,17f),3f,3f));moveTo(8f,17f);lineTo(7f,21f);lineTo(12f,17f)},iconColor,style=IconStroke);drawLine(iconColor,Offset(8f,9f),Offset(16f,9f),IconStroke.width,cap=StrokeCap.Round);drawLine(iconColor,Offset(8f,12.5f),Offset(13f,12.5f),IconStroke.width,cap=StrokeCap.Round)}
                 "more"->{for(x in listOf(5f,12f,19f))drawCircle(iconColor,1.5f,Offset(x,12f))}
                 "relationship"->{drawCircle(iconColor,4f,Offset(8f,11f),style=IconStroke);drawCircle(iconColor,4f,Offset(16f,13f),style=IconStroke)}
+                "nodes"->{
+                    drawLine(iconColor,Offset(10.5f,7f),Offset(6.5f,16f),IconStroke.width,cap=StrokeCap.Round)
+                    drawLine(iconColor,Offset(8f,18f),Offset(16f,18f),IconStroke.width,cap=StrokeCap.Round)
+                    drawLine(iconColor,Offset(13.5f,7f),Offset(17.5f,16f),IconStroke.width,cap=StrokeCap.Round)
+                    for(center in listOf(Offset(12f,5f),Offset(5f,18f),Offset(19f,18f)))drawCircle(iconColor,2.8f,center,style=IconStroke)
+                }
+                "services"->{for(y in listOf(4f,13f)){
+                    drawPath(Path().apply{addRoundRect(androidx.compose.ui.geometry.RoundRect(Rect(3f,y,21f,y+7f),3f,3f))},iconColor,style=IconStroke)
+                    drawCircle(iconColor,.8f,Offset(15f,y+3.5f));drawCircle(iconColor,.8f,Offset(18f,y+3.5f))
+                }}
                 "memory"->{drawPath(Path().apply{moveTo(5f,4f);lineTo(19f,4f);lineTo(19f,21f);lineTo(12f,17.5f);lineTo(5f,21f);close()},iconColor,style=IconStroke);drawLine(iconColor,Offset(9f,9f),Offset(15f,9f),IconStroke.width,cap=StrokeCap.Round)}
                 "plug"->{
                     drawPath(Path().apply {moveTo(7f,7f);lineTo(17f,7f);lineTo(17f,12f);cubicTo(17f,14.76f,14.76f,17f,12f,17f);cubicTo(9.24f,17f,7f,14.76f,7f,12f);close()},iconColor,style=IconStroke)

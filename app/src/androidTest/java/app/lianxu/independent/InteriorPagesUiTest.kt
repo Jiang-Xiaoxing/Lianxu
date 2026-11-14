@@ -119,7 +119,7 @@ class InteriorPagesUiTest {
         ui.onNodeWithTag("back").performClick();ui.runOnIdle{vm.home();vm.tab=2};shot("11-settings")
         ui.onNodeWithTag("settings-info").performScrollTo();shot("37-settings-more")
         ui.onNodeWithTag("settings-models").performScrollTo().performClick();shot("12-model-overview")
-        ui.onNodeWithTag("config-add-top").performClick();shot("13-model-providers")
+        ui.onNodeWithTag("config-add").performScrollTo().performClick();shot("13-model-providers")
         ui.onNodeWithTag("provider-search").performTextInput("DeepSeek");hideIme();ui.onNodeWithTag("provider-deepseek").performClick();shot("14-model-new")
         ui.onNodeWithTag("config-back").performClick()
         ui.onNodeWithTag("config-edit-interior-service").performClick();shot("15-model-editor")
