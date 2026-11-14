@@ -26,7 +26,7 @@ class CompanionPromptTest {
         val m=result.request.messages
         assertTrue(m[0].content.contains("角色固定要求"));assertTrue(m[0].content.contains("自定义表达 合成甲"));assertFalse(m[0].content.contains(CompanionPrompt.DEFAULT_EXPRESSION))
         assertFalse(m.any{"语气示例" in it.content||it.content in setOf("示例用户","示例回复")})
-        assertEquals("近期原话",m[1].content.substring(m[1].sourcePrefix));assertEquals("近期回复",m[2].content.substring(m[2].sourcePrefix));assertTrue(m[1].content.startsWith("["));assertTrue(m[3].content.contains("有效事实"));assertTrue(m[4].content.contains("待确认"))
+        assertEquals("近期原话",m[1].content);assertEquals("近期回复",m[2].content);assertEquals(0,m[1].sourcePrefix);assertTrue(m[3].content.contains("有效事实"));assertTrue(m[4].content.contains("待确认"))
         assertEquals(WireMessage("user","当前\n用户原文"),m[5]);assertTrue(m.last().content.contains("2026年10月25日 星期日 20:00"));assertFalse(m.any{"内部判断提示" in it.content})
         assertEquals(1,m.count{it.content.contains("[程序时间参考")});assertEquals(1,m.count{it.content=="当前\n用户原文"});assertEquals("自定义表达 {{character}}",p.expression)
     }
