@@ -45,7 +45,8 @@ class UpdatesPageUiTest {
         ui.onNodeWithTag("updates-current-toggle").assertTextContains(InstalledBuild.read(context).versionName,substring=true)
         ui.onNodeWithTag("updates-current-toggle").assertHeightIsAtLeast(48.dp).assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription,"已展开"))
         ui.onNodeWithTag("updates-current-content").assertIsDisplayed()
-        ui.onNodeWithTag("updates-experience-status").assertTextContains("尚未正式发布",substring=true)
+        ui.onNodeWithText("本地体验改动 · 尚未正式发布").assertDoesNotExist()
+        ui.onNodeWithText("以下体验改动不属于已发布的1.0.1记录。").assertDoesNotExist()
         for(i in 1..3)ui.onNodeWithTag("updates-item-experience-$i").assertTextContains("$i、")
         ui.onNodeWithTag("updates-published-content").assertDoesNotExist()
         LocalReleaseNotes.forVersion(60)!!.limits.forEach{ui.onNodeWithText(it).assertDoesNotExist()}
@@ -104,7 +105,7 @@ class UpdatesPageUiTest {
             ui.runOnIdle{dark=night;width=dp;scale=if(dp==320)1.3f else 1f}
             ui.onNodeWithTag("updates-viewport").assertWidthIsEqualTo(dp.dp)
             ui.onNodeWithTag("updates-current-toggle").performScrollTo().assertHeightIsAtLeast(48.dp)
-            ui.onNodeWithTag("updates-experience-status").assertIsDisplayed();shot("current")
+            ui.onNodeWithTag("updates-item-experience-1").assertIsDisplayed();shot("current")
             ui.onNodeWithTag("updates-history-59").performScrollTo().assertHeightIsAtLeast(48.dp).performClick()
             ui.onNodeWithTag("updates-details-history-59").performScrollTo().assertIsDisplayed();shot("history")
             ui.onNodeWithTag("updates-history-59").performScrollTo().performClick()

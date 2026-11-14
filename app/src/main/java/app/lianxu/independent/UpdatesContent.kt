@@ -32,8 +32,6 @@ import androidx.compose.ui.unit.dp
                 HorizontalDivider(color=Line)
                 val experience=build?.let{UpdatesPresentation.experienceFor(it.versionCode)}
                 if(experience!=null){
-                    Text("本地体验改动 · 尚未正式发布",Modifier.testTag("updates-experience-status"),style=MaterialTheme.typography.titleSmall,color=GreenText)
-                    Text("以下体验改动不属于已发布的1.0.1记录。",style=MaterialTheme.typography.bodySmall,color=Muted)
                     NumberedUpdates(experience,"experience")
                     current?.let{CurrentReleaseRecord(it)}
                 }else if(current!=null){
