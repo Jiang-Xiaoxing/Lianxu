@@ -15,7 +15,7 @@ import com.google.gson.reflect.TypeToken
  * agreed outcome ("没想起来" / "没记下"), never glued on as "让我想一想，没想起来", so it never reads
  * as giving up before thinking. [kind] chooses the replacement text only (reads vs writes).
  */
-data class ChatToolActivity(val id:String,val attempt:Int,val title:String,val state:String,val before:String="",val detail:String="",val kind:String?=null,val tool:String?=null,val reasoningAt:Int=0,val reasoningKnown:Boolean=false,val operation:String?=null,val memoryId:String?=null) {
+data class ChatToolActivity(val id:String,val attempt:Int,val title:String,val state:String,val before:String="",val detail:String="",val kind:String?=null,val tool:String?=null,val reasoningAt:Int=0,val reasoningKnown:Boolean=false,val operation:String?=null,val memoryId:String?=null,val recallGroup:String?=null) {
     fun label():String = when(state){
         "failed"->when(kind){WRITE->"没记下";READ->"没想起来";else->title}
         // A turn that ended before the tool reported keeps the honest "not confirmed" wording.
@@ -59,7 +59,7 @@ internal object ChatToolJournal {
     fun key(turn:String)=PREFIX+turn
     /** One turn never shows more pills than this; a backup carrying more is not one of ours. */
     private const val MAX_BACKUP_ROWS=200
-    private val BACKUP_FIELDS=setOf("id","attempt","title","state","before","detail","kind","tool","reasoningAt","reasoningKnown","operation","memoryId")
+    private val BACKUP_FIELDS=setOf("id","attempt","title","state","before","detail","kind","tool","reasoningAt","reasoningKnown","operation","memoryId","recallGroup")
     /** A finished turn only ever keeps settled receipts; running/staged are settled before export. */
     private val BACKUP_STATES=setOf("success","failed","unknown")
     private val TOOL_NAME=Regex("[A-Za-z0-9_.\\-]{1,100}")
@@ -103,6 +103,7 @@ internal object ChatToolJournal {
             whole("reasoningAt",0L..Int.MAX_VALUE.toLong(),required=false)
             o.get("reasoningKnown")?.takeUnless{it.isJsonNull}?.let{if(!it.isJsonPrimitive||!it.asJsonPrimitive.isBoolean)fail()}
             text("operation",200)
+            text("recallGroup",100,blank=false)
             text("memoryId",200)?.let{if(it !in memoryIds)fail()}
         }
     }
@@ -168,7 +169,7 @@ internal object ChatToolJournal {
         val linked=rows.map{row->val id=row.operation?.let{written[it]};if(id==null)row else row.copy(memoryId=id)}
         if(linked!=rows)save(db,turn,linked)
     }
-    fun start(call:ChatToolCall,attempt:Int,before:String):ChatToolActivity {
+    fun start(call:ChatToolCall,attempt:Int,before:String,recallGroup:String?=null):ChatToolActivity {
         // Gson keeps this display mapping readable on the JVM; the Android org.json stub is not available in unit tests.
         val action=runCatching{Gson().fromJson(call.arguments,Map::class.java)?.get("action")?.toString()}.getOrNull().orEmpty()
         val (title,kind)=when(call.name){
@@ -180,7 +181,7 @@ internal object ChatToolJournal {
             "agent_history_search","agent_history_read"->"让我查一下聊天记录" to ChatToolActivity.READ
             else->"让我想一想" to ChatToolActivity.READ
         }
-        return ChatToolActivity(java.util.UUID.randomUUID().toString(),attempt,title,"running",before.take(16000),kind=kind,tool=call.name)
+        return ChatToolActivity(java.util.UUID.randomUUID().toString(),attempt,title,"running",before.take(16000),kind=kind,tool=call.name,recallGroup=recallGroup?.takeIf{call.name in ChatToolActivity.RECALL_TOOLS})
     }
     /**
      * A read that came back empty is "没找到", not a success: recall/history/relation reads return

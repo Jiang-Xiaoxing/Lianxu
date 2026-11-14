@@ -182,11 +182,13 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
             // Thinking is kept across tool rounds: the saved display must match what the user watched.
             if(result.toolCalls.isEmpty())return result.copy(displayReasoning=displayReasoning)
             if(result.toolCalls.size>8||result.toolCalls.any{c->c.name !in offered.map(::toolNameOf)})return TextChatResult.Failure(ChatFailure.TOOLS_UNAVAILABLE)
+            // Display metadata only: even two responses at the same thinking offset stay separate.
+            val recallDisplayGroup=java.util.UUID.randomUUID().toString()
             if(result.toolCalls.any{it.name=="agent_memory_update"})writeBatches++
             if(result.toolCalls.any{it.name==JointControl.NAME}&&result.toolCalls.size!=1){
                 messages+=WireMessage("assistant","",result.toolCalls)
                 result.toolCalls.forEachIndexed{index,call->
-                    val item=ChatToolJournal.start(call,turn.attempt,if(index==0)ChatDisplayDecoder().append(result.text)else "")
+                    val item=ChatToolJournal.start(call,turn.attempt,if(index==0)ChatDisplayDecoder().append(result.text)else "",recallDisplayGroup)
                     val output=ToolArgumentDiagnosis.retryExhausted(call.name,if(call.name==JointControl.NAME)controlAttempts+1 else 0,mapOf("success" to false,"error" to "control_requires_separate_batch"))
                     onToolActivity?.invoke(ChatToolJournal.result(item,output))
                     if(call.name==CompanionRecord.NAME)failedRecords.add(messages.size)
@@ -202,7 +204,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
             messages+=WireMessage("assistant",result.text,result.toolCalls,continuation=result.continuation)
             for((callIndex,call) in result.toolCalls.withIndex()){
                 // Memory writes show the same human receipt as every other tool; nothing is hidden.
-                val activity=ChatToolJournal.start(call,turn.attempt,if(callIndex==0)ChatDisplayDecoder().append(result.text)else "")
+                val activity=ChatToolJournal.start(call,turn.attempt,if(callIndex==0)ChatDisplayDecoder().append(result.text)else "",recallDisplayGroup)
                 onToolActivity?.invoke(activity)
                 Diagnostics.event("tool.call",mapOf("character" to turn.friendId,"turn" to turn.id,"step" to step,"call_id" to call.id,"name" to call.name,"arguments" to Diagnostics.raw(call.arguments)))
                 if(!active()||repo.memoryRules(repo.store.readableDatabase)!=rulesState)return TextChatResult.Failure(ChatFailure.SOURCE_CHANGED)
