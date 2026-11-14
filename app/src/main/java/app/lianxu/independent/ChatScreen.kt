@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -218,6 +219,12 @@ private suspend fun LazyListState.showEndOf(index:Int){
                 TextField(draft,{draft=it.take(2000);draftVersion++},modifier=Modifier.weight(1f).onFocusChanged{focused=it.hasFocus}.border(if(focused)1.dp else .5.dp,ChatInputBorder,shape).testTag("message-input"),placeholder={Text("说点什么…",style=MaterialTheme.typography.bodyLarge)},textStyle=MaterialTheme.typography.bodyLarge,maxLines=4,shape=shape,keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),keyboardActions=KeyboardActions(onSend={send()}),colors=TextFieldDefaults.colors(focusedContainerColor=Paper,unfocusedContainerColor=Paper,disabledContainerColor=Paper,focusedIndicatorColor=Color.Transparent,unfocusedIndicatorColor=Color.Transparent,cursorColor=ChatSendButton))
                 val stopping=vm.chatSending&&draft.isBlank()
                 val enabled=stopping||draft.isNotBlank()&&vm.chatInputAvailable
+                val dark=Paper.luminance()<.5f
+                val actionColor=when{
+                    stopping->if(dark)Color(0xFFE9B6B1)else Color(0xFF915753)
+                    draft.isNotBlank()->if(dark)Color(0xFFAFC9B5)else Color(0xFF4E7058)
+                    else->Muted
+                }
                 Box(Modifier.padding(bottom=4.dp).size(width=60.dp,height=48.dp).clip(RoundedCornerShape(8.dp))
                     .clickable(enabled=enabled,role=Role.Button){if(stopping){
                         // The second tap of Send must not become Stop when persistence clears the
@@ -226,8 +233,8 @@ private suspend fun LazyListState.showEndOf(index:Int){
                     }else send()}
                     .testTag(if(stopping)"cancel-turn-${openTurn?.id.orEmpty()}"else"send-message")
                     .semantics{contentDescription=if(stopping)"停止回复"else"发送"},contentAlignment=Alignment.Center){
-                    Box(Modifier.fillMaxWidth().height(36.dp).clip(RoundedCornerShape(8.dp)).background(ChatSendButton.copy(alpha=if(enabled).18f else .07f)),contentAlignment=Alignment.Center){
-                        Text(if(stopping)"停止"else"发送",style=MaterialTheme.typography.labelLarge,color=ChatSendButton.copy(alpha=if(enabled)1f else .38f))
+                    Box(Modifier.fillMaxWidth().height(36.dp).clip(RoundedCornerShape(8.dp)).background(actionColor.copy(alpha=if(enabled).18f else .07f)),contentAlignment=Alignment.Center){
+                        Text(if(stopping)"停止"else"发送",style=MaterialTheme.typography.labelLarge,color=actionColor.copy(alpha=if(enabled)1f else .38f))
                     }
                 }
             }
