@@ -215,11 +215,13 @@ class MainActivity:ComponentActivity(){
     }
 }
 @Composable private fun Profile(vm:AppState){
+    val avatarPicker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null)vm.setUserAvatar(uri)}
     var name by rememberSaveable(vm.persona){mutableStateOf(vm.persona.name)}
     var address by rememberSaveable(vm.persona){mutableStateOf(vm.persona.address)}
     var introduction by rememberSaveable(vm.persona){mutableStateOf(vm.persona.introduction)}
     Column(Modifier.fillMaxSize().background(Chrome).verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(UiSpace.group)){
-        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper).padding(20.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){Avatar(Friend("self",vm.nickname,""),64);Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){Text(vm.nickname,style=MaterialTheme.typography.titleLarge);Text("${vm.friends.size} 位角色 · ${vm.messages.count{it.mine}} 条已发送消息",style=MaterialTheme.typography.bodySmall,color=Muted)}}
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper).padding(20.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){SelfAvatar(vm.userAvatar,64,"profile-avatar",Modifier.clickable(enabled=!vm.busy,role=Role.Button,onClickLabel="选择本人头像"){avatarPicker.launch(arrayOf("image/*"))});Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){Text(vm.nickname,style=MaterialTheme.typography.titleLarge);Text("${vm.friends.size} 位角色 · ${vm.messages.count{it.mine}} 条已发送消息",style=MaterialTheme.typography.bodySmall,color=Muted)}}
+        Text("点击头像更换图片。本人头像不随聊天请求发送；全部备份会包含头像。",style=MaterialTheme.typography.bodySmall,color=Muted)
         SectionLabel("聊天中的你")
         AppField(name,{name=it.take(80)},"我的名字","nickname",singleLine=true)
         AppField(address,{address=it.take(80)},"希望被怎样称呼","persona-address",singleLine=true)

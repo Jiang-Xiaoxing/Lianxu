@@ -20,7 +20,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
     private val companionTables=listOf("companion_state","companion_sources","companion_blocks","companion_uses","companion_opportunities","companion_receipts","companion_action_learning")
     private val order=base+extra+companionTables
     // One-off migration markers travel as global settings, so a full backup never stops on them and a restore never reruns the migration.
-    private val globalKeys=setOf("nickname","compact","diagnostic-detailed",MemoryRules.KEY,UserPersona.KEY,LocalUpdateReceipt.KEY,MemoryForgetting.RECALL_DEFAULT_MIGRATED)
+    private val globalKeys=setOf("nickname","compact","diagnostic-detailed",MemoryRules.KEY,UserPersona.KEY,LocalUpdateReceipt.KEY,MemoryForgetting.RECALL_DEFAULT_MIGRATED,UserAvatarData.KEY)
     private val legacy=RoleArchiveRepository(store)
     private val repo=ProcessingRepository(store)
     private class Budget {
@@ -98,6 +98,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
         val models=JsonArray();val selections=JsonObject();if(id==null){val saved=vault.backup(includeKeys);saved.first.forEach{models.add(modelJson(it,includeKeys))};saved.second.forEach{(p,v)->selections.addProperty(p.key,v)}}
         Export(JsonObject().apply{addProperty("scope",if(id==null)"all" else "role");add("roles",roles);add("preferences",settings);add("models",models);add("selections",selections);addProperty("includesKeys",includeKeys)},files).also{validate(db,it.root,it.files)}
             .let{if(includeKeys)it.copy(root=BackupKeySeal.seal(it.root,requireNotNull(password))).also{sealed->validate(db,sealed.root,sealed.files)} else it}
+            .also{BackupArchive.preflight(it.root,it.files)}
     }
     private fun modelJson(row:BackupModel,includeKeys:Boolean)=JsonObject().apply{add("config",Gson().toJsonTree(row.config));if(includeKeys)addProperty("key",row.secret.orEmpty())}
     private fun models(root:JsonObject)=root["models"].asJsonArray.map{v->val j=v.asJsonObject;require(j.keySet()==if(root["includesKeys"].asBoolean&&!BackupKeySeal.sealed(root))setOf("config","key")else setOf("config"));val fields=j["config"].asJsonObject.keySet();val old=setOf("id","name","providerId","baseUrl","modelId","contextTokens","outputTokens");require(fields==old||fields==old+"memoryOutputTokens");val config=Gson().fromJson(j["config"],ModelConfig::class.java)
@@ -106,7 +107,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
     }
     private fun validate(db:SQLiteDatabase,root:JsonObject,files:Map<String,ByteArray>){
         require(root["preferences"].asJsonObject.keySet().all{it in globalKeys})
-        root["preferences"].asJsonObject.entrySet().forEach{(k,v)->require(v.isJsonPrimitive&&v.asJsonPrimitive.isString);when(k){"compact"->require(v.asString in setOf("true","false"));"diagnostic-detailed"->require(v.asString in setOf("0","1"));"nickname"->require(v.asString.length in 1..80);MemoryRules.KEY->require(MemoryRules.from(JSONObject(v.asString)).valid());UserPersona.KEY->UserPersona.decode(v.asString);LocalUpdateReceipt.KEY->LocalUpdateReceipt.decode(v.asString);MemoryForgetting.RECALL_DEFAULT_MIGRATED->require(v.asString=="true")}}
+        root["preferences"].asJsonObject.entrySet().forEach{(k,v)->require(v.isJsonPrimitive&&v.asJsonPrimitive.isString);when(k){"compact"->require(v.asString in setOf("true","false"));"diagnostic-detailed"->require(v.asString in setOf("0","1"));"nickname"->require(v.asString.length in 1..80);MemoryRules.KEY->require(MemoryRules.from(JSONObject(v.asString)).valid());UserPersona.KEY->UserPersona.decode(v.asString);LocalUpdateReceipt.KEY->LocalUpdateReceipt.decode(v.asString);MemoryForgetting.RECALL_DEFAULT_MIGRATED->require(v.asString=="true");UserAvatarData.KEY->require(v.asString.length<=UserAvatarData.MAX_ENCODED){"本人头像资料过大"}}}
         val configs=models(root);require(configs.map{it.config.id}.distinct().size==configs.size)
         root["selections"].asJsonObject.entrySet().forEach{(k,v)->require(ModelPurpose.entries.any{it.key==k}&&(v.asString.isEmpty()||configs.any{it.config.id==v.asString}))}
         val ids=hashSetOf<String>();val used=hashSetOf<String>();var total=0
@@ -190,9 +191,10 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
         db.beginTransaction();var committed=false
         try {
             check(lease.isActive()){ "导入已取消" };require(contentDigest(plan.pack)==plan.contentDigest){"备份内容已变化，请重新预览"};require(fingerprint(db)==plan.fingerprint){"资料或配置已变化，请重新预览"};validate(db,plan.pack.root,plan.pack.files)
+            val restoredAvatar=if(plan.mode=="REPLACE"&&plan.pack.all)plan.pack.root["preferences"].asJsonObject[UserAvatarData.KEY]?.asString?.let(UserAvatarData::forRestore)else null
             if(plan.mode=="REPLACE"&&plan.pack.all){staged=vault.prepareRestore(models(keysRoot),plan.pack.root["selections"].asJsonObject.entrySet().associate{(k,v)->ModelPurpose.entries.first{it.key==k} to v.asString},plan.pack.includesKeys);clearAll(db);checkpoint()}
             val imported=plan.pack.roles.map{v->val old=v.asJsonObject;val target=if(plan.mode=="REPLACE"&&!plan.pack.all)plan.target!! else UUID.randomUUID().toString();if(plan.mode=="REPLACE"&&!plan.pack.all)clearRole(db,target);restore(db,old,target,plan.pack.files,checkpoint);target}
-            if(plan.mode=="REPLACE"&&plan.pack.all){plan.pack.root["preferences"].asJsonObject.entrySet().forEach{(k,v)->pref(db,k,v.asString)};pref(db,vault.generationKey,staged!!.generation)
+            if(plan.mode=="REPLACE"&&plan.pack.all){plan.pack.root["preferences"].asJsonObject.entrySet().forEach{(k,v)->if(k==UserAvatarData.KEY){restoredAvatar?.let{pref(db,k,it)}}else pref(db,k,v.asString)};pref(db,vault.generationKey,staged!!.generation)
                 // This database already has the current schema; an older backup without the marker must not reopen proactive recall later.
                 pref(db,MemoryForgetting.RECALL_DEFAULT_MIGRATED,"true")}
             checkpoint();check(lease.commit{db.setTransactionSuccessful();true}){ "导入已取消" }

@@ -61,6 +61,15 @@ internal fun decodeAvatar(bytes:ByteArray,target:Int):android.graphics.Bitmap?=r
     BitmapFactory.decodeByteArray(bytes,0,bytes.size,BitmapFactory.Options().apply{inSampleSize=sample})
 }.getOrNull()
 
+@Composable internal fun SelfAvatar(bytes:ByteArray?,size:Int,tag:String,modifier:Modifier=Modifier){
+    val target=(size*LocalDensity.current.density).toInt().coerceAtLeast(1)
+    val image=remember(bytes,target){bytes?.let{decodeAvatar(it,target)?.asImageBitmap()}}
+    Box(modifier.size(size.dp).clip(RoundedCornerShape((size*.30f).dp)).testTag(tag).semantics{contentDescription=if(image==null)"默认本人头像"else"本人头像"},contentAlignment=Alignment.Center){
+        if(image!=null)Image(image,null,Modifier.fillMaxSize().testTag("$tag-image"),contentScale=ContentScale.Crop)
+        else DefaultRoleAvatar(size,Modifier.testTag("$tag-default"))
+    }
+}
+
 /** Set photo if the role has one; otherwise a soft default silhouette, never a character from the name. */
 @Composable internal fun Avatar(friend:Friend,size:Int=48,modifier:Modifier=Modifier){
     val bytes=LocalRoleAvatars.current[friend.id]

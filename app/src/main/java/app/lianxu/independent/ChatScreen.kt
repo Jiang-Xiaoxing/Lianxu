@@ -162,7 +162,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
                         Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
                         Row(Modifier.fillMaxWidth(),horizontalArrangement=if(group.mine)Arrangement.End else Arrangement.Start,verticalAlignment=Alignment.Top){
                             if(!group.mine){Avatar(friend,32);Spacer(Modifier.width(8.dp))}
-                            Column(horizontalAlignment=if(group.mine)Alignment.End else Alignment.Start,verticalArrangement=Arrangement.spacedBy(4.dp)){
+                            Column(if(group.mine)Modifier.widthIn(max=width)else Modifier,horizontalAlignment=if(group.mine)Alignment.End else Alignment.Start,verticalArrangement=Arrangement.spacedBy(4.dp)){
                                 group.messages.forEach{message->
                                     var bounds by remember(message.id){mutableStateOf(Rect.Zero)}
                                     val shape=RoundedCornerShape(topStart=if(!group.mine)6.dp else 18.dp,topEnd=if(group.mine)6.dp else 18.dp,bottomStart=18.dp,bottomEnd=18.dp)
@@ -191,6 +191,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
                                 }
                                 if(row.showTime)Text(time.format(Date(group.messages.last().created)),Modifier.padding(horizontal=4.dp),style=MaterialTheme.typography.labelSmall,color=Muted)
                             }
+                            if(group.mine){Spacer(Modifier.width(8.dp));SelfAvatar(vm.userAvatar,32,"self-avatar-${group.messages.first().id}")}
                         }
                         group.messages.mapNotNull{message->vm.turns.firstOrNull{it.userMessageId==message.id&&it.state !in setOf(TurnState.COMPLETED,TurnState.SUPERSEDED)}}.forEach{turn->
                             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.Top){
