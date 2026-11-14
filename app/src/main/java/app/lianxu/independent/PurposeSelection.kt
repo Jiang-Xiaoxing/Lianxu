@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
                 var menu by remember(purpose){mutableStateOf(false)}
                 var includeUnknown by remember(purpose){mutableStateOf(false)}
                 val chosen=state.configs.firstOrNull{it.id==state.purposes[purpose]}
+                val options=purposeOptions(state.configs,purpose,chosen?.id.orEmpty(),includeUnknown)
                 Box{
                     Row(Modifier.fillMaxWidth().heightIn(min=72.dp).clickable(enabled=!state.busy,role=Role.Button){menu=true}.testTag("purpose-select-${purpose.key}").padding(16.dp),verticalAlignment=Alignment.CenterVertically){
                         ControlIcon(when(purpose){ModelPurpose.EMBEDDING->"nodes";ModelPurpose.CHAT->"chat";ModelPurpose.MEMORY->"memory";ModelPurpose.AUX_VISION->"eye"},GreenText);Spacer(Modifier.width(14.dp))
@@ -38,8 +39,8 @@ import androidx.compose.ui.unit.dp
                     }
                     DropdownMenu(menu,{menu=false}){
                         DropdownMenuItem(text={Text("不选择")},onClick={menu=false;state.selectPurpose(purpose,"")},modifier=Modifier.testTag("purpose-clear-${purpose.key}"))
-                        ProviderCatalog.configurations(state.configs,purpose,chosen?.id.orEmpty(),includeUnknown).forEach{config->DropdownMenuItem(text={Column{Text(config.name);Text(config.modelId,style=MaterialTheme.typography.bodySmall)}},onClick={menu=false;state.selectPurpose(purpose,config.id)},modifier=Modifier.testTag("purpose-option-${purpose.key}-${config.id}"))}
-                        if(purpose==ModelPurpose.EMBEDDING&&!includeUnknown)DropdownMenuItem(text={Text("其他已保存配置（能力未核实）")},onClick={includeUnknown=true},modifier=Modifier.testTag("purpose-unknown-embedding"))
+                        options.visible.forEach{config->DropdownMenuItem(text={Column{Text(config.name);Text(config.modelId,style=MaterialTheme.typography.bodySmall)}},onClick={menu=false;state.selectPurpose(purpose,config.id)},modifier=Modifier.testTag("purpose-option-${purpose.key}-${config.id}"))}
+                        if(options.hasAdditionalUnknown)DropdownMenuItem(text={Text("其他已保存配置（能力未核实）")},onClick={includeUnknown=true},modifier=Modifier.testTag("purpose-unknown-embedding"))
                     }
                 }
                 if(index<ModelPurpose.entries.lastIndex)HorizontalDivider(Modifier.padding(start=64.dp,end=16.dp),color=Line)
