@@ -26,13 +26,17 @@ class RecallGroupingUiTest {
     private fun row(id:String,state:String="success",group:String?="one",detail:String="",tool:String="agent_memory_read")=
         ChatToolActivity(id,1,"让我想一想",state,detail=detail,kind=ChatToolActivity.READ,tool=tool,reasoningAt=2,reasoningKnown=true,recallGroup=group)
     private fun render(rows:List<ChatToolActivity>,dark:Boolean=false,narrow:Boolean=false,thinking:Boolean=false){
+        val loader:suspend(List<ChatToolActivity>)->List<RecallContentPart> = {items->items.map{item->
+            if(item.recallOutcome()==RecallDisplayOutcome.FOUND)RecallContentPart.Text(if(item.tool=="agent_history_search")"合成聊天原话"else"合成回想${item.id}")
+            else RecallContentPart.Status(item.recallOutcome().label,if(item.recallOutcome()==RecallDisplayOutcome.ERROR)item.detail else "")
+        }.distinct()}
         ui.setContent{
             val density=LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density,if(narrow)2f else 1f)){
                 LianxuTheme(dark){Box(Modifier.fillMaxSize().background(ChatBackground).padding(20.dp)){
                     Column(Modifier.width(if(narrow)200.dp else 320.dp)){
-                        if(thinking)ChatThinkingStream("test","之前之后",false,rows.map{ChatThinkingBreak(2,it.id)},rows)
-                        else ChatToolActivities(rows)
+                        if(thinking)ChatThinkingStream("test","之前之后",false,rows.map{ChatThinkingBreak(2,it.id)},rows,loadRecall=loader)
+                        else ChatToolActivities(rows,loadRecall=loader)
                     }
                 }}
             }
@@ -51,7 +55,7 @@ class RecallGroupingUiTest {
         ui.onNodeWithText("想起来了").assertIsDisplayed()
         ui.onNodeWithTag("tool-result-a").assertIsDisplayed();ui.onNodeWithTag("tool-result-b").assertDoesNotExist()
         ui.onNodeWithTag("recall-toggle-a").performClick()
-        ui.onNodeWithText("1. 想起来了").assertIsDisplayed();ui.onNodeWithText("2. 想起来了").assertIsDisplayed()
+        ui.onNodeWithText("合成回想a").assertIsDisplayed();ui.onNodeWithText("合成回想b").assertIsDisplayed()
         shot("recall-success-expanded.png")
         ui.onNodeWithTag("recall-toggle-a").performClick();ui.onNodeWithTag("recall-results-a").assertDoesNotExist()
     }
@@ -59,7 +63,7 @@ class RecallGroupingUiTest {
         render(listOf(row("a"),row("b","failed"),row("c","failed",detail="操作未完成，角色会根据结果继续回应")))
         ui.onNodeWithText("想起来了 · 部分失败").assertIsDisplayed();shot("recall-mixed-collapsed.png")
         ui.onNodeWithTag("recall-toggle-a").performClick()
-        ui.onNodeWithText("1. 想起来了").assertIsDisplayed();ui.onNodeWithText("2. 没找到").assertIsDisplayed();ui.onNodeWithText("3. 回想出错").assertIsDisplayed()
+        ui.onNodeWithText("合成回想a").assertIsDisplayed();ui.onNodeWithText("没找到").assertIsDisplayed();ui.onNodeWithText("回想出错").assertIsDisplayed()
         ui.onNodeWithText("操作未完成，角色会根据结果继续回应").assertIsDisplayed();shot("recall-mixed-expanded.png")
     }
     @Test fun aRealMissAndAnExecutionFailureUseDifferentCollapsedWording(){
@@ -77,7 +81,7 @@ class RecallGroupingUiTest {
         render(listOf(row("a"),row("b")),thinking=true)
         ui.onNodeWithText("之前").assertIsDisplayed();ui.onNodeWithText("之后").assertIsDisplayed()
         ui.onNodeWithTag("tool-result-a").assertIsDisplayed();ui.onNodeWithTag("tool-result-b").assertDoesNotExist()
-        ui.onNodeWithTag("recall-toggle-a").performClick();ui.onNodeWithText("2. 想起来了").assertIsDisplayed()
+        ui.onNodeWithTag("recall-toggle-a").performClick();ui.onNodeWithText("合成回想b").assertIsDisplayed()
     }
     @Test fun darkNarrowDoubleFontKeepsTheMixedWarningAndEveryLineInsideItsTextBox(){
         render(listOf(row("a"),row("b","failed")),dark=true,narrow=true)
@@ -86,13 +90,13 @@ class RecallGroupingUiTest {
         val layout=results.single();assertEquals(2f,layout.layoutInput.density.fontScale)
         assertFalse(layout.didOverflowHeight)
         for(line in 0 until layout.lineCount)assertTrue(layout.getLineRight(line)-layout.getLineLeft(line)<=layout.size.width+1f)
-        ui.onNodeWithTag("recall-toggle-a").performClick();ui.onNodeWithText("2. 没找到").assertIsDisplayed()
+        ui.onNodeWithTag("recall-toggle-a").performClick();ui.onNodeWithText("没找到").assertIsDisplayed()
         shot("recall-dark-narrow-2x.png")
     }
     @Test fun eightResultsCanScrollToTheLastActualOutcome(){
-        render((1..8).map{row("m$it","failed",detail="操作未完成，保留这次工具执行的实际失败说明。")})
+        render((1..8).map{row("m$it")})
         ui.onNodeWithTag("recall-toggle-m1").performClick()
-        ui.onNodeWithTag("recall-outcome-m8").performScrollTo().assertIsDisplayed()
+        ui.onNodeWithText("合成回想m8").performScrollTo().assertIsDisplayed()
         shot("recall-eight-last.png")
     }
     @Suppress("UNCHECKED_CAST")
@@ -108,7 +112,7 @@ class RecallGroupingUiTest {
         ui.onNodeWithText("没找到").assertDoesNotExist();ui.onNodeWithText("回想出错").assertDoesNotExist()
         shot("incident-history-memory-collapsed.png")
         ui.onNodeWithTag("recall-toggle-${history.id}").performClick()
-        ui.onNodeWithText("1. 想起来了").assertIsDisplayed();ui.onNodeWithText("2. 想起来了").assertIsDisplayed()
+        ui.onNodeWithText("合成聊天原话").assertIsDisplayed();ui.onNodeWithText("合成回想incident-memory").assertIsDisplayed()
         shot("incident-history-memory-expanded.png")
     }
     @Test fun incidentHistoryHitAndMemoryErrorStillWarnWhileCollapsed(){
@@ -116,7 +120,7 @@ class RecallGroupingUiTest {
         render(listOf(history,memory))
         ui.onNodeWithText("想起来了 · 部分失败").assertIsDisplayed()
         ui.onNodeWithTag("recall-toggle-${history.id}").performClick()
-        ui.onNodeWithText("1. 想起来了").assertIsDisplayed();ui.onNodeWithText("2. 回想出错").assertIsDisplayed()
+        ui.onNodeWithText("合成聊天原话").assertIsDisplayed();ui.onNodeWithText("回想出错").assertIsDisplayed()
         shot("incident-history-memory-mixed.png")
     }
 }

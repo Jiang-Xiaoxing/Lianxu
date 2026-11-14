@@ -58,7 +58,7 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
  * between cards, never inside a card and never inside a wrapping container. When the model returns
  * no text after a call, no second card is invented.
  */
-@Composable internal fun ChatThinkingStream(owner:String,text:String,inProgress:Boolean,breaks:List<ChatThinkingBreak>,tools:List<ChatToolActivity>,modifier:Modifier=Modifier,loadMemory:(suspend(String)->StoredMemory?)?=null){
+@Composable internal fun ChatThinkingStream(owner:String,text:String,inProgress:Boolean,breaks:List<ChatThinkingBreak>,tools:List<ChatToolActivity>,modifier:Modifier=Modifier,loadMemory:(suspend(String)->StoredMemory?)?=null,loadRecall:(suspend(List<ChatToolActivity>)->List<RecallContentPart>)?=null){
     val parts=chatThinkingParts(text,breaks,tools)
     if(parts==null){ChatReasoningPanel(owner,text,inProgress,modifier);return}
     val recallGroups=remember(tools){recallReceiptGroups(tools)}
@@ -70,7 +70,7 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
                     ChatThinkingCard("$owner-$textIndex",part.text,inProgress&&index==parts.lastIndex,defaultExpanded=true)
                     textIndex++
                 }
-                is ChatThinkingPart.Tool->ChatToolReceipt(part.item,Modifier.padding(horizontal=14.dp),loadMemory,recallGroups[part.item.id])
+                is ChatThinkingPart.Tool->ChatToolReceipt(part.item,Modifier.padding(horizontal=14.dp),loadMemory,recallGroups[part.item.id],loadRecall)
             }
         }
     }
@@ -98,7 +98,7 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
 }
 
 /** [visible]: how many reply bubbles have been let out so far; the rest wait their turn (she is still typing). */
-@Composable internal fun ChatReplyDraft(preview:ChatReplyPreview?,turn:ChatTurn,modifier:Modifier=Modifier,visible:Int=Int.MAX_VALUE,viewport:androidx.compose.ui.geometry.Rect=androidx.compose.ui.geometry.Rect.Zero,onShown:(Int)->Unit={}){
+@Composable internal fun ChatReplyDraft(preview:ChatReplyPreview?,turn:ChatTurn,modifier:Modifier=Modifier,visible:Int=Int.MAX_VALUE,viewport:androidx.compose.ui.geometry.Rect=androidx.compose.ui.geometry.Rect.Zero,loadRecall:(suspend(List<ChatToolActivity>)->List<RecallContentPart>)?=null,onShown:(Int)->Unit={}){
     // Never display an old attempt after retry, cancellation, or a role/page switch.
     val current=preview?.takeIf{turn.state==TurnState.PENDING&&it.turnId==turn.id&&it.attempt==turn.attempt}
     val owner="${turn.id}-${turn.attempt}"
@@ -107,9 +107,9 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
     // Once there is thinking to cut into, receipts move out of the card and into the chat flow.
     val interleaved=current?.let{it.reasoning.isNotBlank()&&chatThinkingParts(it.reasoning,it.thinkingBreaks,tools.orEmpty())!=null}==true
     Column(modifier.testTag("reply-preview-$owner"),verticalArrangement=Arrangement.spacedBy(8.dp)){
-        ChatToolActivities(items,Modifier.fillMaxWidth(),capsules=!interleaved)
+        ChatToolActivities(items,Modifier.fillMaxWidth(),capsules=!interleaved,loadRecall=loadRecall)
         current?.let{
-            if(interleaved)ChatThinkingStream(owner,it.reasoning,it.phase!=ChatReplyPhase.REPLYING,it.thinkingBreaks,tools.orEmpty(),Modifier.fillMaxWidth())
+            if(interleaved)ChatThinkingStream(owner,it.reasoning,it.phase!=ChatReplyPhase.REPLYING,it.thinkingBreaks,tools.orEmpty(),Modifier.fillMaxWidth(),loadRecall=loadRecall)
             else ChatReasoningPanel(owner,it.reasoning,it.phase!=ChatReplyPhase.REPLYING,Modifier.fillMaxWidth())
         }
         val shown=current?.bubbles?.take(visible).orEmpty()
@@ -135,11 +135,11 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
 
 /** The small receipt pill. Display only; it never becomes dialogue, a memory or a relationship event.
  *  One pill from start to finish: on failure its text is replaced, not extended with a second line. */
-@Composable internal fun ChatToolReceipt(item:ChatToolActivity,modifier:Modifier=Modifier,loadMemory:(suspend(String)->StoredMemory?)?=null,recallGroup:RecallReceiptGroup?=null){
+@Composable internal fun ChatToolReceipt(item:ChatToolActivity,modifier:Modifier=Modifier,loadMemory:(suspend(String)->StoredMemory?)?=null,recallGroup:RecallReceiptGroup?=null,loadRecall:(suspend(List<ChatToolActivity>)->List<RecallContentPart>)?=null){
     if(item.state==ChatToolActivity.SUPERSEDED)return
     if(item.tool in ChatToolActivity.RECALL_TOOLS){
         val group=recallGroup?:RecallReceiptGroup(listOf(item))
-        if(group.id==item.id)ChatRecallReceipt(group,modifier)
+        if(group.id==item.id)ChatRecallReceipt(group,modifier,loadRecall)
         return
     }
     // Only a committed write linked to a stored row may open; staged/failed/candidate receipts stay shut.
@@ -203,7 +203,7 @@ internal fun memoryPeekOf(saved:StoredMemory?):ChatMemoryPeek = when{
     else->ChatMemoryPeek.Saved(saved.text)
 }
 
-@Composable internal fun ChatToolActivities(items:List<ChatToolActivity>,modifier:Modifier=Modifier,capsules:Boolean=true,loadMemory:(suspend(String)->StoredMemory?)?=null){
+@Composable internal fun ChatToolActivities(items:List<ChatToolActivity>,modifier:Modifier=Modifier,capsules:Boolean=true,loadMemory:(suspend(String)->StoredMemory?)?=null,loadRecall:(suspend(List<ChatToolActivity>)->List<RecallContentPart>)?=null){
     if(items.isEmpty())return
     val recallGroups=remember(items){recallReceiptGroups(items)}
     Column(modifier,verticalArrangement=Arrangement.spacedBy(8.dp)){
@@ -211,7 +211,7 @@ internal fun memoryPeekOf(saved:StoredMemory?):ChatMemoryPeek = when{
             if(item.before.isNotBlank())Surface(shape=RoundedCornerShape(topStart=6.dp,topEnd=18.dp,bottomStart=18.dp,bottomEnd=18.dp),color=ChatRoleBubble){
                 Text(item.before,Modifier.padding(UiSpace.bubble).testTag("tool-before-${item.id}"),style=MaterialTheme.typography.bodyLarge,color=ChatRoleText)
             }
-            if(capsules)ChatToolReceipt(item,loadMemory=loadMemory,recallGroup=recallGroups[item.id])
+            if(capsules)ChatToolReceipt(item,loadMemory=loadMemory,recallGroup=recallGroups[item.id],loadRecall=loadRecall)
         }
     }
 }

@@ -21,8 +21,12 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 
 /** Same capsule geometry as other receipts; only the recall status palette and grouping differ. */
-@Composable internal fun ChatRecallReceipt(group:RecallReceiptGroup,modifier:Modifier=Modifier){
+@Composable internal fun ChatRecallReceipt(group:RecallReceiptGroup,modifier:Modifier=Modifier,loadContents:(suspend(List<ChatToolActivity>)->List<RecallContentPart>)?=null){
     var expanded by remember(group.id){mutableStateOf(false)}
+    val contents=if(expanded)key(group.items,loadContents){produceState<List<RecallContentPart>?>(null){
+        value=try{loadContents?.invoke(group.items)?:unavailableRecallContents(group.items)}
+        catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:Exception){unavailableRecallContents(group.items)}
+    }}.value else null
     val dark=Paper.luminance()<.5f
     val failureText=if(dark)Color(0xFFE9B6B1) else Color(0xFF915753)
     val successText=if(dark)Color(0xFFAFC9B5) else Color(0xFF4E7058)
@@ -43,13 +47,16 @@ import androidx.compose.ui.unit.dp
         }
         if(expanded)Surface(Modifier.widthIn(max=280.dp).testTag("recall-results-${group.id}"),shape=RoundedCornerShape(14.dp),color=Paper,border=BorderStroke(.5.dp,Line)){
             Column(Modifier.heightIn(max=220.dp).verticalScroll(rememberScrollState()).padding(horizontal=12.dp,vertical=10.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
-                group.items.forEachIndexed{index,item->
-                    val color=when(item.recallOutcome()){RecallDisplayOutcome.FOUND->successText;RecallDisplayOutcome.NOT_FOUND,RecallDisplayOutcome.ERROR->failureText;else->Muted}
-                    Column(verticalArrangement=Arrangement.spacedBy(4.dp)){
-                        Text("${index+1}. ${item.recallOutcome().label}",Modifier.testTag("recall-outcome-${item.id}"),style=MaterialTheme.typography.bodyMedium,color=color)
-                        if(item.detail.isNotBlank())Text(item.detail,style=MaterialTheme.typography.bodySmall,color=Muted)
+                if(contents==null)Text("正在读取…",style=MaterialTheme.typography.bodyMedium,color=Muted)
+                contents?.forEach{part->when(part){
+                    is RecallContentPart.Text->Text(part.value,style=MaterialTheme.typography.bodyMedium,color=Ink)
+                    is RecallContentPart.Status->Column(verticalArrangement=Arrangement.spacedBy(4.dp)){
+                        Text(part.value,style=MaterialTheme.typography.bodyMedium,color=if(group.hasFailure)failureText else Muted)
+                        if(part.detail.isNotBlank())Text(part.detail,style=MaterialTheme.typography.bodySmall,color=Muted)
                     }
-                }
+                    RecallContentPart.Deleted->Text("内容已删除",style=MaterialTheme.typography.bodyMedium,color=Muted)
+                    RecallContentPart.Unavailable->Text("详情不可用",style=MaterialTheme.typography.bodyMedium,color=Muted)
+                }}
             }
         }
     }

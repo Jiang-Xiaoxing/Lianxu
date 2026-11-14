@@ -105,6 +105,9 @@ private suspend fun LazyListState.showEndOf(index:Int){
     val memoryReader: suspend (String) -> StoredMemory? = remember(vm, friend.id) {
         { id -> vm.processing.read { db -> vm.processing.memory(db, friend.id, id) } }
     }
+    val recallReader:suspend(List<ChatToolActivity>)->List<RecallContentPart> = remember(vm,friend.id,vm.processingRevision){
+        {items->vm.processing.recallContents(friend.id,items)}
+    }
     val time=remember{SimpleDateFormat("HH:mm",Locale.getDefault())}
     // The attempt owns delivered bubbles, so switching pages never releases an unseen tail.
     val pacedTurn=preview?.turnId
@@ -177,9 +180,9 @@ private suspend fun LazyListState.showEndOf(index:Int){
                                         val placed=placedReceipts(activities,turn?.attempt)
                                         val interleaved=placed.isNotEmpty()&&message.displayReasoning.isNotBlank()
                                         val outside=if(interleaved)activities.filterNot{it in placed} else activities
-                                        ChatToolActivities(outside,Modifier.width(width),loadMemory=memoryReader)
+                                        ChatToolActivities(outside,Modifier.width(width),loadMemory=memoryReader,loadRecall=recallReader)
                                         if(interleaved)ChatThinkingStream("message-${message.id}",message.displayReasoning,false,
-                                            placed.sortedBy{it.reasoningAt}.map{ChatThinkingBreak(it.reasoningAt,it.id)},activities,Modifier.width(width),loadMemory=memoryReader)
+                                            placed.sortedBy{it.reasoningAt}.map{ChatThinkingBreak(it.reasoningAt,it.id)},activities,Modifier.width(width),loadMemory=memoryReader,loadRecall=recallReader)
                                         else ChatReasoningPanel("message-${message.id}",message.displayReasoning,false,Modifier.width(width))
                                     }
                                     Column(Modifier.widthIn(max=width).onGloballyPositioned{val p=it.localToWindow(Offset.Zero);bounds=Rect(p,it.size.toSize())}.testTag("message-${message.id}").semantics(mergeDescendants=true){text=androidx.compose.ui.text.AnnotatedString(message.text)}.combinedClickable(onClick={},onLongClick={controlMessage=message}),verticalArrangement=Arrangement.spacedBy(5.dp)){
@@ -198,8 +201,8 @@ private suspend fun LazyListState.showEndOf(index:Int){
                         group.messages.mapNotNull{message->vm.turns.firstOrNull{it.userMessageId==message.id&&it.state !in setOf(TurnState.COMPLETED,TurnState.SUPERSEDED)}}.forEach{turn->
                             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.Top){
                                 Avatar(friend,32);Spacer(Modifier.width(8.dp))
-                                if(turn.state==TurnState.PENDING)ChatReplyDraft(preview,turn,Modifier.width(width),if(pacedTurn==turn.id)pacedShown else 0,viewport){count->vm.replyShown(friend.id,turn.id,turn.attempt,count)}
-                                else Column(Modifier.width(width),verticalArrangement=Arrangement.spacedBy(8.dp)){if(turn.assistantMessageId==null)ChatToolActivities(mergeRecordPills(turn.toolActivities));ChatTurnControls(vm,turn)}
+                                if(turn.state==TurnState.PENDING)ChatReplyDraft(preview,turn,Modifier.width(width),if(pacedTurn==turn.id)pacedShown else 0,viewport,loadRecall=recallReader){count->vm.replyShown(friend.id,turn.id,turn.attempt,count)}
+                                else Column(Modifier.width(width),verticalArrangement=Arrangement.spacedBy(8.dp)){if(turn.assistantMessageId==null)ChatToolActivities(mergeRecordPills(turn.toolActivities),loadRecall=recallReader);ChatTurnControls(vm,turn)}
                             }
                         }
                         }
