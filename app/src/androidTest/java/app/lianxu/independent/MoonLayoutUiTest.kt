@@ -95,7 +95,7 @@ class MoonLayoutUiTest {
         ui.onNodeWithText("知道了").performClick()
         ui.waitUntil(10000){runBlocking{LocalUpdateRepository(vm.processing.store).pending(InstalledBuild.read(context).versionCode)}==null}
         ui.runOnIdle{vm.open("settings-updates")}
-        ui.onNodeWithText(LocalReleaseNotes.forVersion(InstalledBuild.read(context).versionCode)!!.title).assertExists()
+        ui.onNodeWithTag("updates-current-toggle").assertTextContains(InstalledBuild.read(context).versionName,substring=true)
         ui.onNodeWithTag("settings-back").performClick()
         ui.onNodeWithTag("roles-empty-chat").assertIsDisplayed()
     }

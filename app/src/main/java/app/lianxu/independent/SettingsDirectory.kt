@@ -100,15 +100,7 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
     val context=LocalContext.current
     val build=remember(context){runCatching{InstalledBuild.read(context)}.getOrNull()}
     SettingsPage("更新说明",onBack){
-        val notes=build?.let{LocalReleaseNotes.history(it.versionCode)}.orEmpty()
-        if(notes.isEmpty())Text("当前安装包没有随包更新记录。",color=Muted)
-        notes.forEach{note->
-            Text(note.title,style=MaterialTheme.typography.titleMedium)
-            Text(note.version,style=MaterialTheme.typography.labelMedium,color=Muted)
-            note.changes.forEach{Text(it,style=MaterialTheme.typography.bodyMedium)}
-            note.limits.forEach{Text(it,style=MaterialTheme.typography.bodySmall,color=Muted)}
-            HorizontalDivider(color=Line)
-        }
+        UpdatesContent(build)
     }
 }
 

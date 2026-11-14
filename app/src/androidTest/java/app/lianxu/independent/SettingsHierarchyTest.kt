@@ -140,7 +140,7 @@ class SettingsHierarchyTest {
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
         ui.onNodeWithTag("settings-home").assertIsDisplayed()
         ui.onNodeWithTag("settings-updates").performScrollTo().performClick()
-        ui.onNodeWithText(LocalReleaseNotes.forVersion(InstalledBuild.read(context).versionCode)!!.title).assertExists()
+        ui.onNodeWithTag("updates-current-toggle").assertTextContains(InstalledBuild.read(context).versionName,substring=true)
         ui.onNodeWithTag("settings-back").performClick()
         ui.onNodeWithTag("settings-home").assertIsDisplayed()
         ui.onNodeWithTag("settings-models").performScrollTo().assertIsDisplayed()
