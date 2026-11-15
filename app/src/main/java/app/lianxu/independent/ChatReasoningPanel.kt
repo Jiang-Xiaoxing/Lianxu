@@ -162,7 +162,7 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
         catch(_:Exception){ChatMemoryPeek.Unreadable}
     }
     Column(modifier,verticalArrangement=Arrangement.spacedBy(4.dp)){
-        Surface(shape=RoundedCornerShape(50),color=Paper,border=BorderStroke(.5.dp,Line),modifier=Modifier.testTag("tool-result-${item.id}")){
+        Surface(shape=RoundedCornerShape(50),color=Paper,border=BorderStroke(.5.dp,Line),modifier=Modifier.then(chatCapsuleAnimation(toolCapsuleKey(item,LocalChatCapsuleOwner.current))).testTag("tool-result-${item.id}")){
             // The click target is inside the pill so the outer test tag stays stable whether or not it opens.
             Row(Modifier.then(if(canOpen)Modifier
                     .clickable(role=Role.Button){if(!expanded)peek=null;expanded=!expanded}

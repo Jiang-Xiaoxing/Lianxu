@@ -48,7 +48,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
 @Composable internal fun MemorySummaryPill(pill:MemoryPill,onClick:(()->Unit)?=null){
     val shape=RoundedCornerShape(50)
     Row(Modifier.fillMaxWidth().padding(vertical=2.dp).testTag("memory-pill-${pill.batchId}"),horizontalArrangement=Arrangement.Center){
-        Row(Modifier.widthIn(max=280.dp).clip(shape).background(Paper).border(.5.dp,Line,shape).then(if(onClick==null)Modifier else Modifier.clickable(role=Role.Button,onClick=onClick)).padding(horizontal=12.dp,vertical=6.dp).testTag("memory-pill-box-${pill.batchId}"),
+        Row(Modifier.widthIn(max=280.dp).then(chatCapsuleAnimation(memoryCapsuleKey(pill))).clip(shape).background(Paper).border(.5.dp,Line,shape).then(if(onClick==null)Modifier else Modifier.clickable(role=Role.Button,onClick=onClick)).padding(horizontal=12.dp,vertical=6.dp).testTag("memory-pill-box-${pill.batchId}"),
             verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){
             ControlIcon("memory",GreenText,16.dp)
             Text(pill.text,style=MaterialTheme.typography.labelMedium,color=GreenText,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
@@ -70,6 +70,16 @@ private suspend fun LazyListState.showEndOf(index:Int){
     val timeline=remember(messages,pills){chatTimeline(messages,pills)}
     val openTurn=vm.turns.lastOrNull{it.friendId==friend.id}?.takeIf{it.state!=TurnState.COMPLETED}
     val preview=vm.chatPreview?.takeIf{openTurn?.state==TurnState.PENDING&&it.turnId==openTurn.id&&it.attempt==openTurn.attempt}
+    val capsuleFrames=buildMap{
+        vm.turns.filter{it.friendId==friend.id}.forEach{turn->
+            putAll(chatCapsuleFrames(if(preview?.turnId==turn.id)preview.tools else turn.toolActivities,emptyList(),turn.id))
+        }
+        putAll(chatCapsuleFrames(emptyList(),pills))
+    }
+    val capsuleMotion=remember(friend.id){ChatCapsuleMotionTracker(capsuleFrames)}
+    val durationScale=rememberCoroutineScope().coroutineContext[androidx.compose.ui.MotionDurationScale]?.scaleFactor?:1f
+    val capsuleUpdate=capsuleMotion.prepare(capsuleFrames,capsuleMotionNow(),durationScale)
+    SideEffect{capsuleMotion.commit(capsuleUpdate)}
     val list=rememberLazyListState()
     val jump = remember(friend.id) { vm.memoryChatRequest.consume() }
     var highlighted by remember(friend.id) { mutableStateOf(false) }
@@ -136,6 +146,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
         if(target!=null){val index=timeline.indexOfFirst{it is ChatRow.Group&&it.value.messages.any{m->m.id==target}};if(index>=0){list.scrollToItem(index);vm.notificationShown();lastSeen=id}}
         else if(id!=null&&id!=lastSeen&&timeline.isNotEmpty()){list.scrollToItem(timeline.lastIndex);lastSeen=id}
     }
+    CompositionLocalProvider(LocalChatCapsuleMotion provides capsuleUpdate.events){
     Column(Modifier.fillMaxSize().background(ChatPageBackground)){
         Row(Modifier.fillMaxWidth().heightIn(min=68.dp).background(ChatBarBackground).padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically){
             IconButton(onClick={vm.back()},modifier=Modifier.size(UiSpace.action).testTag("back").semantics{contentDescription="返回"}){ControlIcon("back",Ink)}
@@ -181,10 +192,12 @@ private suspend fun LazyListState.showEndOf(index:Int){
                                         val placed=placedReceipts(activities,turn?.attempt)
                                         val interleaved=placed.isNotEmpty()&&message.displayReasoning.isNotBlank()
                                         val outside=if(interleaved)activities.filterNot{it in placed} else activities
+                                        CompositionLocalProvider(LocalChatCapsuleOwner provides turn?.id.orEmpty()){
                                         ChatToolActivities(outside,Modifier.width(width),loadMemory=memoryReader,loadRecall=recallReader)
                                         if(interleaved)ChatThinkingStream("message-${message.id}",message.displayReasoning,false,
                                             placed.sortedBy{it.reasoningAt}.map{ChatThinkingBreak(it.reasoningAt,it.id)},activities,Modifier.width(width),loadMemory=memoryReader,loadRecall=recallReader)
                                         else ChatReasoningPanel("message-${message.id}",message.displayReasoning,false,Modifier.width(width))
+                                        }
                                     }
                                     Column(Modifier.widthIn(max=width).onGloballyPositioned{val p=it.localToWindow(Offset.Zero);bounds=Rect(p,it.size.toSize())}.testTag("message-${message.id}").semantics(mergeDescendants=true){text=androidx.compose.ui.text.AnnotatedString(message.text)}.combinedClickable(onClick={},onLongClick={controlMessage=message}),verticalArrangement=Arrangement.spacedBy(5.dp)){
                                         val segments=ChatBubbleSegments.forMessage(message.text,message.mine)
@@ -202,8 +215,10 @@ private suspend fun LazyListState.showEndOf(index:Int){
                         group.messages.mapNotNull{message->vm.turns.firstOrNull{it.userMessageId==message.id&&it.state !in setOf(TurnState.COMPLETED,TurnState.SUPERSEDED)}}.forEach{turn->
                             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.Top){
                                 Avatar(friend,32);Spacer(Modifier.width(8.dp))
+                                CompositionLocalProvider(LocalChatCapsuleOwner provides turn.id){
                                 if(turn.state==TurnState.PENDING)ChatReplyDraft(preview,turn,Modifier.width(width),if(pacedTurn==turn.id)pacedShown else 0,viewport,loadRecall=recallReader){count->vm.replyShown(friend.id,turn.id,turn.attempt,count)}
                                 else Column(Modifier.width(width),verticalArrangement=Arrangement.spacedBy(8.dp)){if(turn.assistantMessageId==null)ChatToolActivities(mergeRecordPills(turn.toolActivities),loadRecall=recallReader);ChatTurnControls(vm,turn)}
+                                }
                             }
                         }
                         }
@@ -239,6 +254,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
                 }
             }
         }}
+    }
     }
     controlMessage?.let{m->AlertDialog(onDismissRequest={controlMessage=null},title={Text("这条消息的使用方式")},text={Text("停止提醒会保留记忆。不再使用会停止相关原话、记忆与判断的AI使用，并取消回访；原聊天保留供你查看。")},
         confirmButton={TextButton(onClick={vm.sourceControl(m.id,true);controlMessage=null},modifier=Modifier.testTag("companion-forget")){Text("不再用于记忆和判断")}},

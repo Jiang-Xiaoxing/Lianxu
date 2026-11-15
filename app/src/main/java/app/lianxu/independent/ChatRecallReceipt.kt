@@ -20,9 +20,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 
-/** Same capsule geometry as other receipts; only the recall status palette and grouping differ. */
+/** Result tone appears softly; the real label, content and reply never wait for it. */
 @Composable internal fun ChatRecallReceipt(group:RecallReceiptGroup,modifier:Modifier=Modifier,loadContents:(suspend(List<ChatToolActivity>)->List<RecallContentPart>)?=null){
-    var expanded by remember(group.id){mutableStateOf(false)}
+    val attempt=group.items.first().attempt
+    var expanded by remember(group.id,attempt){mutableStateOf(false)}
     val contents=if(expanded)key(group.items,loadContents){produceState<List<RecallContentPart>?>(null){
         value=try{loadContents?.invoke(group.items)?:unavailableRecallContents(group.items)}
         catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:Exception){unavailableRecallContents(group.items)}
@@ -37,12 +38,12 @@ import androidx.compose.ui.unit.dp
         else->Paper
     }
     Column(modifier.testTag("recall-group-${group.id}"),verticalArrangement=Arrangement.spacedBy(4.dp)){
-        Surface(shape=RoundedCornerShape(50),color=background,border=BorderStroke(.5.dp,Line),modifier=Modifier.widthIn(max=280.dp).testTag("tool-result-${group.id}")){
+        Surface(shape=RoundedCornerShape(50),color=background,border=BorderStroke(.5.dp,Line),modifier=Modifier.widthIn(max=280.dp).then(chatCapsuleAnimation(toolCapsuleKey(group.items.first(),LocalChatCapsuleOwner.current))).testTag("tool-result-${group.id}")){
             Row(Modifier.clickable(role=Role.Button){expanded=!expanded}.testTag("recall-toggle-${group.id}")
                 .semantics{contentDescription=if(expanded)"收起回想结果"else"查看回想结果";stateDescription=if(expanded)"已展开"else"已收起"}
-                .padding(start=12.dp,end=8.dp,top=6.dp,bottom=6.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){
-                Text(group.label(),Modifier.weight(1f,fill=false),style=MaterialTheme.typography.labelMedium,color=foreground)
-                Box(Modifier.rotate(if(expanded)0f else 180f)){ControlIcon("up",foreground,14.dp)}
+                .padding(start=14.dp,end=10.dp,top=8.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){
+                Text(group.label(),Modifier.weight(1f,fill=false),style=MaterialTheme.typography.labelLarge,color=foreground)
+                Box(Modifier.rotate(if(expanded)0f else 180f)){ControlIcon("up",foreground,16.dp)}
             }
         }
         if(expanded)Surface(Modifier.widthIn(max=280.dp).testTag("recall-results-${group.id}"),shape=RoundedCornerShape(14.dp),color=Paper,border=BorderStroke(.5.dp,Line)){
