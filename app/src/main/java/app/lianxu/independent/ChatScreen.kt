@@ -229,8 +229,8 @@ private suspend fun LazyListState.showEndOf(index:Int){
         Surface(color=ChatBarBackground,shadowElevation=0.dp){Column{
             HorizontalDivider(color=ChatInputBorder,thickness=.5.dp)
             Row(Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=10.dp),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                IconButton(onClick={attachmentInfo=true},modifier=Modifier.padding(bottom=4.dp).size(UiSpace.action).testTag("chat-attach").semantics{contentDescription="附件，暂未接入"}){ControlIcon("attach")}
-                val shape=RoundedCornerShape(6.dp)
+                IconButton(onClick={attachmentInfo=true},modifier=Modifier.padding(bottom=4.dp).size(UiSpace.action).testTag("chat-attach").semantics{contentDescription="附件，暂未接入"}){ControlIcon("plus")}
+                val shape=RoundedCornerShape(28.dp)
                 TextField(draft,{draft=it.take(2000);draftVersion++},modifier=Modifier.weight(1f).onFocusChanged{focused=it.hasFocus}.border(if(focused)1.dp else .5.dp,ChatInputBorder,shape).testTag("message-input"),placeholder={Text("说点什么…",style=MaterialTheme.typography.bodyLarge)},textStyle=MaterialTheme.typography.bodyLarge,maxLines=4,shape=shape,keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),keyboardActions=KeyboardActions(onSend={send()}),colors=TextFieldDefaults.colors(focusedContainerColor=Paper,unfocusedContainerColor=Paper,disabledContainerColor=Paper,focusedIndicatorColor=Color.Transparent,unfocusedIndicatorColor=Color.Transparent,cursorColor=ChatSendButton))
                 val stopping=vm.chatSending&&draft.isBlank()
                 val enabled=stopping||draft.isNotBlank()&&vm.chatInputAvailable

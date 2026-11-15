@@ -113,4 +113,3 @@ class ChatCapsuleMotionTest {
         assertEquals(3000,slow.remaining(0));assertEquals(.5f,slow.progress(1500),.0001f)
     }
 }
-
