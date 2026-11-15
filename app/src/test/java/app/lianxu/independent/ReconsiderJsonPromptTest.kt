@@ -23,9 +23,13 @@ class ReconsiderJsonPromptTest {
     @Test fun completeExamplesFromProductionPromptPassStrictContractAndPreserveAllChoices()=runBlocking {
         val capture=Client(silent);assertEquals("silent",call(capture).action)
         val request=capture.requests.single()
+        assertEquals(listOf("system","user"),request.messages.map{it.role})
+        val program=request.messages.last()
+        assertTrue(program.content.contains("不是用户聊天原话"));assertTrue(program.sourceMessageId.isEmpty())
+        assertTrue(program.memoryIds.isEmpty());assertTrue(program.toolCalls.isEmpty())
         assertEquals(65536,request.outputLimit);assertEquals(120000,request.timeoutMillis)
         assertTrue(request.jsonObject);assertFalse(StructuredResponsePolicy.jsonMode(config,request))
-        val examples=Regex("(?m)^\\s*(\\{[^\\r\\n]+\\})\\s*$").findAll(request.messages.single().content).map{it.groupValues[1]}.toList()
+        val examples=Regex("(?m)^\\s*(\\{[^\\r\\n]+\\})\\s*$").findAll(request.messages.first().content).map{it.groupValues[1]}.toList()
         assertEquals(4,examples.size)
         assertEquals(setOf("send","defer","cancel","silent"),examples.map{JsonParser.parseString(it).asJsonObject.get("action").asString}.toSet())
         for(raw in examples){
@@ -39,8 +43,8 @@ class ReconsiderJsonPromptTest {
         try{call(client);fail("Non-JSON prose must not be extracted or accepted")}
         catch(e:CompanionModelFailure){assertEquals(ChatFailure.REPLY_TEXT_INVALID,e.failure)}
         assertEquals(3,client.requests.size)
-        val original=client.requests.first().messages.single()
-        assertTrue(client.requests.drop(1).all{it.messages.first()==original})
+        val original=client.requests.first().messages
+        assertTrue(client.requests.drop(1).all{it.messages.take(original.size)==original})
         assertTrue(client.requests.last().messages.last().content.contains("JSON_SYNTAX"))
     }
 }
