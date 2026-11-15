@@ -257,7 +257,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
                         }
                         if(rows==null)raw else raw+("results" to rows)
                     }}
-                }catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:RecallContextCapacity){if(call.name==RelationshipRecall.NAME)mapOf("status" to "context_full")else return TextChatResult.Failure(ChatFailure.CONTEXT_CAPACITY)}catch(e:Exception){ToolArgumentDiagnosis.writeFailure(call.name,call.arguments,input,targets.keys,mapOf("success" to false,"error" to ((e as? ProcessingRejected)?.code?:"invalid_arguments")),e,availableWriteEvidence)}
+                }catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:RecallContextCapacity){if(call.name==RelationshipRecall.NAME)mapOf("status" to "context_full")else return TextChatResult.Failure(ChatFailure.CONTEXT_CAPACITY)}catch(e:Exception){ToolArgumentDiagnosis.writeFailure(call.name,call.arguments,input,targets.keys,mapOf("success" to false,"error" to ((e as? ProcessingRejected)?.code?:"invalid_arguments")),e,availableWriteEvidence,turn.userMessageId)}
                 currentCoroutineContext().ensureActive()
                 val output=ToolArgumentDiagnosis.retryExhausted(call.name,if(call.name==JointControl.NAME)controlAttempts else recordAttempts,rawOutput)
                 val resultActivity=ChatToolJournal.result(activity,output)

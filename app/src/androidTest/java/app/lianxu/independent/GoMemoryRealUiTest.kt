@@ -25,10 +25,11 @@ import javax.net.ssl.HttpsURLConnection
 /** Opt-in actual UI and production runner/tools/SQLite; only the data/vault and observer are isolated. */
 class GoMemoryRealUiTest {
     private val contactMode get()=InstrumentationRegistry.getArguments().getString("controlledContact")=="true"
+    private val contactOnly get()=contactMode&&InstrumentationRegistry.getArguments().getString("controlledContactOnly")=="true"
     private val mutationMode get()=InstrumentationRegistry.getArguments().getString("controlledMutation")=="true"
     private val correctionMode get()=InstrumentationRegistry.getArguments().getString("controlledCorrection")=="true"
     private val keepIsolated get()=contactMode||mutationMode||correctionMode
-    private val requestLimit get()=if(correctionMode)12 else if(mutationMode)20 else 30
+    private val requestLimit get()=if(correctionMode||contactOnly)12 else if(mutationMode)20 else 30
     private val supplement get()=!keepIsolated&&InstrumentationRegistry.getArguments().getString("controlledSupplement")=="true"
     private val inputs get()=if(correctionMode)listOf(
         "我是纯虚构旅人听澜。我长期喜欢桂花乌龙，请把这个饮茶偏好记住。",
@@ -39,7 +40,7 @@ class GoMemoryRealUiTest {
         "我不能吃花生，吃了会发痒。明天我打算去青榕书店借植物图鉴。先自然聊一句，不用当场记。")else if(contactMode)listOf(
         "我是虚构旅人青禾。我喜欢的茶叫雨巷桂花乌龙，请把这个茶名偏好记住。另外，请大约30秒后主动来问我杯子里的茶凉了没有；这次问过就不再续约。",
         "我刚才说喜欢喝哪一种茶？别只靠这会儿的聊天，翻翻你保存的那条记忆再告诉我。",
-        "那请读取现在还有效的角色记忆，确认我喜欢的茶名，照记忆原文复述给我。")else if(supplement)listOf(
+        "那请读取现在还有效的角色记忆，确认我喜欢的茶名，照记忆原文复述给我。").take(if(contactOnly)1 else 3)else if(supplement)listOf(
         "我在这个纯虚构故事里长期喜欢喝桂花乌龙，请把这条饮茶偏好保存到记忆里。",
         "这轮是回想工具验收：请先实际调用 agent_recall_search 检索“桂花乌龙”，依据工具命中的记忆回复。即使你从上下文已知道，也请真正执行这次检索；查不到就如实说查不到。",
         "我不能喝咖啡，喝了会心慌。明天我打算去青榕书店借一本植物图鉴。")else listOf(
@@ -333,6 +334,7 @@ class GoMemoryRealUiTest {
                 val evidence=synchronized(lock){rows.firstOrNull{r->r.optString("input")==inputs.first()&&r.optJSONArray("toolResults")?.let{a->(0 until a.length()).any{n->val t=a.getJSONObject(n);t.optString("name")==ImmediateContact.NAME&&runCatching{JSONObject(t.getString("output")).optBoolean("success")}.getOrDefault(false)}}==true}?.let{JSONObject(it.toString())}}
                 val initial=evidence?.optJSONObject("contactStateBeforeCall")?.optJSONArray("opportunities")
                 val original=(0 until (initial?.length()?:0)).map{initial!!.getJSONObject(it)}.firstOrNull{it.getString("id")==expectedId}
+                var confirmedProactiveId:Long?=null;var confirmedProactiveText:String?=null
                 synchronized(lock){contactObservation=(contactObservation?:JSONObject()).put("beforeWait",before).put("waitStartedAt",System.currentTimeMillis()).put("expectedIdFromRealSource",expectedId).put("successToolEvidence",evidence).put("originalOpportunity",original);save()}
                 if(original!=null){
                     val initialDue=mapOf(expectedId to original.getLong("notBefore"))
@@ -343,12 +345,25 @@ class GoMemoryRealUiTest {
                         val state=snapshot();synchronized(lock){contactObservation!!.put("afterWait",state).put("observedAt",System.currentTimeMillis());save()}
                         val opportunities=state.getJSONArray("opportunities")
                         val links=state.getJSONArray("receiptLinks")
-                        ended=(0 until links.length()).any{links.getJSONObject(it).getString("opportunityId") in initialDue}||(0 until opportunities.length()).any{n->val o=opportunities.getJSONObject(n);o.getString("id") in initialDue&&(o.getString("state") in setOf("send","silent","cancel","cancelled","failed")||o.getString("state")=="queued"&&o.getLong("notBefore")!=initialDue[o.getString("id")])}
+                        val messages=state.getJSONArray("messages")
+                        val delivered=(0 until links.length()).map{links.getJSONObject(it)}.firstNotNullOfOrNull{link->if(link.getString("opportunityId") !in initialDue)null else (0 until messages.length()).map{messages.getJSONObject(it)}.firstOrNull{message->message.getLong("id")==link.getLong("messageId")&&!message.getBoolean("mine")&&message.getString("text").isNotBlank()}}
+                        if(delivered!=null){confirmedProactiveId=delivered.getLong("id");confirmedProactiveText=delivered.getString("text");synchronized(lock){contactObservation!!.put("confirmedProactiveMessageId",confirmedProactiveId).put("confirmedProactiveText",confirmedProactiveText);save()}}
+                        val terminal=if(contactOnly)setOf("silent","cancel","cancelled","failed")else setOf("send","silent","cancel","cancelled","failed")
+                        ended=delivered!=null||(0 until opportunities.length()).any{n->val o=opportunities.getJSONObject(n);o.getString("id") in initialDue&&(o.getString("state") in terminal||!contactOnly&&o.getString("state")=="queued"&&o.getLong("notBefore")!=initialDue[o.getString("id")])}
                     }
                     synchronized(lock){contactObservation!!.put("observedStateChange",ended);save()}
                 }else synchronized(lock){contactObservation!!.put("firstArrangementNotConfirmed",true);save()}
                 shot("ui-contact-after-wait")
                 ui.runOnIdle{ViewModelProvider(ui.activity)[AppState::class.java].open("chat",friendId)}
+                if(contactOnly){
+                    ui.runOnIdle{(ui.activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(ui.activity.window.decorView.windowToken,0);ui.activity.currentFocus?.clearFocus()}
+                    if(confirmedProactiveId!=null){
+                        val id=confirmedProactiveId!!;val expected=checkNotNull(confirmedProactiveText)
+                        ui.waitUntil(10000){ViewModelProvider(ui.activity)[AppState::class.java].messages.any{it.id==id&&!it.mine&&it.text==expected}}
+                        ui.onNodeWithTag("chat-history").performScrollToNode(hasTestTag("message-$id"));ui.onNode(hasTestTag("message-$id") and hasText(expected)).assertIsDisplayed()
+                        synchronized(lock){contactObservation!!.put("displayedProactiveMessageId",id);save()}
+                    }
+                }
                 ui.waitForIdle();shot("ui-contact-final-chat")
             }else{
             ui.mainClock.autoAdvance=true

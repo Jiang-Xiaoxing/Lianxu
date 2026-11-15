@@ -65,13 +65,61 @@ internal object ToolArgumentDiagnosis {
         // RoleUnderstandingContract lenient parts and both relation contracts swallow issues: do not report them.
         return out
     }
-    fun writeFailure(name:String,raw:String,input:String,knownTargets:Set<String>,base:Map<String,Any>,error:Exception,memoryEvidence:Map<String,MemoryEvidence>?=null):Map<String,Any> {
-        if(name !in setOf("agent_memory_update",JointControl.NAME,CompanionRecord.NAME))return base
+    fun writeFailure(name:String,raw:String,input:String,knownTargets:Set<String>,base:Map<String,Any>,error:Exception,memoryEvidence:Map<String,MemoryEvidence>?=null,contactSource:Long?=null):Map<String,Any> {
+        if(name !in setOf("agent_memory_update",JointControl.NAME,CompanionRecord.NAME,ImmediateContact.NAME))return base
         // MemoryTools.stage state guards are not argument errors; never diagnose them as fields.
         if(base["error"] in setOf("SOURCE_CHANGED","TOOL_LIMIT","TOOLS_DISABLED","STALE"))return base+mapOf("detail" to "当前状态不允许这次操作，无需修改参数重试。")
+        if(name==ImmediateContact.NAME){
+            val knownCodes=setOf("MISSING_CONTACT_TIME","INVALID_CONTACT_TIME","CONTACT_TIME_IN_PAST","AMBIGUOUS_CONTACT_TIME","AMBIGUOUS_OR_MISSING_LOCAL_TIME","INVALID_CONTACT_DURATION","INVALID_CONTACT_NUMBER","EMPTY_CONTACT","INVALID_CONTACT_PARAMETERS")
+            val code=(error as? RoleContractViolation)?.code?:error.message?.takeIf{it in knownCodes}
+            val result=if(code!=null)base+("validation_code" to code)else base
+            return failure(result,error){diagnoseContact(raw,contactSource,code)}
+        }
         if(error is ProcessingRejected&&error.code=="DATE_EVIDENCE"&&error.detail.isNotBlank())return base+mapOf("detail" to "这次调用没有通过检查。${error.detail}")
         if(base["error"] !in setOf("invalid_arguments","FORMAT","EVIDENCE","USER_EVIDENCE","DATE_EVIDENCE","UNKNOWN_TARGET"))return base
         return failure(base,error){when(name){JointControl.NAME->diagnoseControl(org.json.JSONObject(raw),input);CompanionRecord.NAME->diagnoseRecord(raw,input,false);else->diagnoseMemoryUpdate(org.json.JSONObject(raw),input,knownTargets,memoryEvidence)}}
+    }
+    /** Structural checks plus the real parser's rejection code; never copy contact prose into errors. */
+    fun diagnoseContact(raw:String,current:Long?,code:String?):List<Problem> {
+        val root=runCatching{JsonParser.parseString(raw)}.getOrNull()
+        fun kind(v:JsonElement?):String=when{v==null->"缺失";v.isJsonNull->"空值 null";v.isJsonObject->"对象";v.isJsonArray->"数组";v.asJsonPrimitive.isString->"字符串";v.asJsonPrimitive.isBoolean->"布尔值";else->"数字"}
+        if(root?.isJsonObject!=true)return listOf(Problem("$","为JSON对象",kind(root)))
+        val j=root.asJsonObject;val out=mutableListOf<Problem>()
+        if(j.keySet().any{it !in setOf("future","改主动参数")})return listOf(Problem("$","仅包含future或改主动参数","包含未支持字段"))
+        if(code=="EMPTY_CONTACT")return listOf(Problem("$","至少提供有效future或用户明确要求的改主动参数","未提供有效安排或建议"))
+        if(code=="INVALID_CONTACT_PARAMETERS")return listOf(Problem("改主动参数","为用户直接要求且符合允许参数协议的建议","原参数校验拒绝"))
+        val f=j.get("future")?:return out
+        if(f.isJsonNull)return out
+        if(!f.isJsonObject)return out+Problem("future","为联系机会对象",kind(f))
+        val value=f.asJsonObject
+        fun text(v:JsonElement?)=v?.takeIf{it.isJsonPrimitive&&it.asJsonPrimitive.isString}?.asString
+        fun integer(v:JsonElement?)=runCatching{v?.takeIf{it.isJsonPrimitive&&it.asJsonPrimitive.isNumber}?.asBigDecimal?.longValueExact()}.getOrNull()
+        if(text(value.get("kind")) !in setOf("interest_share","shared_continuation","follow_up","actual_result"))out+=Problem("future.kind","为允许的联系类型",kind(value.get("kind")))
+        if(text(value.get("reason"))?.let{it.isNotBlank()&&it.length<=1200}!=true)out+=Problem("future.reason","为1至1200字的非空理由",kind(value.get("reason")))
+        if(!value.has("when")&&!value.has("notBefore"))out+=Problem("future.when","为明确且不早于本轮当前时间的自然时间","缺失")
+        else if(code in setOf("MISSING_CONTACT_TIME","INVALID_CONTACT_TIME","CONTACT_TIME_IN_PAST","AMBIGUOUS_CONTACT_TIME","AMBIGUOUS_OR_MISSING_LOCAL_TIME","INVALID_CONTACT_DURATION","INVALID_CONTACT_NUMBER"))out+=Problem("future.when","为明确且不早于本轮当前时间的自然时间，不混用when/notBefore","原时间校验拒绝：$code")
+        val evidence=value.get("evidence")
+        if(evidence?.isJsonArray!=true||evidence.asJsonArray.isEmpty)out+=Problem("future.evidence","为非空证据数组",kind(evidence))
+        else evidence.asJsonArray.forEachIndexed{index,e->
+            val path="future.evidence[$index]"
+            if(!e.isJsonObject)out+=Problem(path,"为证据对象",kind(e))else{
+                val item=e.asJsonObject;val source=integer(item.get("source"));val layer=text(item.get("layer"))
+                if(source==null)out+=Problem("$path.source","为已提供的用户消息整数编号",kind(item.get("source")))
+                if(layer !in setOf("fact","interpretation","action"))out+=Problem("$path.layer","为fact、interpretation或action",kind(item.get("layer")))
+                if(code=="SELF_SUPPORT"&&current!=null&&source==current&&layer!="fact")out+=Problem("$path.layer","当前用户来源${current}只能为fact；待执行计划不是已完成行动，不填写message",layer?.takeIf{it in setOf("action","interpretation")}?:kind(item.get("layer")))
+                if(layer=="action"&&integer(item.get("message"))==null)out+=Problem("$path.message","为已提交角色回复的整数编号，不能写回复文字或未来打算",kind(item.get("message")))
+                if(layer=="interpretation"&&integer(item.get("interpretationRevision"))==null)out+=Problem("$path.interpretationRevision","为本轮已提供旧解释的当前版本整数编号",kind(item.get("interpretationRevision")))
+            }
+        }
+        val actualReason=when(code){
+            "UNKNOWN_SOURCE"->"仅引用本轮已提供的有效来源编号"
+            "NO_REAL_ACTION","INVALID_ACTION_DEPENDENCY"->"行动证据引用已有角色回复编号及其真实来源"
+            "NO_INTERPRETATION","INVALID_INTERPRETATION_DEPENDENCY","INTERPRETATION_REVISION"->"旧解释必须存在且提供本轮已知的当前版本整数编号"
+            "SELF_SUPPORT"->"当前用户来源只能为fact，不能用自身计划或解释自证"
+            else->null
+        }
+        if(actualReason!=null&&out.none{it.field.endsWith(".layer")&&code=="SELF_SUPPORT"})out+=Problem("future.evidence",actualReason,"原来源校验拒绝：$code")
+        return out
     }
     fun diagnoseMemoryUpdate(args:org.json.JSONObject,input:String,knownTargets:Set<String>,memoryEvidence:Map<String,MemoryEvidence>?=null):List<Problem> {
         val out=mutableListOf<Problem>()
