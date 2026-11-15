@@ -181,10 +181,10 @@ internal object ChatToolJournal {
      * that link on its receipt so the pill can later read the real row; a write that produced no row
      * (a candidate kept for review, or a rejected stage) keeps no link and stays unopenable.
      */
-    fun linkMemory(db:SQLiteDatabase,turn:String,written:Map<String,String>){
+    fun linkMemory(db:SQLiteDatabase,turn:String,attempt:Int,written:Map<String,String>){
         if(written.isEmpty())return
         val rows=read(db,turn)
-        val linked=rows.map{row->val id=row.operation?.let{written[it]};if(id==null)row else row.copy(memoryId=id)}
+        val linked=rows.map{row->val id=row.operation?.takeIf{row.attempt==attempt&&row.state=="staged"}?.let{written[it]};if(id==null)row else row.copy(memoryId=id)}
         if(linked!=rows)save(db,turn,linked)
     }
     fun start(call:ChatToolCall,attempt:Int,before:String,recallGroup:String?=null):ChatToolActivity {

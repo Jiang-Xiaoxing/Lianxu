@@ -383,6 +383,6 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
         }
         db.delete("preferences","key=?",arrayOf(stageKey))
         // The receipt may only offer the row this transaction really wrote.
-        ChatToolJournal.linkMemory(db,turn.id,linked)
+        ChatToolJournal.linkMemory(db,turn.id,turn.attempt,linked)
     }
 }

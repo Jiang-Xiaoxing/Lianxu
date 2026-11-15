@@ -9,6 +9,15 @@ class ChatToolActivityTest {
         val item=start(name,args)
         return (if(result==null)item else ChatToolJournal.result(item,result)).label()
     }
+    @Test fun laterCommittedWriteCannotReviveTheStageDiscardedByAnEarlierControl(){
+        val staged=ChatToolJournal.result(start("agent_memory_update"),mapOf("success" to true,"status" to "staged_until_reply_commit"))
+        val discarded=staged.copy(id="old",state="failed",detail="根据后续操作，这条没有保存")
+        val fresh=staged.copy(id="new",memoryId="new-memory")
+        val result=ChatToolJournal.settleRows(listOf(discarded,fresh),1,true,false,true)
+        assertEquals("failed",result[0].state);assertNull(result[0].memoryId)
+        assertEquals("success",result[1].state);assertEquals("new-memory",result[1].memoryId)
+        assertTrue(ChatToolJournal.settleRows(listOf(fresh),1,false,false,true).none{it.state=="success"})
+    }
     /** A staged accounting receipt is not a success until this turn really commits it. */
     @Test fun stagedWriteOnlySucceedsAfterTheTurnReallyCommitsIt(){
         val record=ChatToolJournal.result(start(CompanionRecord.NAME,"{}"),mapOf("success" to true,"recorded" to true,"status" to "staged_until_reply_commit"))

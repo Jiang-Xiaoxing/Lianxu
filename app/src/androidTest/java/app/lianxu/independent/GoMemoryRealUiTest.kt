@@ -26,10 +26,13 @@ import javax.net.ssl.HttpsURLConnection
 class GoMemoryRealUiTest {
     private val contactMode get()=InstrumentationRegistry.getArguments().getString("controlledContact")=="true"
     private val mutationMode get()=InstrumentationRegistry.getArguments().getString("controlledMutation")=="true"
-    private val keepIsolated get()=contactMode||mutationMode
-    private val requestLimit get()=if(mutationMode)20 else 30
+    private val correctionMode get()=InstrumentationRegistry.getArguments().getString("controlledCorrection")=="true"
+    private val keepIsolated get()=contactMode||mutationMode||correctionMode
+    private val requestLimit get()=if(correctionMode)12 else if(mutationMode)20 else 30
     private val supplement get()=!keepIsolated&&InstrumentationRegistry.getArguments().getString("controlledSupplement")=="true"
-    private val inputs get()=if(mutationMode)listOf(
+    private val inputs get()=if(correctionMode)listOf(
+        "我是纯虚构旅人听澜。我长期喜欢桂花乌龙，请把这个饮茶偏好记住。",
+        "更正我刚才说的饮茶偏好：我其实长期喜欢茉莉白茶，桂花乌龙说错了。请停用那条旧说法，并记住更正后的偏好。")else if(mutationMode)listOf(
         "我是纯虚构旅人听澜。我长期喜欢桂花乌龙，请把这个饮茶偏好记住。",
         "更正我刚才说的饮茶偏好：我其实长期喜欢茉莉白茶，桂花乌龙说错了。请停用那条旧说法，并记住更正后的偏好。",
         "请忘掉我刚才说的茉莉白茶偏好，以后不要再引用这条喜好。原聊天保留就好。",
@@ -46,8 +49,8 @@ class GoMemoryRealUiTest {
         "请实际查一下我们前面的聊天原话，看看我什么时候过生日、什么时候看展，找到后用一句话告诉我。",
         "请实际从已存记忆里回想我的生日和饮食偏好，再告诉我。不要凭空猜。",
         "谢谢。现在不用查也不用记，陪我安静聊一句喝茶的事就好。")
-    private val friendId get()=if(mutationMode)"fictional-ui-mutation-20261115"else if(contactMode)"fictional-ui-contact-20261115"else"fictional-ui-memory-20261115"
-    private val friendName get()=if(mutationMode)"听雨"else if(contactMode)"知夏"else"明溪"
+    private val friendId get()=if(correctionMode)"fictional-ui-correction-fix-20261115"else if(mutationMode)"fictional-ui-mutation-20261115"else if(contactMode)"fictional-ui-contact-20261115"else"fictional-ui-memory-20261115"
+    private val friendName get()=if(correctionMode)"时雨"else if(mutationMode)"听雨"else if(contactMode)"知夏"else"明溪"
     private val shared=ControlledGoTimeReferenceTest()
     private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
     private val rows=mutableListOf<JSONObject>()
@@ -79,7 +82,7 @@ class GoMemoryRealUiTest {
             .put("pills",JSONArray(ChatMemoryPills.read(store.readableDatabase,friendId).map{JSONObject(Gson().toJson(it))}))
             .put("task",JSONObject(Gson().toJson(repo.memoryStatus(friendId))))
             .put("batches",store.readableDatabase.rawQuery("SELECT id,state,attempt,error FROM memory_batches WHERE friend_id=? ORDER BY rowid",arrayOf(friendId)).use{c->JSONArray().apply{while(c.moveToNext())put(JSONObject().put("id",c.getString(0)).put("state",c.getString(1)).put("attempt",c.getInt(2)).put("error",c.getString(3)))}})
-            .apply{if(mutationMode){
+            .apply{if(mutationMode||correctionMode){
                 put("summaryFailure",MemoryBatchRepository(repo).failure(friendId)?.let{JSONObject(Gson().toJson(it))})
                 put("blockedSources",store.readableDatabase.rawQuery("SELECT source_id FROM companion_blocks WHERE role=? ORDER BY source_id",arrayOf(friendId)).use{c->JSONArray().apply{while(c.moveToNext())put(c.getLong(0))}})
             };if(keepIsolated){
@@ -155,7 +158,7 @@ class GoMemoryRealUiTest {
         private fun restore(){AppServices.databaseName=db;AppServices.vaultNamespace=vault;AppServices.createTextClient=previous;Diagnostics.detailed=previousDetailed}
         override fun before(){
             org.junit.Assume.assumeTrue("explicit controlled opt-in",InstrumentationRegistry.getArguments().getString("controlledGo")=="true")
-            check(!(contactMode&&mutationMode)){"Conflicting controlled modes"}
+            check(listOf(contactMode,mutationMode,correctionMode).count{it}<=1){"Conflicting controlled modes"}
             db=AppServices.databaseName;vault=AppServices.vaultNamespace;previous=AppServices.createTextClient;previousDetailed=Diagnostics.detailed
             Diagnostics.detailed=false
             try{
@@ -250,6 +253,7 @@ class GoMemoryRealUiTest {
                     sample()
                     val all=ledger();all.size==i+1&&all.last().state!=TurnState.PENDING
                 }
+                if(correctionMode)waitReal(5000){ledger().lastOrNull()?.let{t->t.state!=TurnState.PENDING&&t.toolActivities.none{it.state in setOf("running","staged")}}==true}
                 val turn=ledger().last();val reply=stored{store->store.messagesFor(friendId).firstOrNull{it.id==turn.assistantMessageId}?.text.orEmpty()}
                 val row=JSONObject().put("turn",i+1).put("input",input).put("reply",reply).put("state",turn.state.name)
                     .put("completedAtMs",System.currentTimeMillis()-started).put("toolActivities",JSONArray(turn.toolActivities.map{JSONObject(Gson().toJson(it))})).put("stored",snapshot())
@@ -258,6 +262,44 @@ class GoMemoryRealUiTest {
                 val settle=System.currentTimeMillis();waitReal(2500){sample();System.currentTimeMillis()-settle>=2000}
                 val uiMatches=turn.assistantMessageId?.let{id->ui.onAllNodes(hasTestTag("message-$id") and hasText(reply)).fetchSemanticsNodes().isNotEmpty()}?:false
                 synchronized(lock){row.put("firstReplyNodeAtMs",firstVisible).put("uiEqualsStoredReply",uiMatches);save()}
+                if(correctionMode){
+                    val memories=stored{ProcessingRepository(it).memories(friendId)}
+                    if(i==0){
+                        val original=memories.filter{m->m.valid&&"桂花乌龙" in m.text&&m.evidence.any{e->e.side=="user"&&e.source.turnId==turn.userMessageId&&e.source.version==row.getLong("sourceRevision")}&&turn.toolActivities.any{it.tool=="agent_memory_update"&&it.state=="success"&&it.memoryId==m.id}}
+                        check(original.size==1){"Original preference was not uniquely saved and linked"}
+                        synchronized(lock){row.put("originalPreferenceMemoryId",original.single().id);save()}
+                    }
+                    if(i==1){
+                        val old=turns.getJSONObject(0).getString("originalPreferenceMemoryId")
+                        val control=turn.toolActivities.indexOfFirst{it.tool==JointControl.NAME&&it.title=="更正"&&it.state=="success"}
+                        val write=turn.toolActivities.indexOfFirst{it.tool=="agent_memory_update"&&it.state=="success"&&memories.any{m->m.id==it.memoryId&&m.valid&&"茉莉白茶" in m.text&&m.evidence.any{e->e.side=="user"&&e.source.turnId==turn.userMessageId&&e.source.version==row.getLong("sourceRevision")}}}
+                        check(control>=0&&write>control&&memories.any{it.id==old&&!it.valid}){"Actual correction, subsequent new commit or old-source withdrawal was not verified"}
+                        synchronized(lock){row.put("correctionWriteVerified",true);save()}
+                    }
+                    ui.mainClock.autoAdvance=true
+                    ui.runOnIdle{
+                        (ui.activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(ui.activity.window.decorView.windowToken,0)
+                        ui.activity.currentFocus?.clearFocus()
+                    }
+                    ui.waitForIdle()
+                    val owner="thinking-toggle-message-${turn.assistantMessageId}"
+                    val toggles=ui.onAllNodes(hasContentDescription("收起思考过程"),useUnmergedTree=true).fetchSemanticsNodes().mapNotNull{it.config.getOrNull(SemanticsProperties.TestTag)}.filter{it.startsWith(owner)}
+                    toggles.forEach{tag->ui.onNodeWithTag("chat-history").performScrollToNode(hasTestTag(tag));ui.onNodeWithTag(tag).performClick()}
+                    turn.toolActivities.forEachIndexed{n,a->
+                        val tag="tool-result-${a.id}"
+                        ui.onNodeWithTag("chat-history").performScrollToNode(hasTestTag(tag));ui.onNodeWithTag(tag).assertIsDisplayed();shot("ui-${i+1}-capsule-${n+1}")
+                        if(a.tool=="agent_memory_update"&&a.state=="success"&&a.memoryId!=null){
+                            ui.onNodeWithTag("tool-receipt-toggle-${a.id}").performClick()
+                            val expected=stored{store->ProcessingRepository(store).memory(store.readableDatabase,friendId,a.memoryId!!)?.text.orEmpty()};check(expected.isNotBlank())
+                            val peekText=hasText(expected) and hasAnyAncestor(hasTestTag("memory-peek-${a.id}"))
+                            waitReal(5000){ui.onAllNodes(peekText).fetchSemanticsNodes().isNotEmpty()}
+                            ui.onNodeWithTag("chat-history").performScrollToNode(peekText)
+                            ui.onNode(peekText).assertIsDisplayed()
+                            synchronized(lock){row.put("expandedWriteText",expected).put("committedWriteCapsuleDisplayed",true);save()};shot("ui-${i+1}-memory")
+                            ui.onNodeWithTag("tool-receipt-toggle-${a.id}").performClick()
+                        }
+                    }
+                }
                 shot("ui-${i+1}")
                 if(supplement){
                     var expanded=false
@@ -281,7 +323,9 @@ class GoMemoryRealUiTest {
                 }
                 check(turn.state==TurnState.COMPLETED){"Actual UI turn failed"}
             }
-            if(contactMode){
+            if(correctionMode){
+                val final=snapshot();synchronized(lock){contactObservation=(contactObservation?:JSONObject()).put("correctionFinalSnapshot",final);save()}
+            }else if(contactMode){
                 ui.mainClock.autoAdvance=true
                 ui.runOnIdle{ViewModelProvider(ui.activity)[AppState::class.java].home()}
                 val before=snapshot()
