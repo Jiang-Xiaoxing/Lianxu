@@ -110,7 +110,8 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
         return mapOf("type" to "function","function" to mapOf("name" to "agent_memory_update","description" to "根据本次上下文提供的有效用户原话S编号存记忆或澄清待确认记忆；S1为当前句，历史事实用相应S编号。相对日期按所引原话当时时间计算，不能省略日期逃避检查。写入随最终回复同一事务完成，保留人工/锁定保护。",
             "parameters" to mapOf("type" to "object","properties" to mapOf(
                 "op" to mapOf("type" to "string","enum" to listOf("add","update","cancel","complete","retract")),
-                "target" to field("string","已有记忆或待确认的M编号；add不填"),"content" to field("string","忠于用户原话；引用历史S新增或改写事实时，逐字保留该条完整用户原话，不切句、不改写、不删日期"),
+                "target" to field("string","已有记忆或待确认的M编号；add不填"),"content" to field("string","忠于所选用户证据提取或概括记忆，不必复制整句话；不要混入助手或人设的事实"),
+                "quote" to field("string","所选S用户原话中与本条事实对应的逐字片段；正文可以概括，证据不能改写。日期事实须包含对应完整时间词；非日期事实不要引同句另一事实的日期。省略时保留整条用户原话作证据"),
                 "category" to mapOf("type" to "string","enum" to MemoryCategory.entries.filter{it.modern}.map{it.name}),
                 "about" to mapOf("type" to "string","enum" to MemoryAbout.entries.map{it.name}),
                 "importance" to mapOf("type" to "string","enum" to MemoryImportance.entries.map{it.name}),"gist" to field("string","40字内的大意，不带数字、地名和原句细节"),"trace" to field("string","8字内印象"),
@@ -326,7 +327,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
         val content=args.optString("content").ifBlank{base?.text.orEmpty()};rejectUnless(content.isNotBlank()&&content.length<=4000)
         val category=args.optString("category").ifBlank{base?.category?.name.orEmpty()};rejectUnless(MemoryCategory.valueOf(category).modern)
         val about=args.optString("about").ifBlank{base?.about?.name.orEmpty()};MemoryAbout.valueOf(about)
-        val evidence=ImmediateMemoryEvidence.fact(proof,args,content,proof.source.turnId!=turn.userMessageId)
+        val evidence=ImmediateMemoryEvidence.quote(proof,args)
         val dateArgs=ImmediateMemoryEvidence.withDateType(args,base?.dateType)
         ImmediateMemoryEvidence.dates(dateArgs,evidence,content)
         rejectUnless(args.optString("date_type","day") in setOf("day","habit","birthday"))

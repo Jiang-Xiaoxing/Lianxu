@@ -101,18 +101,18 @@ class ImmediateMemoryEvidenceTest {
         val p=ToolArgumentDiagnosis.diagnoseMemoryUpdate(op,confirmation.snapshot,emptySet(),aliases(old))
         assertTrue(p.any{it.field=="time_text"&&"单日" in it.expected})
     }
-    @Test fun historicalFactCannotBorrowAssistantTextOrRemoveDateFromAClause(){
+    @Test fun historicalNonDatePreferenceCanBeExtractedAndParaphrasedWithoutOtherFactsDate(){
         val old=proof(1,"我明天去看展，我不吃香菜")
-        for(text in listOf("我对花生过敏","我要去看展","去看展"))rejected("USER_EVIDENCE"){
-            ImmediateMemoryEvidence.fact(old,args(text=text,time=null,type=null),text,true)
-        }
-        rejected("USER_EVIDENCE"){ImmediateMemoryEvidence.fact(old,args(text="我不吃香菜",time=null,type=null),"我不吃香菜",true)}
-        val standalone=proof(1,"我不吃香菜");val op=args(text=standalone.snapshot,time=null,type=null)
-        val fact=ImmediateMemoryEvidence.fact(standalone,op,standalone.snapshot,true)
-        assertEquals("我不吃香菜",fact.quote);assertEquals(standalone.snapshot,fact.snapshot)
-        assertEquals(null to null,ImmediateMemoryEvidence.dates(op,fact,fact.quote))
+        val text="饮食偏好是不吃香菜";val op=args(text=text,time=null,type=null).put("quote","我不吃香菜")
+        val fact=ImmediateMemoryEvidence.quote(ImmediateMemoryEvidence.select(op,aliases(old)),op)
+        assertEquals("我不吃香菜",fact.quote);assertEquals(old.snapshot,fact.snapshot)
+        assertEquals(null to null,ImmediateMemoryEvidence.dates(op,fact,text))
+        val memory=StoredMemory("pref","role",MemoryCategory.PREFERENCE_BOUNDARY,text,evidence=listOf(fact),about=MemoryAbout.USER)
+        assertEquals(text,StoredMemory.from(memory.json()).text);assertNotEquals(text,fact.quote)
         val staged=ImmediateMemoryEvidence.stamp(fact,op)
-        assertEquals(fact,ImmediateMemoryEvidence.revalidate(staged,listOf(standalone)))
+        assertEquals(fact,ImmediateMemoryEvidence.revalidate(staged,listOf(old)))
+        val withoutQuote=args(text="我不吃香菜",time=null,type=null)
+        assertEquals(null to null,ImmediateMemoryEvidence.dates(withoutQuote,ImmediateMemoryEvidence.quote(old,withoutQuote),"我不吃香菜"))
     }
     @Test fun inheritedBirthdayTypeIsResolvedBeforeBothStageAndCommit(){
         val old=proof(1,"明天是我生日");val raw=args(text=old.snapshot,time="明天",type=null)
@@ -120,14 +120,16 @@ class ImmediateMemoryEvidenceTest {
         assertEquals("birthday",effective.getString("date_type"))
         assertEquals(null to "11-15",ImmediateMemoryEvidence.dates(effective,old,old.snapshot))
     }
-    @Test fun wrongFactFeedbackNamesContentAndKeepsRealRejection(){
-        val old=proof(1,"我不吃香菜");val op=args(text="我对花生过敏",time=null,type=null)
+    @Test fun wrongQuoteFeedbackNamesQuoteAndKeepsRealRejection(){
+        val old=proof(1,"我不吃香菜");val op=args(text="我对花生过敏",time=null,type=null).put("quote","我对花生过敏")
+        rejected("USER_EVIDENCE"){ImmediateMemoryEvidence.quote(old,op)}
         val result=ToolArgumentDiagnosis.writeFailure("agent_memory_update",op.toString(),confirmation.snapshot,emptySet(),mapOf("success" to false,"error" to "USER_EVIDENCE"),ProcessingRejected("USER_EVIDENCE"),aliases(old))
-        assertEquals("USER_EVIDENCE",result["error"]);assertTrue(result["detail"].toString().contains("content"))
+        assertEquals("USER_EVIDENCE",result["error"]);assertTrue(result["detail"].toString().contains("quote"))
     }
     @Test fun leadingDateCannotBeCutOffAtACommaAndDateTokenCannotBeShortened(){
         val old=proof(1,"明天，我去看展")
-        rejected("USER_EVIDENCE"){ImmediateMemoryEvidence.fact(old,args(text="我去看展",time=null,type=null),"我去看展",true)}
+        val op=args(text="我计划去看展",time=null,type="day").put("quote",old.snapshot)
+        rejected("DATE_EVIDENCE"){ImmediateMemoryEvidence.dates(op,ImmediateMemoryEvidence.quote(old,op),op.getString("content"))}
         val november=proof(1,"我的生日是11月20日")
         rejected("DATE_EVIDENCE"){ImmediateMemoryEvidence.dates(args(text=november.snapshot,time="1月20日"),november,november.snapshot)}
         assertEquals(null to "11-20",ImmediateMemoryEvidence.dates(args(text=november.snapshot,time="11月20日"),november,november.snapshot))
@@ -135,7 +137,7 @@ class ImmediateMemoryEvidenceTest {
     @Test fun currentNonDateParaphraseDoesNotBorrowAnotherFactsDate(){
         val current=proof(3,"我喜欢喝茶。明天去看展。")
         val op=args(alias="S1",text="我爱喝茶",time=null,type=null)
-        val fact=ImmediateMemoryEvidence.fact(current,op,"我爱喝茶",false)
+        val fact=ImmediateMemoryEvidence.quote(current,op)
         assertEquals(null to null,ImmediateMemoryEvidence.dates(op,fact,"我爱喝茶"))
     }
     @Test fun inheritedHabitConflictFeedbackUsesTheValidatorReason(){
@@ -163,5 +165,29 @@ class ImmediateMemoryEvidenceTest {
         val afterSecondOperation=ImmediateMemoryEvidence.base(justWritten,proposed,true)!!
         assertEquals(justWritten,afterSecondOperation);assertEquals("12-20",afterSecondOperation.annualMonthDay)
         rejected("SOURCE_CHANGED"){ImmediateMemoryEvidence.base(null,proposed,true)}
+    }
+    @Test fun birthdayCanBeExtractedFromALongerSourceAndKeepOriginalClock(){
+        val old=proof(1,"今天聊得很开心。我的生日是5月20日，你帮我记一下吧。")
+        val op=args(text="生日为5月20日").put("quote","我的生日是5月20日")
+        val proof=ImmediateMemoryEvidence.quote(ImmediateMemoryEvidence.select(op,aliases(old)),op)
+        assertEquals(null to "05-20",ImmediateMemoryEvidence.dates(op,proof,op.getString("content")))
+        assertEquals(old.source,proof.source);assertEquals(old.sourceAt,proof.sourceAt);assertEquals(old.zone,proof.zone)
+        assertEquals(old.snapshot,proof.snapshot)
+    }
+    @Test fun selectedQuoteCannotMakeAPartialMonthIntoAFullDate(){
+        val old=proof(1,"生日是11月20日，确认一下")
+        val op=args(text="生日为1月20日",time="1月20日").put("quote","1月20日")
+        val quoted=ImmediateMemoryEvidence.quote(old,op)
+        rejected("DATE_EVIDENCE"){ImmediateMemoryEvidence.dates(op,quoted,op.getString("content"))}
+        val other=proof(2,"我不吃香菜")
+        rejected("USER_EVIDENCE"){ImmediateMemoryEvidence.quote(other,args().put("quote","5月20日"))}
+        val both=proof(1,"原定11月20日，改为1月20日")
+        val misplaced=args(text="生日为1月20日",time="1月20日").put("quote","1月20日，改为")
+        rejected("DATE_EVIDENCE"){ImmediateMemoryEvidence.dates(misplaced,ImmediateMemoryEvidence.quote(both,misplaced),misplaced.getString("content"))}
+    }
+    @Test fun updateOnlyDatedQuoteStillRequiresDateMetadataWithoutChangingInheritedBody(){
+        val old=proof(1,"明天去看展")
+        val op=JSONObject().put("op","update").put("quote",old.snapshot)
+        rejected("DATE_EVIDENCE"){ImmediateMemoryEvidence.dates(op,ImmediateMemoryEvidence.quote(old,op),"已保存正文",false)}
     }
 }

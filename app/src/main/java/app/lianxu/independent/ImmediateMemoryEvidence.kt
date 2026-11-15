@@ -21,12 +21,11 @@ internal object ImmediateMemoryEvidence {
         val alias=e!!.opt(0) as? String?:throw ProcessingRejected("EVIDENCE")
         return available[alias]?:throw ProcessingRejected("EVIDENCE")
     }
-    fun fact(proof:MemoryEvidence,args:JSONObject,content:String,historical:Boolean):MemoryEvidence {
-        if(args.optString("op")!="add"&&args.optString("content").isBlank())return proof
-        // Historical expansion is deliberately narrow: keep the whole original, without guessing
-        // where a comma stops governing a date or whether a paraphrase borrows assistant content.
-        if(historical)rejectUnless(content==proof.snapshot,"USER_EVIDENCE")
-        return proof
+    fun quote(proof:MemoryEvidence,args:JSONObject):MemoryEvidence {
+        if(!args.has("quote"))return proof
+        val quote=args.opt("quote") as? String?:throw ProcessingRejected("USER_EVIDENCE")
+        rejectUnless(quote.isNotBlank()&&quote in proof.snapshot,"USER_EVIDENCE")
+        return proof.copy(quote=quote)
     }
     fun withDateType(args:JSONObject,inherited:String?):JSONObject=JSONObject(args.toString()).apply{
         if(!has("date_type")&&has("time_text"))put("date_type",inherited?:"day")
@@ -34,11 +33,11 @@ internal object ImmediateMemoryEvidence {
     fun dateProblem(args:JSONObject,proof:MemoryEvidence,content:String,contentSupplied:Boolean=args.optString("content").isNotBlank()):Pair<String,String>? {
         val expression=args.optString("time_text");val type=args.optString("date_type","day")
         if(expression.isNotEmpty()&&expression !in proof.quote)return "time_text" to "逐字引用所选用户原话中的时间词，不能改引当前确认句或编造日期"
-        val dated=contentSupplied&&app.lianxu.independent.time.TimeWordEngine.hasExpression(content)
-        if(expression.isBlank()&&(type=="birthday"||dated))return "time_text" to "日期类内容必须提供所选原话中的时间词，不能删掉日期字段绕过校验"
+        val dated=contentSupplied&&app.lianxu.independent.time.TimeWordEngine.hasExpression(content)||args.has("quote")&&app.lianxu.independent.time.TimeWordEngine.hasExpression(proof.quote)
+        if(expression.isBlank()&&(type=="birthday"||dated))return "time_text" to "日期事实须补对应时间词，不能删掉日期字段绕过校验；若仅记非日期事实，请只引对应用户证据片段，不要绑定另一事实的日期"
         if(type=="habit"&&(expression.isNotBlank()||dated))return "date_type" to "具体日期不能标成habit来丢弃，使用day或birthday并引用原话时间词"
         if(expression.isNotBlank()&&MemoryDates.resolve(expression,proof.sourceAt,proof.zone)==null&&MemoryDates.birthday(expression).second==null)return "time_text" to "引用所选事实中可解析的单日时间词，不能用无关词代替日期"
-        if(expression.isNotBlank()&&!app.lianxu.independent.time.TimeWordEngine.isWholeExpression(expression,proof.quote))return "time_text" to "引用完整时间词，不能从11月等词中截取1月或删去已知年份"
+        if(expression.isNotBlank()&&!app.lianxu.independent.time.TimeWordEngine.isWholeExpression(expression,proof.snapshot,proof.quote))return "time_text" to "引用完整时间词，不能从11月等词中截取1月或删去已知年份"
         if(type=="birthday"&&MemoryDates.birthday(expression).second==null&&MemoryDates.resolve(expression,proof.sourceAt,proof.zone)==null)return "time_text" to "提供可解析的原话生日时间词；无出生年份时不会猜年份"
         return null
     }

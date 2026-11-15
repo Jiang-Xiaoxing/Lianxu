@@ -11,7 +11,8 @@ internal object TimeWordEngine {
         val text=normalize(value)
         return (ZhRules.rules+JaRules.rules+EnRules.rules+KoRules.rules).any{it.pattern.containsMatchIn(text)}
     }
-    fun isWholeExpression(expression:String,source:String):Boolean {
+    fun isWholeExpression(expression:String,source:String,quote:String?=null):Boolean {
+        if(quote!=null&&quote.isBlank())return false
         val text=normalize(source)
         val matches=(ZhRules.rules+JaRules.rules+EnRules.rules+KoRules.rules).flatMap{it.pattern.findAll(text).toList()}
         val whole=matches.filter{m->matches.none{other->other.range!=m.range&&other.range.first<=m.range.first&&other.range.last>=m.range.last}}
@@ -21,7 +22,12 @@ internal object TimeWordEngine {
             // Sentinel preserves whitespace at this exact original occurrence during normalization.
             val start=normalize(source.substring(0,at)+"\u0001").length-1
             val end=normalize(source.substring(0,at+expression.length)+"\u0001").length-1
-            if(whole.any{it.range.first==start&&it.range.last==end-1&&it.value==normalize(expression)})return true
+            var quoted=quote==null
+            if(quote!=null){
+                var q=source.indexOf(quote)
+                while(q>=0){if(q<=at&&at+expression.length<=q+quote.length){quoted=true;break};q=source.indexOf(quote,q+1)}
+            }
+            if(quoted&&whole.any{it.range.first==start&&it.range.last==end-1&&it.value==normalize(expression)})return true
             at=source.indexOf(expression,at+1)
         }
         return false

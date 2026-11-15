@@ -90,8 +90,8 @@ internal object ToolArgumentDiagnosis {
         // Missing update fields are not provable errors without that base; only check supplied values.
         val content=args.optString("content")
         if(op=="add"||content.isNotBlank())check("content","为非空内容，最多 4000 字",content.isNotBlank()&&content.length<=4000)
-        val fact=proof?.let{runCatching{ImmediateMemoryEvidence.fact(it,args,content,args.optJSONArray("evidence")?.optString(0)!="S1")}.getOrNull()}
-        if(proof!=null&&fact==null)check("content","逐字保留所选整条用户原话，不切句、不改写、不删日期或混入助手话语",false)
+        val fact=proof?.let{runCatching{ImmediateMemoryEvidence.quote(it,args)}.getOrNull()}
+        if(proof!=null&&fact==null)check("quote","逐字引用所选用户原话中的非空片段；content可以概括，quote不能改写或来自助手话语",false)
         val category=args.optString("category")
         if(op=="add"||category.isNotBlank())check("category","为有效现代分类："+MemoryCategory.entries.filter{it.modern}.joinToString{it.name},runCatching{MemoryCategory.valueOf(category).modern}.getOrDefault(false))
         val about=args.optString("about")
