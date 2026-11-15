@@ -22,6 +22,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /** One piece of the live thinking stream: model text, or the receipt of a tool called inside it. */
 internal sealed interface ChatThinkingPart {
@@ -84,15 +85,18 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
     var expanded by rememberSaveable(owner,if(defaultExpanded)0 else inProgress,defaultExpanded){mutableStateOf(inProgress||defaultExpanded)}
     val faint=Muted.copy(alpha=.82f)
     Column(modifier.testTag("thinking-card-$owner"),verticalArrangement=Arrangement.spacedBy(4.dp)){
-        if(!expanded){
-            Text("想了想 ›",Modifier.clickable(role=Role.Button){expanded=true}.testTag("thinking-toggle-$owner").semantics{contentDescription="展开思考过程";stateDescription="已收起"}.padding(vertical=2.dp),style=MaterialTheme.typography.labelSmall,color=faint)
-        }else{
+        Row(Modifier.fillMaxWidth().clickable(role=Role.Button){expanded=!expanded}.testTag("thinking-toggle-$owner")
+            .semantics{contentDescription=if(expanded)"收起思考过程"else"展开思考过程";stateDescription=if(expanded)"已展开"else"已收起"}
+            .padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){
+            Text("思考内容",style=MaterialTheme.typography.labelSmall.copy(fontSize=13.sp,lineHeight=18.sp),color=faint)
+            Box(Modifier.rotate(if(expanded)0f else 180f)){ControlIcon("up",faint,14.dp)}
+        }
+        if(expanded){
             Box(Modifier.fillMaxWidth().heightIn(max=220.dp).testTag("thinking-scroll-$owner")){
                 SelectionContainer{
                     Text(text,Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).testTag("thinking-text-$owner"),style=MaterialTheme.typography.bodySmall,color=faint)
                 }
             }
-            Text("收起",Modifier.clickable(role=Role.Button){expanded=false}.testTag("thinking-toggle-$owner").semantics{contentDescription="收起思考过程";stateDescription="已展开"}.padding(vertical=2.dp),style=MaterialTheme.typography.labelSmall,color=faint)
         }
     }
 }
