@@ -6,7 +6,7 @@ import java.time.ZoneId
 import org.junit.Assert.*
 import org.junit.Test
 
-/** 发给模型的近期聊天：每条前加简短时间，相隔超过半天插「隔了多久」；不改存库原文。 */
+/** 发送时间放独立参考区，原话与长间隔不丢失。 */
 class ChatTimeLabelsTest {
     private val zone=ZoneId.of("Asia/Shanghai")
     private fun at(y:Int,mo:Int,d:Int,h:Int,mi:Int)=LocalDateTime.of(y,mo,d,h,mi).atZone(zone).toInstant()
@@ -26,13 +26,16 @@ class ChatTimeLabelsTest {
         assertEquals("（隔了 3 天）",ChatTimeLabels.gap(base,base+3*24*h+7*h))
     }
 
-    @Test fun promptHistoryCarriesTimeButStoredTextAndCurrentInputStayRaw(){
+    @Test fun promptHistoryStaysRawAndSystemReferenceCarriesTime(){
         val friend=Friend("a","合成","合成设定")
         val recent=listOf(Message(1,"a","早",true,at(2026,11,8,22,10).toEpochMilli()),Message(2,"a","晚安",false,at(2026,11,8,22,11).toEpochMilli()),
             Message(3,"a","在吗",true,at(2026,11,11,8,5).toEpochMilli()),Message(4,"a","在",false,at(2026,11,11,8,6).toEpochMilli()))
         val ready=CompanionPrompt.build(friend,RolePrompts(),recent,"现在",now=now,zone=zone) as PromptBuild.Ready
         val history=ready.request.messages.filter{it.sourceMessageId.isNotBlank()}
-        assertEquals(listOf("[11月8日 22:10] 早","[11月8日 22:11] 晚安","（隔了 2 天）\n[今天 08:05] 在吗","[今天 08:06] 在"),history.map{it.content})
+        assertEquals(recent.map{it.text},history.map{it.content})
+        val reference=ready.request.messages.single{it.turnContext}.content
+        for(row in listOf("第1条（对方）：11月8日 22:10","第2条（我）：11月8日 22:11","第3条（对方）：今天 08:05，（隔了 2 天）","第4条（我）：今天 08:06"))assertTrue(reference,row in reference)
+        assertTrue(history.all{it.sourcePrefix==0})
         assertEquals(recent.map{it.text},history.map{it.content.substring(it.sourcePrefix)})
         assertEquals("早",recent[0].text)
         assertTrue(ready.request.messages.any{it.role=="user"&&it.sourceMessageId.isEmpty()&&it.content=="现在"})

@@ -31,6 +31,7 @@ class ToolReceiptFlowUiTest {
     @get:Rule(order=0) val mock=MockChatFixture({client}, "https://example.invalid/v1")
     @get:Rule(order=1) val ui=createAndroidComposeRule<MainActivity>()
     private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
+    @After fun release(){finishReply.cancel()}
 
     private fun waitFor(tag:String,timeout:Long=15000){ui.waitUntil(timeout){ui.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()}}
     private fun hideIme(){
@@ -58,31 +59,52 @@ class ToolReceiptFlowUiTest {
     private fun assertOrderAndState(){
         ui.waitUntil(20000){ui.onAllNodesWithText("记下了，意面我也爱吃。").fetchSemanticsNodes().isNotEmpty()}
         // 回执先按「暂存」出现，提交结算后同一页自动变成已保存——不用手动刷新。
-        ui.waitUntil(20000){ui.onAllNodesWithText("嗯…我记住了").fetchSemanticsNodes().isNotEmpty()}
+        ui.waitUntil(20000){ui.onAllNodesWithText("我记住了").fetchSemanticsNodes().isNotEmpty()}
         ui.waitUntil(20000){ui.onAllNodesWithText("候选已暂存，尚未正式保存").fetchSemanticsNodes().isEmpty()}
         val staged=ui.onAllNodesWithText("候选已暂存，尚未正式保存").fetchSemanticsNodes()
         assertTrue("提交后不能再显示暂存文案",staged.isEmpty())
         val unsaved=ui.onAllNodesWithText("回话没完成，这条没存下").fetchSemanticsNodes()
         assertTrue("提交成功后不能显示未保存",unsaved.isEmpty())
-        val (first,capsule,second,body)=tops("先想一想。","嗯…我记住了","然后再说。","记下了，意面我也爱吃。")
+        val (first,capsule,second,body)=tops("先想一想。","我记住了","然后再说。","记下了，意面我也爱吃。")
         assertTrue("思考A要在胶囊上面：$first / $capsule",first<capsule)
         assertTrue("胶囊要在思考B上面：$capsule / $second",capsule<second)
         assertTrue("思考B要在正文上面：$second / $body",second<body)
     }
 
     @Test fun thinkingReceiptAndReplyKeepTheirOrderThroughReentryAndRecreation(){
-        runBlocking{ProcessingRepository(Store(context,mock.database)).saveMemoryRules(MemoryRules(immediateWrite=true))}
+        runBlocking{val store=Store(context,mock.database);try{ProcessingRepository(store).saveMemoryRules(MemoryRules(immediateWrite=true))}finally{store.close()}}
         openChat()
         ui.onNodeWithTag("message-input").performTextInput("那你记一下，我喜欢吃意大利面")
         ui.onNodeWithTag("send-message").performClick()
         // 生成中（还没提交）就要按断点排：思考A 在胶囊上面，暂存文案如实出现。
         ui.waitUntil(20000){ui.onAllNodesWithText("候选已暂存，尚未正式保存").fetchSemanticsNodes().isNotEmpty()}
-        runBlocking{
+        val pending=runBlocking{
             val store=Store(context,mock.database)
-            try{Assert.assertEquals(TurnState.PENDING,ChatLedger(store).all().single().state)}finally{store.close()}
+            try{ChatLedger(store).all().single().also{Assert.assertEquals(TurnState.PENDING,it.state)}}finally{store.close()}
         }
-        val (liveThinking,liveCapsule)=tops("先想一想。","嗯…我记住了")
+        val receipt=pending.toolActivities.single{it.tool=="agent_memory_update"}
+        Assert.assertEquals("staged",receipt.state)
+        ui.onNodeWithText("我记住了").assertDoesNotExist()
+        val liveLabel=ui.onNode(hasText("正在记住") and hasAnyAncestor(hasTestTag("tool-result-${receipt.id}")))
+        liveLabel.assertIsDisplayed()
+        val liveNodes=listOf(ui.onNodeWithText("先想一想。").fetchSemanticsNode(),liveLabel.fetchSemanticsNode())
+        val (liveThinking,liveCapsule)=ui.runOnIdle{liveNodes.map{it.positionInRoot.y}}
         assertTrue("生成中也是思考A在胶囊上面：$liveThinking / $liveCapsule",liveThinking<liveCapsule)
+        ui.mainClock.autoAdvance=false
+        try{
+            // Production motion uses nanoTime; advancing Compose frames alone does not pass its hold.
+            android.os.SystemClock.sleep(2000)
+            ui.mainClock.advanceTimeBy(2500)
+            liveLabel.assertIsDisplayed()
+            ui.onNodeWithText("我记住了").assertDoesNotExist()
+            runBlocking{val store=Store(context,mock.database);try{Assert.assertEquals(TurnState.PENDING,ChatLedger(store).all().single().state)}finally{store.close()}}
+        }finally{ui.mainClock.autoAdvance=true}
+        ui.activityRule.scenario.recreate()
+        waitFor("message-input")
+        liveLabel.assertIsDisplayed()
+        ui.onNodeWithText("我记住了").assertDoesNotExist()
+        runBlocking{val store=Store(context,mock.database);try{Assert.assertEquals(TurnState.PENDING,ChatLedger(store).all().single().state)}finally{store.close()}}
+        shot("00-pending-after-recreation")
         finishReply.complete(Unit)
         assertOrderAndState()
         shot("01-completed");android.os.SystemClock.sleep(4000)

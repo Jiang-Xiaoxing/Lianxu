@@ -10,6 +10,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
@@ -32,6 +34,9 @@ private class PendingBackup(val archive:BackupRepository.Export?=null,val bytes:
     var status by remember{mutableStateOf("")};var error by remember{mutableStateOf("")};var output by remember{mutableStateOf<PendingBackup?>(null)}
     var incoming by remember{mutableStateOf<BackupArchive.Package?>(null)};var mode by remember{mutableStateOf("")};var target by remember{mutableStateOf("")}
     var chooseKeys by remember{mutableStateOf(false)};var chooseMode by remember{mutableStateOf(false)};var confirm by remember{mutableStateOf(false)}
+    var section by rememberSaveable{mutableIntStateOf(0)}
+    var chooseRole by remember{mutableStateOf(false)};var help by remember{mutableStateOf(false)}
+    val backupScroll=rememberScrollState();val diagnosticScroll=rememberScrollState()
     // Backup password: set twice when keys are exported, asked again when a sealed backup replaces everything.
     var exportPassword by remember{mutableStateOf(false)};var importPassword by remember{mutableStateOf(false)}
     var preview by remember{mutableStateOf<BackupRepository.Preview?>(null)};var legacyPreview by remember{mutableStateOf<RoleArchiveRepository.Preview?>(null)}
@@ -69,23 +74,19 @@ private class PendingBackup(val archive:BackupRepository.Export?=null,val bytes:
         incoming=null;clearPreview();mode="";status=if(confirmed)"已按预览范围恢复，未自动请求模型。"else"已新增包内角色，当前角色和模型设置保留。"
     }}
     Column(Modifier.fillMaxSize()){
-        AppTopBar("备份与诊断",{if(!busy)vm.back()})
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(UiSpace.page).testTag("role-archive-page"),verticalArrangement=Arrangement.spacedBy(16.dp)){
-            if(busy){LinearProgressIndicator(Modifier.fillMaxWidth());TextButton({lease?.cancel();job?.cancel()},modifier=Modifier.testTag("backup-cancel")){Text("取消本次处理")}}
+        AppTopBar("备份与诊断",{if(!busy)vm.back()},enabled=!busy,extra={IconButton({help=true},enabled=!busy,modifier=Modifier.size(UiSpace.action).testTag("backup-page-help").semantics{contentDescription=if(section==0)"备份与恢复说明"else"诊断日志说明"}){ControlIcon("info")}})
+        BackupTabs(section,!busy){section=it}
+        if(busy||error.isNotBlank()||status.isNotBlank())Column(Modifier.fillMaxWidth().padding(horizontal=UiSpace.page),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            if(busy){LinearProgressIndicator(Modifier.fillMaxWidth().testTag("backup-progress"));TextButton({lease?.cancel();job?.cancel()},modifier=Modifier.heightIn(min=UiSpace.action).testTag("backup-cancel")){Text("取消本次处理")}}
             if(error.isNotBlank())Text(error,color=MaterialTheme.colorScheme.error,modifier=Modifier.testTag("archive-error"))
             if(status.isNotBlank())Text(status,modifier=Modifier.testTag("archive-status"))
-            Text("导出一个角色",style=MaterialTheme.typography.titleMedium)
-            Text("带出该角色全部已保存的人设、提示词、聊天、记忆与来源、候选及关联、关系及快照、语气示例和资源；不含其他角色或全局密钥。",style=MaterialTheme.typography.bodySmall,color=Muted)
-            vm.friends.forEach{f->TextButton({selected=f.id},enabled=!busy,modifier=Modifier.testTag("archive-export-${f.id}")){Text((if(selected==f.id)"● "else"○ ")+f.name)}}
-            Button({export(selected,false)},enabled=!busy&&selected.isNotBlank(),modifier=Modifier.heightIn(min=48.dp).testTag("archive-export")){Text("导出这个角色（全部资料）")}
-            HorizontalDivider(color=Line)
-            Text("全部备份",style=MaterialTheme.typography.titleMedium)
-            Text("备份全部角色、资源和软件设置、API服务及模型配置。点击后再选择是否包含密钥：包含时要设一个备份密码，密钥用它加密，导入覆盖时输入同一密码才能用；不包含密钥就不用密码。",style=MaterialTheme.typography.bodySmall,color=Muted)
-            Button({chooseKeys=true},enabled=!busy,modifier=Modifier.heightIn(min=48.dp).testTag("backup-export-all")){Text("导出全部")}
-            Text("当前头像为按角色姓名生成的图形。已保存资源可随包保留；本页没有增加头像上传、附件发送或图片理解功能。",style=MaterialTheme.typography.bodySmall,color=Muted)
-            HorizontalDivider(color=Line)
-            Text("从文件导入",style=MaterialTheme.typography.titleMedium)
-            OutlinedButton({open.launch(arrayOf("application/zip","application/octet-stream"))},enabled=!busy,modifier=Modifier.heightIn(min=48.dp).testTag("archive-open")){Text("选择备份文件")}
+        }
+        Column(Modifier.fillMaxSize().verticalScroll(if(section==0)backupScroll else diagnosticScroll).padding(UiSpace.page).testTag("role-archive-page"),verticalArrangement=Arrangement.spacedBy(16.dp)){
+            if(section==0){
+            BackupActionRow("person","备份单个角色","导出指定角色的数据","backup-role-entry",!busy){chooseRole=true}
+            BackupActionRow("database","备份全部数据","导出全部角色、资料和软件设置","backup-export-all",!busy){chooseKeys=true}
+            BackupActionRow("import-file","从文件导入","从备份文件恢复数据","archive-open",!busy){open.launch(arrayOf("application/zip","application/octet-stream"))}
+            Text("备份可能包含私密资料，请妥善保管。",style=MaterialTheme.typography.bodySmall,color=Muted)
             incoming?.let{pack->
                 Text(if(pack.legacy!=null)"旧格式：${pack.legacy.name}。${pack.legacy.summary}"else if(pack.all)"全部备份：${pack.roles.size()} 个角色；${if(pack.includesKeys&&BackupKeySeal.sealed(pack.root))"包含密钥（已用备份密码加密）"else if(pack.includesKeys)"包含未加密的密钥，请勿分享"else"不包含密钥"}"else"单角色完整备份")
                 Text("导入不自动调用模型，不恢复在途任务。旧格式缺少的资料无法凭空补齐。",style=MaterialTheme.typography.bodySmall,color=Muted)
@@ -94,13 +95,15 @@ private class PendingBackup(val archive:BackupRepository.Export?=null,val bytes:
                 if(mode.isNotBlank())Button({plan()},enabled=!busy&&(mode=="ADD"||pack.all||target.isNotBlank()),modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).testTag("archive-preview")){Text("下一步：查看导入范围")}
                 if(impact!=null){Text("第 2 步：核对以下范围，确认后才会导入。",style=MaterialTheme.typography.titleSmall);Text(impact,modifier=Modifier.testTag("archive-impact"));Button({if(mode=="REPLACE")confirm=true else apply(false)},enabled=!busy,modifier=Modifier.testTag("archive-import")){Text(if(mode=="REPLACE")"继续确认覆盖"else"确认新增角色")}}
             }
-            HorizontalDivider(color=Line)
-            Text("诊断日志",style=MaterialTheme.typography.titleMedium)
-            Text("仅在本机滚动保留最近7天、最多10 MiB，不自动上传。开启详细诊断后才记下聊天原话、记忆正文、发给模型的提示词和她的回复，关闭时这些只记字数；详细日志请勿随意分享。密钥和令牌始终脱敏。",style=MaterialTheme.typography.bodySmall,color=Muted)
-            OutlinedButton({work{output=PendingBackup(bytes=Diagnostics.export(vm.diagnosticDetailed));save.launch("恋叙诊断-${if(vm.diagnosticDetailed)"详细"else"简版"}.jsonl")}},enabled=!busy,modifier=Modifier.heightIn(min=48.dp).testTag("backup-export-diagnostics")){Text("导出诊断日志")}
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("开启详细诊断",style=MaterialTheme.typography.titleSmall);Switch(vm.diagnosticDetailed,{vm.setDiagnosticDetailed(it)},enabled=!busy,modifier=Modifier.testTag("backup-detailed"))}
+            }else{
+            BackupActionRow("document","导出诊断日志","生成并导出诊断日志文件","backup-export-diagnostics",!busy){work{output=PendingBackup(bytes=Diagnostics.export(vm.diagnosticDetailed));save.launch("恋叙诊断-${if(vm.diagnosticDetailed)"详细"else"简版"}.jsonl")}}
+            BackupDiagnosticToggle(vm.diagnosticDetailed,!busy){vm.setDiagnosticDetailed(it)}
+            Text("详细日志可能包含聊天等私密原文，请谨慎开启和分享。",style=MaterialTheme.typography.bodySmall,color=Muted)
+            }
         }
     }
+    if(help)BackupHelpDialog(section==1){help=false}
+    if(chooseRole)BackupRoleDialog(vm.friends,selected,{selected=it},{chooseRole=false}){chooseRole=false;export(selected,false)}
     if(chooseKeys)AlertDialog(onDismissRequest={chooseKeys=false},title={Text("是否包含 API 密钥？")},text={Text("不包含密钥也会备份服务和模型设置，不用设密码。包含密钥时要设一个备份密码，密钥会用它加密；在其他手机覆盖导入时输入同一密码，就能直接使用你的 API 密钥。密码忘了就取不回密钥，只能重新填。返回可取消。")},confirmButton={TextButton({chooseKeys=false;export(null,false)},modifier=Modifier.testTag("backup-without-keys")){Text("不包含密钥（推荐）")}},dismissButton={TextButton({chooseKeys=false;exportPassword=true},modifier=Modifier.testTag("backup-with-keys")){Text("包含密钥（设密码）")}})
     if(exportPassword)BackupPasswordDialog("设置备份密码","密钥会用这个密码加密。导入时要输入同一个密码，忘了就取不回密钥。",twice=true,dismiss={exportPassword=false}){pw->exportPassword=false;export(null,true,pw)}
     if(importPassword)BackupPasswordDialog("输入备份密码","这份备份里的密钥加了密码，请输入导出时设的密码。",twice=false,dismiss={importPassword=false}){pw->importPassword=false;apply(true,pw)}

@@ -393,7 +393,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                 }
                 st.delivery.completed.await()
                 st.displaySave?.join()
-                val saved=ledger.finishWithMemory(current.id,current.attempt,st.delivery.spoken,lease,context.stamp,{db->if(!interpretation.controlChecked){tools.commit(db);st.settled[2]=true};companion.finishReply(db,current,companionState)},displayReasoning=result.displayReasoning){
+                val saved=ledger.finishWithMemory(current.id,current.attempt,st.delivery.spoken,lease,context.stamp,{db->tools.commit(db);st.settled[2]=true;companion.finishReply(db,current,companionState)},displayReasoning=result.displayReasoning){
                     modelCurrent()&&companion.current(store.readableDatabase,companionState)&&processing.referenceCurrent(friendId,refs.stamp)
                 }
                 if(!saved)ledger.fail(current.id,current.attempt,ChatFailure.SOURCE_CHANGED)

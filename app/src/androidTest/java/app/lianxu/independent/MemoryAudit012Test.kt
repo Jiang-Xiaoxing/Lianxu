@@ -11,8 +11,9 @@ import org.junit.Assert.*
 class MemoryAudit012Test {
     private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
     private lateinit var store:Store;private lateinit var repo:ProcessingRepository;private lateinit var name:String
+    private var releaseStore=true
     @Before fun setup()=runBlocking{name="audit012-${System.nanoTime()}.db";store=Store(context,name);repo=ProcessingRepository(store);store.add(listOf(Friend("a","Alpha","Synthetic"),Friend("b","Beta","Synthetic")),false);val l=ChatLedger(store);val t=l.begin("a","I like the synthetic garden.","mock");l.finish(t.id,t.attempt,"Synthetic response");Unit}
-    @After fun close(){store.close();context.deleteDatabase(name)}
+    @After fun close(){if(releaseStore){store.close();context.deleteDatabase(name)}}
     private fun op(s:SourceDialogue)=JSONObject().put("id","one").put("op","ADD").put("target","new:one").put("category","STATE_FACT").put("about","USER").put("tags",JSONArray()).put("text","Likes garden").put("core",true).put("evidence",JSONArray().put(JSONObject().put("turn",s.source.turnId).put("version",s.source.version).put("side","user").put("quote",s.user.text)))
     private suspend fun rejected(code:String,block:suspend()->Unit){try{block();fail("Expected $code")}catch(e:ProcessingRejected){assertEquals(code,e.code)}}
     private fun proposed(s:SourceDialogue)=StoredMemory("proposed","a",MemoryCategory.USER_PROFILE,"Old candidate fact",evidence=listOf(MemoryEvidence(s.source,"user",s.user.text,s.user.text,s.user.created,s.zone)))
@@ -69,6 +70,7 @@ class MemoryAudit012Test {
         val vault=ModelVault(context,"audit-pipeline-${System.nanoTime()}");val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main)
         val chat=ModelConfig("c","mock","custom","https://example.invalid/v1","chat",contextTokens=16000,outputTokens=2000);vault.save(chat,"synthetic-key-only");vault.setPurpose(ModelPurpose.CHAT,"c");vault.save(chat.copy(id="m",modelId="memory",contextTokens=32000,outputTokens=4096),"synthetic-key-only");vault.setPurpose(ModelPurpose.MEMORY,"m")
         var calls=0;var structuredCalls=0;var replyCalls=0
+        var primaryFailure:Throwable?=null
         try{
             val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
                 calls++;syntheticCompanionStage(request)?.let{structuredCalls++;return it}
@@ -83,20 +85,43 @@ class MemoryAudit012Test {
             val another=repo.manualSave("a",null,"记".repeat(7000),MemoryCategory.PROMISE,true,true)
             val ledger=ChatLedger(store);val runner=ConversationRunner(scope,store,vault,client,repo,memory,{},{})
             withContext(Dispatchers.Main){assertTrue(runner.send("a","Hi",{}))}
-            withTimeout(10000){while(ledger.all().size<2||ledger.all().last().state==TurnState.PENDING)delay(10)}
+            withTimeout(10000){while(ledger.all().size<2||ledger.all().last().state==TurnState.PENDING||"a" in runner.sending)delay(10)}
             assertEquals(ChatFailure.CORE_CAPACITY,ledger.all().last().failure);assertEquals(1,calls);assertEquals(0,structuredCalls);assertEquals(0,replyCalls);assertEquals(huge,repo.memories("a").first{it.id==huge.id})
             assertEquals(another,repo.memories("a").first{it.id==another.id})
+            println("AUDIT_RETRY_REQUEST attempt=${ledger.all().last().attempt} state=${ledger.all().last().state} sending=${runner.sending}")
             withContext(Dispatchers.Main){runner.retry(ledger.all().last())}
-            withTimeout(10000){while(ledger.all().last().attempt<2||ledger.all().last().state==TurnState.PENDING)delay(10)}
+            withTimeout(10000){while(ledger.all().last().attempt<2||ledger.all().last().state==TurnState.PENDING||"a" in runner.sending)delay(10)}
             assertEquals(ChatFailure.CORE_CAPACITY,ledger.all().last().failure);assertEquals(1,calls);assertEquals(0,replyCalls)
             assertEquals(huge,repo.memories("a").first{it.id==huge.id});assertEquals(another,repo.memories("a").first{it.id==another.id})
             repo.chooseCore("a",huge.id,huge.version,false);repo.chooseCore("a",another.id,another.version,false)
+            println("AUDIT_RETRY_REQUEST attempt=${ledger.all().last().attempt} state=${ledger.all().last().state} sending=${runner.sending}")
             withContext(Dispatchers.Main){runner.retry(ledger.all().last())}
             withTimeout(10000){while(ledger.all().last().attempt<3||ledger.all().last().state==TurnState.PENDING)delay(10)}
             assertEquals(ledger.all().last().toString(),TurnState.COMPLETED,ledger.all().last().state)
             assertEquals(2,calls);assertEquals(0,structuredCalls);assertEquals(1,replyCalls);assertTrue(repo.memories("a").first{it.id==huge.id}.locked);assertEquals(huge.text,repo.memories("a").first{it.id==huge.id}.text)
             assertTrue(repo.memories("a").first{it.id==another.id}.locked);assertEquals(another.text,repo.memories("a").first{it.id==another.id}.text)
-        }finally{scope.cancel();vault.list().forEach{vault.delete(it.id)}}
+        }catch(error:Throwable){primaryFailure=error;throw error}
+        finally{
+            val job=requireNotNull(scope.coroutineContext[Job]);job.cancel()
+            val joined=withContext(NonCancellable){withTimeoutOrNull(10000){job.join();true}}==true
+            var cleanupFailure:Throwable?=null
+            if(joined)runCatching{vault.list().forEach{vault.delete(it.id)}}.onFailure{cleanupFailure=it}
+            else{
+                releaseStore=false
+                job.invokeOnCompletion{
+                    fun attempt(part:String,action:()->Unit){runCatching(action).onFailure{println("AUDIT_DEFERRED_CLEANUP_ERROR part=$part type=${it.javaClass.simpleName}")}}
+                    val configs=runCatching{vault.list()}.getOrElse{println("AUDIT_DEFERRED_CLEANUP_ERROR part=list type=${it.javaClass.simpleName}");emptyList()}
+                    configs.forEach{config->attempt("vault-delete"){vault.delete(config.id)}}
+                    attempt("store-close"){store.close()}
+                    attempt("database-delete"){check(context.deleteDatabase(name))}
+                }
+                cleanupFailure=AssertionError("Synthetic scope cleanup exceeded 10 seconds; resources will release after its Job finishes")
+            }
+            cleanupFailure?.let{failure->
+                println("AUDIT_CLEANUP_ERROR ${failure.javaClass.simpleName}")
+                if(primaryFailure!=null)primaryFailure!!.addSuppressed(failure)else throw failure
+            }
+        }
     }
     @Test fun coreMaintenanceDemotesOnlyAutomaticAndSuppliesTargetToModel()=runBlocking{
         repo.savePolicy("a",ProcessingPolicy(coreGoal=100));val s=repo.sources("a").single();val proof=proposed(s).evidence

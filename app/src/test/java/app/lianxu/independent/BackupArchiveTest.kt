@@ -40,6 +40,14 @@ class BackupArchiveTest {
         val r=root();val same="x".repeat(2*1024*1024);repeat(4){r["preferences"].asJsonObject.addProperty("synthetic-$it",same)}
         val out=ByteArrayOutputStream();assertTrue(runCatching{BackupArchive.write(r,emptyMap(),out)}.isFailure);assertEquals(0,out.size())
     }
+    @Test fun finalPreflightRejectsAvatarThatPushesOtherwiseValidDataOverLimit(){
+        val r=root();val payload="x".repeat(1_950_000);repeat(4){r["preferences"].asJsonObject.addProperty("synthetic-$it",payload)}
+        BackupArchive.preflight(r,emptyMap())
+        r["preferences"].asJsonObject.addProperty(UserAvatarData.KEY,UserAvatarData.encode(ByteArray(UserAvatarData.MAX_BYTES)))
+        val original="existing synthetic backup".toByteArray();val destination=ByteArrayOutputStream().apply{write(original)}
+        val failure=runCatching{BackupArchive.preflight(r,emptyMap());BackupArchive.write(r,emptyMap(),destination)}.exceptionOrNull()
+        assertNotNull(failure);assertTrue(failure!!.message.orEmpty().contains("8 MiB"));assertArrayEquals(original,destination.toByteArray())
+    }
     @Test fun legacyRulesRemainStrictAndValidLegacyStillReads(){
         val r=JsonParser.parseString("""{"scope":"role","character":{"id":"synthetic","name":"林澈","bio":"虚构成年人","prompt":"测试","tone":0},"prompts":{},"records":{}}""").asJsonObject
         val original=ByteArrayOutputStream().also{RoleArchive.write(r,it)}.toByteArray()

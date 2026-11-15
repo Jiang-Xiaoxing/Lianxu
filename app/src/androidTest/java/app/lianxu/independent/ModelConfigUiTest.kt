@@ -98,7 +98,7 @@ class ModelConfigUiTest {
         assertEquals(1000000,saved.contextTokens);assertEquals(65536,saved.outputTokens);assertEquals(32768,saved.memoryOutputTokens);assertEquals(0,client.calls.get())
     }
     @Test fun newModelDefaultsRespectManualBudgetsAndNextNewDraftStartsClean(){
-        ui.onNodeWithTag("config-add-top").performClick();ui.onNodeWithTag("provider-search").performTextInput("mimo");ui.onNodeWithTag("provider-mimo").performClick()
+        ui.onNodeWithTag("config-add").performScrollTo().performClick();ui.onNodeWithTag("provider-search").performTextInput("mimo");ui.onNodeWithTag("provider-mimo").performClick()
         ui.onNodeWithTag("config-model").performScrollTo().performTextInput("mimo-v2.6-pro");hideKeyboard()
         ui.onNodeWithTag("config-advanced").performScrollTo().performClick()
         ui.onNodeWithTag("config-context").performScrollTo().assertTextContains("1000000",substring=true)
@@ -106,7 +106,7 @@ class ModelConfigUiTest {
         ui.onNodeWithTag("config-model").performScrollTo().performTextReplacement("unknown-manual-model");hideKeyboard()
         ui.onNodeWithTag("config-output").performScrollTo().assertTextContains("7777",substring=true)
         ui.onNodeWithTag("config-budget-unknown").performScrollTo().assertExists();ui.onNodeWithTag("config-budget-apply").assertDoesNotExist()
-        back();ui.onNodeWithTag("config-add-top").performClick();ui.onNodeWithTag("provider-search").performTextInput("mimo");ui.onNodeWithTag("provider-mimo").performClick()
+        back();ui.onNodeWithTag("config-add").performScrollTo().performClick();ui.onNodeWithTag("provider-search").performTextInput("mimo");ui.onNodeWithTag("provider-mimo").performClick()
         ui.onNodeWithTag("config-advanced").performScrollTo().performClick()
         ui.onNodeWithTag("config-context").performScrollTo().assertTextContains("1048576",substring=true)
         ui.onNodeWithTag("config-output").performScrollTo().assertTextContains("65536",substring=true)
@@ -116,7 +116,7 @@ class ModelConfigUiTest {
         ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-ui-a"))
         ui.onNodeWithTag("config-probe-ui-a",useUnmergedTree=true).assertTextEquals("未测试")
         shot("01-overview-real-app")
-        ui.onNodeWithTag("config-add-top").performClick();shot("02-providers-real-app")
+        ui.onNodeWithTag("config-add").performScrollTo().performClick();shot("02-providers-real-app")
         ui.onNodeWithTag("provider-search").performTextInput("xiaomi")
         ui.onNodeWithTag("provider-mimo").assertIsDisplayed()
         ui.onNodeWithTag("provider-deepseek").assertDoesNotExist()

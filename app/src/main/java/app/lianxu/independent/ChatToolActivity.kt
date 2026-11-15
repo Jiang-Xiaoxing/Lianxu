@@ -15,17 +15,25 @@ import com.google.gson.reflect.TypeToken
  * agreed outcome ("没想起来" / "没记下"), never glued on as "让我想一想，没想起来", so it never reads
  * as giving up before thinking. [kind] chooses the replacement text only (reads vs writes).
  */
-data class ChatToolActivity(val id:String,val attempt:Int,val title:String,val state:String,val before:String="",val detail:String="",val kind:String?=null,val tool:String?=null,val reasoningAt:Int=0,val reasoningKnown:Boolean=false,val operation:String?=null,val memoryId:String?=null) {
-    fun label():String = when(state){
+data class ChatToolActivity(val id:String,val attempt:Int,val title:String,val state:String,val before:String="",val detail:String="",val kind:String?=null,val tool:String?=null,val reasoningAt:Int=0,val reasoningKnown:Boolean=false,val operation:String?=null,val memoryId:String?=null,val recallGroup:String?=null,val recallRefs:List<RecallContentRef?>?=null) {
+    fun label():String {
+        if(tool=="agent_memory_update")return when(state){
+            "running","staged"->"正在记住"
+            "success"->if(!memoryId.isNullOrBlank())"我记住了"else"结果未确认"
+            "failed"->"没记住"
+            else->"结果未确认"
+        }
+        return when(state){
         "failed"->when(kind){WRITE->"没记下";READ->"没想起来";else->title}
         // A turn that ended before the tool reported keeps the honest "not confirmed" wording.
         "unknown"->title+"，结果未确认"
         // 回想出结果就换成“想起来了”；进行中仍是“让我想一想”。
         "success"->if(tool in RECALL_TOOLS)"想起来了" else title
         else->title
+        }
     }
     /** Only a committed write that points at a real stored row may be opened; a staged/failed receipt never is. */
-    val canOpenMemory:Boolean get()=state=="success"&&memoryId!=null
+    val canOpenMemory:Boolean get()=state=="success"&&memoryId!=null&&(tool!="agent_memory_update"||memoryId.isNotBlank())
     companion object {
         const val READ="read"
         const val WRITE="write"
@@ -33,8 +41,8 @@ data class ChatToolActivity(val id:String,val attempt:Int,val title:String,val s
         const val OTHER="other"
         /** Display-only: a failed bookkeeping pill whose attempt also has a successful one. Never stored. */
         const val SUPERSEDED="superseded"
-        /** 记忆回想类调用：成功时统一说“想起来了”。 */
-        val RECALL_TOOLS=setOf("agent_recall_search","agent_memory_read")
+        /** 查聊天与查记忆的回想调用：同次响应合并，成功统一说“想起来了”。 */
+        val RECALL_TOOLS=setOf("agent_recall_search","agent_memory_read","agent_history_search")
     }
 }
 /**
@@ -59,7 +67,7 @@ internal object ChatToolJournal {
     fun key(turn:String)=PREFIX+turn
     /** One turn never shows more pills than this; a backup carrying more is not one of ours. */
     private const val MAX_BACKUP_ROWS=200
-    private val BACKUP_FIELDS=setOf("id","attempt","title","state","before","detail","kind","tool","reasoningAt","reasoningKnown","operation","memoryId")
+    private val BACKUP_FIELDS=setOf("id","attempt","title","state","before","detail","kind","tool","reasoningAt","reasoningKnown","operation","memoryId","recallGroup","recallRefs")
     /** A finished turn only ever keeps settled receipts; running/staged are settled before export. */
     private val BACKUP_STATES=setOf("success","failed","unknown")
     private val TOOL_NAME=Regex("[A-Za-z0-9_.\\-]{1,100}")
@@ -70,12 +78,12 @@ internal object ChatToolJournal {
      * running or staged is settled exactly as an interrupted turn would settle it; a link to a memory row
      * that is not in this export is dropped, leaving a pill that shows but cannot be opened.
      */
-    fun forBackup(raw:String,memoryIds:Set<String>):String = Gson().toJson(rows(raw).map{row->
+    fun forBackup(raw:String,memoryIds:Set<String>,messageIds:Set<Long> = emptySet()):String = Gson().toJson(rows(raw).map{row->
         val settled=if(row.state=="running"||row.state=="staged")settleRows(listOf(row),row.attempt,committed=false,recordSaved=false,memorySaved=false).single() else row
-        if(settled.memoryId!=null&&settled.memoryId !in memoryIds)settled.copy(memoryId=null) else settled
+        settled.copy(memoryId=settled.memoryId?.takeIf{it in memoryIds},recallRefs=settled.recallRefs?.map{ref->ref?.takeIf{if(it.kind=="memory")it.id in memoryIds else it.id.toLongOrNull() in messageIds}}?.takeIf{refs->refs.any{it!=null}})
     })
     /** Strict format check for a backup value: only the fields and states a receipt really has, within their limits. */
-    fun validateBackup(raw:String,memoryIds:Set<String>){
+    fun validateBackup(raw:String,memoryIds:Set<String>,messageIds:Set<Long> = emptySet()){
         fun fail():Nothing=throw IllegalArgumentException("工具胶囊回执格式无效")
         val rows=runCatching{JsonParser.parseString(raw)}.getOrNull()?.takeIf{it.isJsonArray}?.asJsonArray?:fail()
         if(rows.size()>MAX_BACKUP_ROWS)fail()
@@ -103,15 +111,34 @@ internal object ChatToolJournal {
             whole("reasoningAt",0L..Int.MAX_VALUE.toLong(),required=false)
             o.get("reasoningKnown")?.takeUnless{it.isJsonNull}?.let{if(!it.isJsonPrimitive||!it.asJsonPrimitive.isBoolean)fail()}
             text("operation",200)
+            text("recallGroup",100,blank=false)
+            o.get("recallRefs")?.takeUnless{it.isJsonNull}?.let{refs->
+                if(!refs.isJsonArray||refs.asJsonArray.size() !in 1..MAX_RECALL_CONTENT_REFS)fail()
+                refs.asJsonArray.filterNot{it.isJsonNull}.forEach{element->
+                    val ref=element.takeIf{it.isJsonObject}?.asJsonObject?:fail()
+                    if(ref.keySet()!=setOf("kind","id","version","mode","digest","start","length"))fail()
+                    listOf("kind","id","mode","digest").forEach{k->if(ref[k]?.isJsonPrimitive!=true||!ref[k].asJsonPrimitive.isString)fail()}
+                    listOf("version","start","length").forEach{k->val v=ref[k]?:fail();if(!v.isJsonPrimitive||!v.asJsonPrimitive.isNumber||v.asDouble!=v.asInt.toDouble())fail()}
+                    val value=runCatching{Gson().fromJson(ref,RecallContentRef::class.java)}.getOrNull()?:fail()
+                    if(!value.valid()||(value.kind=="memory"&&value.id !in memoryIds)||(value.kind=="message"&&value.id.toLongOrNull() !in messageIds))fail()
+                }
+            }
             text("memoryId",200)?.let{if(it !in memoryIds)fail()}
         }
     }
     /** Restore: the memory rows got new ids, so each link follows its row; a link with no row is dropped. */
-    fun remapBackup(raw:String,memoryIds:Map<String,String>):String {
+    fun remapBackup(raw:String,memoryIds:Map<String,String>,messageIds:Map<Long,Long> = emptyMap()):String {
         val rows=JsonParser.parseString(raw).asJsonArray
         val out=JsonArray()
         rows.forEach{e->val o=e.asJsonObject.deepCopy()
             o.get("memoryId")?.takeUnless{it.isJsonNull}?.asString?.let{old->val next=memoryIds[old];if(next==null)o.remove("memoryId") else o.addProperty("memoryId",next)}
+            o.get("recallRefs")?.takeUnless{it.isJsonNull}?.asJsonArray?.let{refs->
+                refs.forEachIndexed{index,element->if(!element.isJsonNull){val ref=element.asJsonObject;val old=ref["id"].asString
+                    val next=if(ref["kind"].asString=="memory")memoryIds[old]else old.toLongOrNull()?.let{messageIds[it]?.toString()}
+                    if(next==null)refs.set(index,com.google.gson.JsonNull.INSTANCE)else ref.addProperty("id",next)
+                }}
+                if(refs.none{!it.isJsonNull})o.remove("recallRefs")
+            }
             out.add(o)
         }
         return out.toString()
@@ -141,7 +168,7 @@ internal object ChatToolJournal {
             "running"->item.copy(state="unknown",detail="本轮已结束，操作结果未确认")
             "staged"->{
                 // A memory receipt only counts as saved when this commit really linked it to a stored row.
-                val linked=item.memoryId!=null
+                val linked=!item.memoryId.isNullOrBlank()
                 val saved=committed&&when(item.tool){
                     CompanionRecord.NAME->recordSaved
                     "agent_memory_update"->memorySaved&&linked
@@ -162,25 +189,25 @@ internal object ChatToolJournal {
      * that link on its receipt so the pill can later read the real row; a write that produced no row
      * (a candidate kept for review, or a rejected stage) keeps no link and stays unopenable.
      */
-    fun linkMemory(db:SQLiteDatabase,turn:String,written:Map<String,String>){
+    fun linkMemory(db:SQLiteDatabase,turn:String,attempt:Int,written:Map<String,String>){
         if(written.isEmpty())return
         val rows=read(db,turn)
-        val linked=rows.map{row->val id=row.operation?.let{written[it]};if(id==null)row else row.copy(memoryId=id)}
+        val linked=rows.map{row->val id=row.operation?.takeIf{row.attempt==attempt&&row.state=="staged"}?.let{written[it]};if(id==null)row else row.copy(memoryId=id)}
         if(linked!=rows)save(db,turn,linked)
     }
-    fun start(call:ChatToolCall,attempt:Int,before:String):ChatToolActivity {
+    fun start(call:ChatToolCall,attempt:Int,before:String,recallGroup:String?=null):ChatToolActivity {
         // Gson keeps this display mapping readable on the JVM; the Android org.json stub is not available in unit tests.
         val action=runCatching{Gson().fromJson(call.arguments,Map::class.java)?.get("action")?.toString()}.getOrNull().orEmpty()
         val (title,kind)=when(call.name){
             ImmediateContact.NAME->"安排联系" to ChatToolActivity.OTHER
             JointControl.NAME->when(action){"forget"->"遗忘" to ChatToolActivity.OTHER;"correct"->"更正" to ChatToolActivity.OTHER;"stop_reminding"->"停止提醒" to ChatToolActivity.OTHER;else->"记忆操作" to ChatToolActivity.OTHER}
-            "agent_memory_update"->"嗯…我记住了" to ChatToolActivity.WRITE
+            "agent_memory_update"->"正在记住" to ChatToolActivity.WRITE
             CompanionRecord.NAME->"嗯…我记住了" to ChatToolActivity.WRITE
             RelationshipRecall.NAME->"让我想想以前" to ChatToolActivity.READ
             "agent_history_search","agent_history_read"->"让我查一下聊天记录" to ChatToolActivity.READ
             else->"让我想一想" to ChatToolActivity.READ
         }
-        return ChatToolActivity(java.util.UUID.randomUUID().toString(),attempt,title,"running",before.take(16000),kind=kind,tool=call.name)
+        return ChatToolActivity(java.util.UUID.randomUUID().toString(),attempt,title,"running",before.take(16000),kind=kind,tool=call.name,recallGroup=recallGroup?.takeIf{call.name in ChatToolActivity.RECALL_TOOLS})
     }
     /**
      * A read that came back empty is "没找到", not a success: recall/history/relation reads return
@@ -191,6 +218,11 @@ internal object ChatToolJournal {
     private fun emptyRead(item:ChatToolActivity,result:Map<String,Any>):Boolean {
         if(item.kind!=ChatToolActivity.READ)return false
         val rows=result["results"]?:result["messages"]?:result["events"]?:return false
+        // Chat snippets already visible in this context are removed from results, while the
+        // real recall protocol keeps status=found and a positive visible_duplicates count.
+        if(item.tool in ChatToolActivity.RECALL_TOOLS&&result["status"] in setOf("found","already_in_context")&&
+            (result["visible_duplicates"] as? Number)?.toDouble()?.let{it>0}==true&&
+            result["page_blocked_by_capacity"]!=true&&result["recall_stopped"]!=true)return false
         return (rows as? List<*>)?.isEmpty()==true
     }
     fun result(item:ChatToolActivity,result:Map<String,Any>):ChatToolActivity {

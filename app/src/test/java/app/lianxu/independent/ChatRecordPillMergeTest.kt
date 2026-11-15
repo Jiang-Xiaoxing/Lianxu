@@ -33,7 +33,7 @@ class ChatRecordPillMergeTest {
     @Test fun otherToolsAreUntouched(){
         val memory=ChatToolActivity("m",1,"嗯…我记住了","failed",kind=ChatToolActivity.WRITE,tool="agent_memory_update")
         val read=ChatToolActivity("r",1,"让我查一下聊天记录","failed",kind=ChatToolActivity.READ,tool="agent_history_search")
-        assertEquals(listOf("ok" to "嗯…我记住了","m" to "没记下","r" to "没想起来"),shown(listOf(rec("ok","success"),memory,read)))
+        assertEquals(listOf("ok" to "嗯…我记住了","m" to "没记住","r" to "没想起来"),shown(listOf(rec("ok","success"),memory,read)))
     }
     @Test fun hiddenPillKeepsItsTextAndDoesNotCutThinking(){
         val merged=mergeRecordPills(listOf(rec("bad","failed",before="先说一句"),rec("ok","success")))

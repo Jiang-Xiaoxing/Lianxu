@@ -81,7 +81,6 @@ class MainActivity:ComponentActivity(){
             "processing"->ProcessingDirectory(vm)
             "processing-role"->ProcessingRole(vm)
             "settings-memory"->MemoryRulesScreen(vm)
-            "settings-display"->DisplaySettings(vm)
             "settings-info"->DataAndVersion({vm.back()})
             "settings-updates"->UpdatesScreen({vm.back()})
         }
@@ -111,9 +110,7 @@ class MainActivity:ComponentActivity(){
                 if(vm.tab==0){Spacer(Modifier.width(2.dp));CompanionBirds(Modifier.weight(1f,fill=false).widthIn(max=104.dp))}
             }
             if(vm.tab<=1)Box{
-                val addBg=if(isSystemInDarkTheme())Paper else GreenText
-                val addOn=if(isSystemInDarkTheme())GreenText else MaterialTheme.colorScheme.onPrimary
-                FilledTonalIconButton(onClick={menu=true},modifier=Modifier.size(UiSpace.action).testTag("add-menu").semantics{contentDescription="添加角色"},colors=IconButtonDefaults.filledTonalIconButtonColors(containerColor=addBg,contentColor=addOn)){ControlIcon("add",addOn)}
+                IconButton(onClick={menu=true},modifier=Modifier.size(UiSpace.action).testTag("add-menu").semantics{contentDescription="添加角色"}){ControlIcon("plus",GreenText,20.dp)}
                 DropdownMenu(menu,{menu=false}){
                     DropdownMenuItem(text={Text("寻找角色")},leadingIcon={ControlIcon("search")},onClick={menu=false;vm.startSearch()})
                     DropdownMenuItem(text={Text("创建角色")},leadingIcon={ControlIcon("add")},onClick={menu=false;vm.open("create")})
@@ -218,11 +215,13 @@ class MainActivity:ComponentActivity(){
     }
 }
 @Composable private fun Profile(vm:AppState){
+    val avatarPicker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null)vm.setUserAvatar(uri)}
     var name by rememberSaveable(vm.persona){mutableStateOf(vm.persona.name)}
     var address by rememberSaveable(vm.persona){mutableStateOf(vm.persona.address)}
     var introduction by rememberSaveable(vm.persona){mutableStateOf(vm.persona.introduction)}
     Column(Modifier.fillMaxSize().background(Chrome).verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(UiSpace.group)){
-        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper).padding(20.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){Avatar(Friend("self",vm.nickname,""),64);Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){Text(vm.nickname,style=MaterialTheme.typography.titleLarge);Text("${vm.friends.size} 位角色 · ${vm.messages.count{it.mine}} 条已发送消息",style=MaterialTheme.typography.bodySmall,color=Muted)}}
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper).padding(20.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){SelfAvatar(vm.userAvatar,64,"profile-avatar",Modifier.clickable(enabled=!vm.busy,role=Role.Button,onClickLabel="选择本人头像"){avatarPicker.launch(arrayOf("image/*"))});Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){Text(vm.nickname,style=MaterialTheme.typography.titleLarge);Text("${vm.friends.size} 位角色 · ${vm.messages.count{it.mine}} 条已发送消息",style=MaterialTheme.typography.bodySmall,color=Muted)}}
+        Text("点击头像更换图片。本人头像不随聊天请求发送；全部备份会包含头像。",style=MaterialTheme.typography.bodySmall,color=Muted)
         SectionLabel("聊天中的你")
         AppField(name,{name=it.take(80)},"我的名字","nickname",singleLine=true)
         AppField(address,{address=it.take(80)},"希望被怎样称呼","persona-address",singleLine=true)

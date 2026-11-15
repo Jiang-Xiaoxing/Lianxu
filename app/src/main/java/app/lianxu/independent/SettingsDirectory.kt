@@ -40,15 +40,13 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
     Column(Modifier.fillMaxSize().background(SettingsPaper).verticalScroll(rememberScrollState()).padding(UiSpace.page).testTag("settings-home"),verticalArrangement=Arrangement.spacedBy(16.dp)) {
         SectionLabel("聊天与陪伴")
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)) {
-            DirectoryRow("model","大模型配置",summary,"settings-models","settings-model-summary"){vm.open("models")}
+            DirectoryRow("chat","大模型配置",summary,"settings-models","settings-model-summary"){vm.open("models")}
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
             DirectoryRow("memory","记忆","记住的内容、来源与待确认","settings-processing"){vm.open("processing")}
         }
-        SectionLabel("数据与显示")
+        SectionLabel("数据")
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper)) {
             DirectoryRow("storage","备份与诊断","完整角色、全部备份与诊断日志","settings-role-archive"){vm.open("role-archive")}
-            HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
-            DirectoryRow("list","显示与列表","列表使用统一行间距","settings-display"){vm.open("settings-display")}
         }
         SectionLabel("应用")
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper)) {
@@ -77,12 +75,6 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
     }
 }
 
-@Composable internal fun DisplaySettings(vm:AppState) {
-    SettingsPage("显示与列表",{vm.back()}) {
-        Text("列表使用统一行间距。",Modifier.testTag("settings-display-page"),style=MaterialTheme.typography.bodyMedium,color=SettingsMuted)
-    }
-}
-
 @Composable internal fun DataAndVersion(onBack:()->Unit) {
     val context=LocalContext.current
     val build=remember(context){runCatching{InstalledBuild.read(context)}.getOrNull()}
@@ -108,15 +100,7 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
     val context=LocalContext.current
     val build=remember(context){runCatching{InstalledBuild.read(context)}.getOrNull()}
     SettingsPage("更新说明",onBack){
-        val notes=build?.let{LocalReleaseNotes.history(it.versionCode)}.orEmpty()
-        if(notes.isEmpty())Text("当前安装包没有随包更新记录。",color=Muted)
-        notes.forEach{note->
-            Text(note.title,style=MaterialTheme.typography.titleMedium)
-            Text(note.version,style=MaterialTheme.typography.labelMedium,color=Muted)
-            note.changes.forEach{Text(it,style=MaterialTheme.typography.bodyMedium)}
-            note.limits.forEach{Text(it,style=MaterialTheme.typography.bodySmall,color=Muted)}
-            HorizontalDivider(color=Line)
-        }
+        UpdatesContent(build)
     }
 }
 

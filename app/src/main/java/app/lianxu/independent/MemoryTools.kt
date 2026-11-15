@@ -24,6 +24,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
     private val recalled=linkedMapOf<String,RecallSource>()
     private val deliveredMemories=mutableSetOf<String>()
     private val clarities=mutableMapOf<String,Double>()
+    private val recallContent=RecallContentCapture(repo,turn.friendId)
     private fun remembered(db:SQLiteDatabase,m:StoredMemory):String {
         val clarity=clarities.getOrPut(m.id){MemoryForgetting.state(db,m,recallAt).clarity(recallAt)}
         return MemoryForgetting.text(m,clarity){repo.describe(m)}
@@ -58,6 +59,16 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
     private data class Target(val id:String,val version:Int,val candidate:String?=null)
     private val targets=linkedMapOf<String,Target>()
     private val gson=Gson()
+    private var writeEvidence=emptyMap<String,MemoryEvidence>()
+    private var writeSourceAllowed=true
+    private fun validWriteEvidence(db:SQLiteDatabase):List<MemoryEvidence> {
+        rejectUnless(CompanionRepository.aiAllowed(db,turn.friendId,turn.userMessageId),"SOURCE_CHANGED")
+        val current=db.rawQuery("SELECT t.source_revision,t.source_zone,m.created,m.body FROM chat_turns t JOIN messages m ON m.id=t.user_message_id LEFT JOIN message_state s ON s.message_id=m.id WHERE t.id=? AND t.friend_id=? AND t.user_message_id=? AND m.mine=1 AND COALESCE(s.deleted,0)=0",arrayOf(turn.id,turn.friendId,turn.userMessageId.toString())).use{c->
+            rejectUnless(c.moveToFirst()&&c.getString(3)==input,"SOURCE_CHANGED")
+            MemoryEvidence(SourceRef(turn.friendId,turn.userMessageId,c.getLong(0)),"user",input,input,c.getLong(2),c.getString(1))
+        }
+        return (listOf(current)+repo.recentSources(db,turn.friendId).map{s->MemoryEvidence(s.source,"user",s.user.text,s.user.text,s.user.created,s.zone)}).distinctBy{it.source}
+    }
     private val stageKey="memory-tools:${turn.id}:${turn.attempt}"
     private val usageKey="memory-recall-usage:${turn.id}"
     private fun pref(key:String)=repo.store.readableDatabase.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(key)).use{if(it.moveToFirst())it.getString(0) else null}
@@ -72,14 +83,17 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
             val scores=memoryVectors?.scores(sessionId,terms.firstOrNull().orEmpty(),queryCache).orEmpty()
             return (repo.read{db->
             repo.usableMemories(db,sessionId).filter{m->terms.any{it in (m.text+" "+m.tags.joinToString(" ")+" "+m.eventDate.orEmpty()).lowercase()}||(scores["${m.id}@${m.version}"]?:0.0)>=AdaptiveContext.MIN_RELEVANCE}
-                .map{m->val body=remembered(db,m);AgentRecallCandidate(m.id,"companion_memory",if(clarities.getValue(m.id)>60)m.category.label else "",body,if(clarities.getValue(m.id)>60)m.tags else emptyList(),sessionId,startMessageId=if(clarities.getValue(m.id)>60)m.evidence.firstOrNull()?.source?.turnId?.toString()else null,startedAt=if(clarities.getValue(m.id)>60)m.eventDate else null,current=true,vectorScore=(scores["${m.id}@${m.version}"]?:0.0).toFloat())}
+                .map{m->val body=remembered(db,m);AgentRecallCandidate(m.id,"companion_memory",if(clarities.getValue(m.id)>60)m.category.label else "",body,if(clarities.getValue(m.id)>60)m.tags else emptyList(),sessionId,startMessageId=if(clarities.getValue(m.id)>60)m.evidence.firstOrNull()?.source?.turnId?.toString()else null,startedAt=if(clarities.getValue(m.id)>60)m.eventDate else null,current=true,vectorScore=(scores["${m.id}@${m.version}"]?:0.0).toFloat(),displayVersion=m.version,displayMode=if(clarities.getValue(m.id)>60)"full"else if(clarities.getValue(m.id)>=20)"gist"else"trace")}
                 .filter{it.content.isNotBlank()}
                 .sortedWith(compareByDescending<AgentRecallCandidate>{recallScore(it,terms)}.thenBy{it.id}).take(limit)
         }+(companionIndex?.search(sessionId,terms.firstOrNull().orEmpty(),limit,queryCache)?:CompanionRepository(repo.store).recall(sessionId,terms,limit))).sortedWith(compareByDescending<AgentRecallCandidate>{recallScore(it,terms)}.thenBy{it.id}).take(limit)
         }
-        override suspend fun searchHistory(sessionId:String,terms:List<String>,limit:Int)=repo.sources(sessionId).flatMap{it.messages}
-            .filter{m->terms.any{it in m.text.lowercase()}}.sortedWith(compareByDescending<Message>{m->terms.sumOf{if(it in m.text.lowercase())it.length.coerceAtMost(8) else 0}}.thenByDescending{it.created})
-            .take(limit).map(::history)
+        override suspend fun searchHistory(sessionId:String,terms:List<String>,limit:Int)=repo.read{db->recallReadSnapshot(db){
+            val versions=db.rawQuery("SELECT m.id,COALESCE(s.revision,1) FROM messages m LEFT JOIN message_state s ON s.message_id=m.id WHERE m.friend_id=?",arrayOf(sessionId)).use{c->buildMap{while(c.moveToNext())put(c.getLong(0),c.getInt(1))}}
+            repo.sources(db,sessionId).flatMap{it.messages}
+                .filter{m->terms.any{it in m.text.lowercase()}}.sortedWith(compareByDescending<Message>{m->terms.sumOf{if(it in m.text.lowercase())it.length.coerceAtMost(8) else 0}}.thenByDescending{it.created})
+                .take(limit).map{m->history(m).copy(displayVersion=versions[m.id])}
+        }}
         override suspend fun readHistory(sessionId:String,anchorMessageId:String,before:Int,after:Int):List<AgentHistoryMessage>{
             val rows=repo.sources(sessionId).flatMap{it.messages};val index=rows.indexOfFirst{it.id.toString()==anchorMessageId}
             if(index<0)return emptyList();return rows.subList((index-before).coerceAtLeast(0),(index+after+1).coerceAtMost(rows.size)).map(::history)
@@ -93,30 +107,33 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
     }
     private fun writeDefinition():Map<String,Any> {
         fun field(type:String,description:String)=mapOf("type" to type,"description" to description)
-        return mapOf("type" to "function","function" to mapOf("name" to "agent_memory_update","description" to "根据本轮用户S1原话存记忆或澄清待确认记忆；写入随最终回复同一事务完成。保留人工/锁定保护。未知目标直接失败。",
+        return mapOf("type" to "function","function" to mapOf("name" to "agent_memory_update","description" to """根据本次上下文提供的有效用户原话S编号存记忆或澄清待确认记忆；S1为当前句，历史事实用相应S编号。记录日期事实时，即使content概括后省去了时间词，也必须提供含对应完整时间词的quote和time_text；相对日期按所引原话当时的日期、时区计算。例如S2原话为“明天，我去看展”，可调用{"op":"add","content":"我计划去看展","quote":"明天，我去看展","evidence":["S2"],"time_text":"明天","date_type":"day"}。非日期事实只引用对应证据，不绑定同句其他事实的日期。写入随最终回复同一事务完成，保留人工/锁定保护。""",
             "parameters" to mapOf("type" to "object","properties" to mapOf(
                 "op" to mapOf("type" to "string","enum" to listOf("add","update","cancel","complete","retract")),
-                "target" to field("string","已有记忆或待确认的M编号；add不填"),"content" to field("string","第一人称忠于原话的一句话"),
+                "target" to field("string","已有记忆或待确认的M编号；add不填"),"content" to field("string","忠于所选用户证据提取或概括记忆，不必复制整句话；不要混入助手或人设的事实"),
+                "quote" to field("string","所选S用户原话中与本条事实对应的逐字片段；正文可以概括，证据不能改写。日期事实须包含对应完整时间词；非日期事实不要引同句另一事实的日期。省略时保留整条用户原话作证据"),
                 "category" to mapOf("type" to "string","enum" to MemoryCategory.entries.filter{it.modern}.map{it.name}),
                 "about" to mapOf("type" to "string","enum" to MemoryAbout.entries.map{it.name}),
                 "importance" to mapOf("type" to "string","enum" to MemoryImportance.entries.map{it.name}),"gist" to field("string","40字内的大意，不带数字、地名和原句细节"),"trace" to field("string","8字内印象"),
-                "evidence" to mapOf("type" to "array","items" to mapOf("type" to "string","enum" to listOf("S1")),"minItems" to 1,"maxItems" to 1),
-                "time_text" to field("string","本轮原话中的单日时间词，未知留空"),"date_type" to mapOf("type" to "string","enum" to listOf("day","habit","birthday")),
+                "evidence" to mapOf("type" to "array","items" to mapOf("type" to "string","enum" to writeEvidence.keys.toList().ifEmpty{listOf("S1")} ),"minItems" to 1,"maxItems" to 1),
+                "time_text" to field("string","逐字引用所选S原话的时间词；日期类事实必填，非日期事实可空"),"date_type" to mapOf("type" to "string","enum" to listOf("day","habit","birthday"),"description" to "生日使用birthday，无出生年份只存年度月日，不猜出生年；habit仅用于不含具体日期的习惯"),
                 "tags" to mapOf("type" to "array","items" to mapOf("type" to "string")),"doubt" to field("string","仍拿不准时填写理由，不能伪装成已确定事实")),"required" to listOf("op","evidence"))))
     }
     suspend fun run(config:ModelConfig,key:String,request:TextChatRequest,client:TextChatClient,onResponseStart:(suspend()->Unit)?=null,onEvent:(suspend(TextStreamEvent)->Unit)?=null,onToolActivity:(suspend(ChatToolActivity)->Unit)?=null):TextChatResult = runLoop(config,key,request,client,onResponseStart,onEvent,onToolActivity)
     /** A rejected structured candidate cannot leave writes for the next candidate to commit. */
     suspend fun discardCandidate()=repo.tx{db->db.delete("preferences","key=?",arrayOf(stageKey));Unit}
-    private fun definitions()=(if(contactTool!=null)listOf(ImmediateContact.definition(turn.userMessageId,contactTime,contactZone))else emptyList())+(if(controlTool!=null)listOf(JointControl.definition)else emptyList())+(if(recordTool!=null)listOf(CompanionRecord.definition(turn.userMessageId,recordNeedsExperience))else emptyList())+(if(rules.proactiveRecall)buildAgentRecallToolDefinitions(true) else emptyList())+(if(rules.immediateWrite&&allowWrite)listOf(writeDefinition()) else emptyList())+(if(rules.proactiveRecall)listOf(mapOf("type" to "function","function" to mapOf("name" to "agent_memory_read","description" to "按问题读取当前有效角色记忆","parameters" to mapOf("type" to "object","properties" to mapOf("query" to mapOf("type" to "string")),"required" to listOf("query"))))) else emptyList())
+    private fun definitions()=(if(contactTool!=null)listOf(ImmediateContact.definition(turn.userMessageId,contactTime,contactZone))else emptyList())+(if(controlTool!=null)listOf(JointControl.definition)else emptyList())+(if(recordTool!=null)listOf(CompanionRecord.definition(turn.userMessageId,recordNeedsExperience))else emptyList())+(if(rules.proactiveRecall)buildAgentRecallToolDefinitions(true) else emptyList())+(if(rules.immediateWrite&&allowWrite&&writeSourceAllowed)listOf(writeDefinition()) else emptyList())+(if(rules.proactiveRecall)listOf(mapOf("type" to "function","function" to mapOf("name" to "agent_memory_read","description" to "按问题读取当前有效角色记忆","parameters" to mapOf("type" to "object","properties" to mapOf("query" to mapOf("type" to "string")),"required" to listOf("query"))))) else emptyList())
     internal fun reservedTokens():Int {val offered=definitions()+(if(relationEnabled)listOf(RelationshipRecall.definition)else emptyList());return if(offered.isEmpty())0 else ConservativeTokens.tokens(gson.toJson(offered))+ConservativeTokens.tokens(CompanionRecallBudget.QUERY_RULES)+768}
     /** Read-only planning, before any model/tool execution. Same messages and cost as the first send. */
     internal suspend fun initialCapacityFailure(config:ModelConfig,request:TextChatRequest):ChatFailure? {
         if(noTools())return null
+        val initialMessages=initialMessages(request)
+        if(noTools())return null
         val offered=definitions()+(if(relationEnabled)listOf(RelationshipRecall.definition)else emptyList())
-        val outgoing=CompanionPrompt.forSend(request.copy(messages=initialMessages(request)),offered)
+        val outgoing=CompanionPrompt.forSend(request.copy(messages=initialMessages),offered)
         return if(requestCost(outgoing,offered)>=config.contextTokens)ChatFailure.CONTEXT_CAPACITY else null
     }
-    private fun noTools()=controlTool==null&&contactTool==null&&recordTool==null&&!relationEnabled&&!rules.proactiveRecall&&!(rules.immediateWrite&&allowWrite)
+    private fun noTools()=controlTool==null&&contactTool==null&&recordTool==null&&!relationEnabled&&!rules.proactiveRecall&&!(rules.immediateWrite&&allowWrite&&writeSourceAllowed)
     private fun messageMaps(messages:List<WireMessage>)=messages.map{m->buildMap<String,Any>{
         put("role",m.role);put("content",m.content)
         if(m.name.isNotEmpty())put("name",m.name)
@@ -129,12 +146,19 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
         estimateLocalMessagesTokens(messageMaps(request.messages).map(::cleanRecallMessage))+request.messages.sumOf{it.continuation?.tokenCost?:0}+ConservativeTokens.tokens(gson.toJson(offered))+request.outputLimit
     private suspend fun initialMessages(request:TextChatRequest):List<WireMessage> {
         repo.read{db->
+            if(rules.immediateWrite&&allowWrite){
+                writeSourceAllowed=CompanionRepository.aiAllowed(db,turn.friendId,turn.userMessageId)
+                writeEvidence=if(writeSourceAllowed){val sources=validWriteEvidence(db);ImmediateMemoryEvidence.aliases(sources.first(),sources.drop(1),request.messages)}else emptyMap()
+            }
             val visible=if(rules.adaptiveContext)request.messages.flatMap{it.memoryIds}.toSet()else initial.valid.map{it.memoryId}.toSet()
             initial.valid.map{it.memoryId}.filter{it.isNotBlank()&&it in visible}.distinct().forEach{id->repo.memory(db,turn.friendId,id)?.let{register(it.id,it.version)}}
             repo.candidates(db,turn.friendId).filter{it.valid&&initial.pending.any{p->it.id in p}}.forEach{c->register(c.targetId?:c.proposed.id,c.targetVersion?:0,c.id)}
         }
+        if(noTools())return request.messages
         val mapping=targets.entries.joinToString("\n"){(ref,t)->"$ref -> ${t.candidate?:t.id}@${t.version}"}
-        return request.messages.toMutableList().apply{add((size-2).coerceAtLeast(0),WireMessage("system","[记忆工具编号]\nS1 仅指本轮用户原话。$mapping\n${CompanionRecallBudget.QUERY_RULES}",memoryIds=initial.valid.map{it.memoryId}.filter{it.isNotBlank()}))}
+        val users=request.messages.filter{it.role=="user"}
+        val sources=writeEvidence.entries.joinToString("\n"){(alias,e)->"$alias -> ${if(alias=="S1")"当前用户原话"else"上方第${users.indexOfFirst{it.sourceMessageId==e.source.turnId.toString()}+1}条用户原话"}；原话日期${java.time.Instant.ofEpochMilli(e.sourceAt).atZone(java.time.ZoneId.of(e.zone)).toLocalDate()}（${e.zone}）"}
+        return request.messages.toMutableList().apply{add((size-2).coerceAtLeast(0),WireMessage("system","[记忆工具编号]\n$sources\n所引时间词必须在对应S的用户原话中；助手话语和未列来源不能作用户证据。$mapping\n${CompanionRecallBudget.QUERY_RULES}",memoryIds=initial.valid.map{it.memoryId}.filter{it.isNotBlank()}))}
     }
     private suspend fun runLoop(config:ModelConfig,key:String,request:TextChatRequest,client:TextChatClient,onResponseStart:(suspend()->Unit)?,onEvent:(suspend(TextStreamEvent)->Unit)?,onToolActivity:(suspend(ChatToolActivity)->Unit)?):TextChatResult {
         deliveredMemories.clear();deliveredMemories.addAll(request.messages.flatMap{it.memoryIds})
@@ -142,12 +166,14 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
             onResponseStart?.invoke()
             return if(onEvent==null)client.complete(config,key,value)else client.streamEvents(config,key,value,onEvent)
         }
-        if(noTools()){
+        suspend fun withoutTools():TextChatResult {
             if(!active())return TextChatResult.Failure(ChatFailure.SOURCE_CHANGED)
             val result=send(CompanionPrompt.forSend(request,emptyList()))
             return if(result is TextChatResult.Success&&result.toolCalls.isNotEmpty())TextChatResult.Failure(ChatFailure.TOOLS_UNAVAILABLE) else result
         }
+        if(noTools())return withoutTools()
         val messages=initialMessages(request).toMutableList()
+        if(noTools())return withoutTools()
         val definitions=definitions()+(if(relationEnabled)listOf(RelationshipRecall.definition)else emptyList())
         val progress=RecallProgress()
         val failedRecords=mutableSetOf<Int>()
@@ -166,6 +192,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
             val prepared=try{budget.prepare(actor,maps,stepDefinitions,config.contextTokens-continuationCost,request.outputLimit)}catch(_:RecallContextCapacity){return TextChatResult.Failure(ChatFailure.CONTEXT_CAPACITY)}
             val offered=prepared.tools
             val outgoing=CompanionPrompt.forSend(request.copy(messages=messages.toList()),offered)
+            val availableWriteEvidence=writeEvidence.filter{(alias,proof)->ImmediateMemoryEvidence.visible(proof,outgoing.messages,alias=="S1")}
             if(requestCost(outgoing,offered)>config.contextTokens)return TextChatResult.Failure(ChatFailure.CONTEXT_CAPACITY)
             // One batch span per model request so its reasoning, tool calls and reply can be tied
             // back to the same turn even when the tool loop runs several requests.
@@ -182,11 +209,13 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
             // Thinking is kept across tool rounds: the saved display must match what the user watched.
             if(result.toolCalls.isEmpty())return result.copy(displayReasoning=displayReasoning)
             if(result.toolCalls.size>8||result.toolCalls.any{c->c.name !in offered.map(::toolNameOf)})return TextChatResult.Failure(ChatFailure.TOOLS_UNAVAILABLE)
+            // Display metadata only: even two responses at the same thinking offset stay separate.
+            val recallDisplayGroup=java.util.UUID.randomUUID().toString()
             if(result.toolCalls.any{it.name=="agent_memory_update"})writeBatches++
             if(result.toolCalls.any{it.name==JointControl.NAME}&&result.toolCalls.size!=1){
                 messages+=WireMessage("assistant","",result.toolCalls)
                 result.toolCalls.forEachIndexed{index,call->
-                    val item=ChatToolJournal.start(call,turn.attempt,if(index==0)ChatDisplayDecoder().append(result.text)else "")
+                    val item=ChatToolJournal.start(call,turn.attempt,if(index==0)ChatDisplayDecoder().append(result.text)else "",recallDisplayGroup)
                     val output=ToolArgumentDiagnosis.retryExhausted(call.name,if(call.name==JointControl.NAME)controlAttempts+1 else 0,mapOf("success" to false,"error" to "control_requires_separate_batch"))
                     onToolActivity?.invoke(ChatToolJournal.result(item,output))
                     if(call.name==CompanionRecord.NAME)failedRecords.add(messages.size)
@@ -202,20 +231,24 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
             messages+=WireMessage("assistant",result.text,result.toolCalls,continuation=result.continuation)
             for((callIndex,call) in result.toolCalls.withIndex()){
                 // Memory writes show the same human receipt as every other tool; nothing is hidden.
-                val activity=ChatToolJournal.start(call,turn.attempt,if(callIndex==0)ChatDisplayDecoder().append(result.text)else "")
+                val activity=ChatToolJournal.start(call,turn.attempt,if(callIndex==0)ChatDisplayDecoder().append(result.text)else "",recallDisplayGroup)
                 onToolActivity?.invoke(activity)
                 Diagnostics.event("tool.call",mapOf("character" to turn.friendId,"turn" to turn.id,"step" to step,"call_id" to call.id,"name" to call.name,"arguments" to Diagnostics.raw(call.arguments)))
                 if(!active()||repo.memoryRules(repo.store.readableDatabase)!=rulesState)return TextChatResult.Failure(ChatFailure.SOURCE_CHANGED)
+                var rawRecallRows:List<Map<String,Any>>?=null
+                var rawRecallOrigins:List<RecallContentOrigin> = emptyList()
                 val rawOutput=try {
                     val args=JSONObject(call.arguments)
                     if(call.name==ImmediateContact.NAME){contactAttempts++;contactTool!!.invoke(call.arguments)} else if(call.name==JointControl.NAME){controlAttempts++;controlTool!!.invoke(args)} else if(call.name==CompanionRecord.NAME){recordAttempts++;recordTool!!.invoke(call.arguments)} else if(call.name==RelationshipRecall.NAME){budget.read(actor){searchRelation(args).also{if(it["status"]=="quota_exhausted")relationCalls++}}}
-                    else if(call.name=="agent_memory_update")stage(call,args)
+                    else if(call.name=="agent_memory_update")stage(call,args,availableWriteEvidence)
                     else {rejectUnless(authorized(),"TOOLS_DISABLED");
                         if(!progress.begin(call.name+":"+canonicalJson(args)))progress.blockedResult()
                         else budget.read(actor){
                         val converted=gson.fromJson(call.arguments,Map::class.java).entries.filter{it.value!=null}.associate{it.key.toString() to it.value!!}
                         val name=if(call.name=="agent_memory_read")"agent_recall_search" else call.name
                         val raw=recall.execute(name,converted);completedReads++
+                        @Suppress("UNCHECKED_CAST")
+                        if(call.name in ChatToolActivity.RECALL_TOOLS){rawRecallRows=raw["results"] as? List<Map<String,Any>>;rawRecallOrigins=recall.displayOrigins}
                         @Suppress("UNCHECKED_CAST")
                         val rows=(raw["results"] as? List<Map<String,Any>>)?.map{row->
                             val id=row["id"] as? String
@@ -224,10 +257,15 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
                         }
                         if(rows==null)raw else raw+("results" to rows)
                     }}
-                }catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:RecallContextCapacity){if(call.name==RelationshipRecall.NAME)mapOf("status" to "context_full")else return TextChatResult.Failure(ChatFailure.CONTEXT_CAPACITY)}catch(e:Exception){ToolArgumentDiagnosis.writeFailure(call.name,call.arguments,input,targets.keys,mapOf("success" to false,"error" to ((e as? ProcessingRejected)?.code?:"invalid_arguments")),e)}
+                }catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:RecallContextCapacity){if(call.name==RelationshipRecall.NAME)mapOf("status" to "context_full")else return TextChatResult.Failure(ChatFailure.CONTEXT_CAPACITY)}catch(e:Exception){ToolArgumentDiagnosis.writeFailure(call.name,call.arguments,input,targets.keys,mapOf("success" to false,"error" to ((e as? ProcessingRejected)?.code?:"invalid_arguments")),e,availableWriteEvidence,turn.userMessageId)}
                 currentCoroutineContext().ensureActive()
                 val output=ToolArgumentDiagnosis.retryExhausted(call.name,if(call.name==JointControl.NAME)controlAttempts else recordAttempts,rawOutput)
-                val shown=ChatToolJournal.result(activity,output)
+                val resultActivity=ChatToolJournal.result(activity,output)
+                val shown=if(call.name in ChatToolActivity.RECALL_TOOLS&&resultActivity.state=="success"){
+                    val refs=try{recallContent.capture(rawRecallRows,output,rawRecallOrigins)}
+                    catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:Exception){null}
+                    resultActivity.copy(recallRefs=refs)
+                }else resultActivity
                 onToolActivity?.invoke(shown)
                 if(call.name=="agent_memory_update"&&shown.state=="staged")stagedMemory[shown.id]=shown
                 if(call.name in CompanionRecallBudget.readNames){progress.accept(output);progress.stopped?.let{Diagnostics.event("recall.stopped",mapOf("reason" to it,"turn" to turn.id,"step" to step))}}
@@ -275,23 +313,25 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
             step++
         }
     }
-    private suspend fun stage(call:ChatToolCall,args:JSONObject):Map<String,Any> = repo.tx{db->
+    private suspend fun stage(call:ChatToolCall,args:JSONObject,available:Map<String,MemoryEvidence>):Map<String,Any> = repo.tx{db->
         // A forget request remains visible for this reply, but is not a new memory source.
         rejectUnless(authorized(true)&&pending(db)&&CompanionRepository.aiAllowed(db,turn.friendId,turn.userMessageId),"SOURCE_CHANGED")
-        val e=args.optJSONArray("evidence");rejectUnless(e?.length()==1&&e.getString(0)=="S1","EVIDENCE")
+        val proof=ImmediateMemoryEvidence.select(args,available)
+        rejectUnless(proof in validWriteEvidence(db),"SOURCE_CHANGED")
         val op=args.getString("op");rejectUnless(op in setOf("add","update","cancel","complete","retract"))
         val target=if(op=="add"){rejectUnless(args.optString("target").isEmpty());null}else targets[args.getString("target")]?:throw ProcessingRejected("UNKNOWN_TARGET")
         val old=target?.let{repo.memory(db,turn.friendId,it.id)}
         if(target!=null&&target.candidate==null)rejectUnless(old!=null&&old.version==target.version&&old.valid,"SOURCE_CHANGED")
         val proposed=target?.candidate?.let{id->repo.candidates(db,turn.friendId).firstOrNull{it.id==id&&it.valid}?:throw ProcessingRejected("SOURCE_CHANGED")}
-        val base=old?:proposed?.proposed
+        val base=ImmediateMemoryEvidence.base(old,proposed?.proposed)
         val content=args.optString("content").ifBlank{base?.text.orEmpty()};rejectUnless(content.isNotBlank()&&content.length<=4000)
         val category=args.optString("category").ifBlank{base?.category?.name.orEmpty()};rejectUnless(MemoryCategory.valueOf(category).modern)
         val about=args.optString("about").ifBlank{base?.about?.name.orEmpty()};MemoryAbout.valueOf(about)
-        val date=args.optString("time_text");rejectUnless(date.isEmpty()||date in input,"DATE_EVIDENCE")
+        val evidence=ImmediateMemoryEvidence.quote(proof,args)
+        val dateArgs=ImmediateMemoryEvidence.withDateType(args,base?.dateType)
+        ImmediateMemoryEvidence.dates(dateArgs,evidence,content)
         rejectUnless(args.optString("date_type","day") in setOf("day","habit","birthday"))
-        val sourceVersion=db.rawQuery("SELECT source_revision FROM chat_turns WHERE id=?",arrayOf(turn.id)).use{rejectUnless(it.moveToFirst(),"SOURCE_CHANGED");it.getLong(0)}
-        val data=JSONObject(args.toString()).put("source_version",sourceVersion).put("content_supplied",args.optString("content").isNotBlank()).put("category_supplied",args.optString("category").isNotBlank()).put("about_supplied",args.optString("about").isNotBlank()).put("content",content).put("category",category).put("about",about).put("target_id",target?.id?:JSONObject.NULL).put("target_version",target?.version?:0).put("candidate",target?.candidate?:JSONObject.NULL)
+        val data=ImmediateMemoryEvidence.stamp(evidence,dateArgs).put("content_supplied",args.optString("content").isNotBlank()).put("category_supplied",args.optString("category").isNotBlank()).put("about_supplied",args.optString("about").isNotBlank()).put("content",content).put("category",category).put("about",about).put("target_id",target?.id?:JSONObject.NULL).put("target_version",target?.version?:0).put("candidate",target?.candidate?:JSONObject.NULL)
         val digest=stableDigest(canonicalJson(data));data.put("digest",digest)
         val stages=JSONArray(pref(stageKey)?:"[]");rejectUnless(stages.length()<16,"TOOL_LIMIT")
         if((0 until stages.length()).none{stages.getJSONObject(it).getString("digest")==digest}){stages.put(data);savePref(stageKey,stages.toString())}
@@ -310,22 +350,23 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
         /** stage digest -> the stored row it really produced, so its receipt can read that row later. */
         val linked=mutableMapOf<String,String>()
         val resolved=mutableMapOf<String,ProcessingRepository.Candidate>()
+        val validSources=validWriteEvidence(db)
         for(i in 0 until stages.length()){
-            val op=stages.getJSONObject(i);rejectUnless(source.source.version==op.getLong("source_version"),"SOURCE_CHANGED");val target=if(op.isNull("target_id"))null else op.getString("target_id");var old=target?.let{repo.memory(db,turn.friendId,it)}
+            val op=stages.getJSONObject(i);val evidence=ImmediateMemoryEvidence.revalidate(op,validSources);val target=if(op.isNull("target_id"))null else op.getString("target_id");var old=target?.let{repo.memory(db,turn.friendId,it)}
             val candidate=if(op.isNull("candidate"))null else (resolved[op.getString("candidate")]?:repo.candidates(db,turn.friendId).firstOrNull{it.id==op.getString("candidate")&&it.valid})?:throw ProcessingRejected("SOURCE_CHANGED")
             if(target!=null&&old!=null)rejectUnless(old.version==(written[target]?:op.getInt("target_version")),"SOURCE_CHANGED")
             if(target!=null&&old==null)rejectUnless(candidate!=null&&candidate.targetId==null,"SOURCE_CHANGED")
-            val kind=op.getString("op");val expression=if(!op.has("time_text")&&!op.has("date_type"))old?.dateExpression else op.optString("time_text").takeIf{it.isNotBlank()&&op.optString("date_type")!="habit"}
-            val dateType=if(op.has("date_type"))op.getString("date_type") else old?.dateType
-            val birthday=if(dateType=="birthday")MemoryDates.birthday(expression) else null
-            val eventDate=if(birthday!=null)birthday.first else if(!op.has("time_text")&&!op.has("date_type"))old?.eventDate else MemoryDates.resolve(expression,source.user.created,source.zone)
-            val content=if(!op.optBoolean("content_supplied")&&old!=null)old.text else op.getString("content")
-            val category=if(!op.optBoolean("category_supplied")&&old!=null)old.category else MemoryCategory.valueOf(op.getString("category"))
-            val about=if(!op.optBoolean("about_supplied")&&old!=null)old.about else MemoryAbout.valueOf(op.getString("about"))
+            val base=ImmediateMemoryEvidence.base(old,candidate?.proposed,candidate?.id in resolved)
+            val kind=op.getString("op");val expression=if(!op.has("time_text")&&!op.has("date_type"))base?.dateExpression else op.optString("time_text").takeIf{it.isNotBlank()&&op.optString("date_type")!="habit"}
+            val dateType=if(op.has("date_type"))op.getString("date_type") else base?.dateType
+            val content=if(!op.optBoolean("content_supplied")&&base!=null)base.text else op.getString("content")
+            val dates=if(!op.has("time_text")&&!op.has("date_type"))base?.eventDate to base?.annualMonthDay else ImmediateMemoryEvidence.dates(op,evidence,content,op.optBoolean("content_supplied"))
+            val eventDate=dates.first
+            val category=if(!op.optBoolean("category_supplied")&&base!=null)base.category else MemoryCategory.valueOf(op.getString("category"))
+            val about=if(!op.optBoolean("about_supplied")&&base!=null)base.about else MemoryAbout.valueOf(op.getString("about"))
             val id=old?.id?:candidate?.proposed?.id?:"tool-"+stableDigest(turn.id+op.getString("digest")).take(40)
-            val evidence=MemoryEvidence(source.source,"user",input,input,source.user.created,source.zone)
             val tags=op.optJSONArray("tags")?.let{a->MemoryFacets.tags((0 until a.length()).map{a.getString(it)})}?:old?.tags?:emptyList()
-            var value=StoredMemory(id,turn.friendId,category,content,when(kind){"cancel"->MemoryLife.CANCELLED;"complete"->MemoryLife.COMPLETED;"retract"->MemoryLife.RETRACTED;else->old?.life?:MemoryLife.ACTIVE},old?.core?:false,old?.locked?:false,false,(old?.version?:0)+1,true,expression,eventDate,MemoryEvidenceRules.merge(old?.evidence.orEmpty(),listOf(evidence)),about,tags,old?.dueExpression,old?.dueDate,old?.expiresAt,dateType,if(birthday!=null)birthday.second else if(!op.has("date_type")&&!op.has("time_text"))old?.annualMonthDay else null)
+            var value=StoredMemory(id,turn.friendId,category,content,when(kind){"cancel"->MemoryLife.CANCELLED;"complete"->MemoryLife.COMPLETED;"retract"->MemoryLife.RETRACTED;else->old?.life?:MemoryLife.ACTIVE},old?.core?:false,old?.locked?:false,false,(old?.version?:0)+1,true,expression,eventDate,MemoryEvidenceRules.merge(base?.evidence.orEmpty(),listOf(evidence)),about,tags,old?.dueExpression,old?.dueDate,old?.expiresAt,dateType,dates.second)
             value=MemoryForgetting.metadata(value,op,old)
             if(kind=="add"&&old==null&&candidate==null){
                 old=repo.memories(db,turn.friendId).firstOrNull{it.valid&&MemoryEvidenceRules.sameFact(it,value)&&MemoryEvidenceRules.overlaps(it.evidence,listOf(evidence))}
@@ -342,6 +383,6 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
         }
         db.delete("preferences","key=?",arrayOf(stageKey))
         // The receipt may only offer the row this transaction really wrote.
-        ChatToolJournal.linkMemory(db,turn.id,linked)
+        ChatToolJournal.linkMemory(db,turn.id,turn.attempt,linked)
     }
 }

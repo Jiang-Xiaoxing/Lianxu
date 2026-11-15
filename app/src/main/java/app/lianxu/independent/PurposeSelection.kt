@@ -2,6 +2,8 @@ package app.lianxu.independent
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -11,35 +13,47 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 
 @Composable internal fun PurposeSelection(state:ModelConfigState){
+    var help by remember {mutableStateOf<ModelPurpose?>(null)}
     Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
-        Text("模型用途",style=MaterialTheme.typography.titleSmall,color=Ink)
-        Text("所有角色共用用途选择，不设角色单独覆盖。",style=MaterialTheme.typography.bodySmall,color=Muted)
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
             ModelPurpose.entries.forEachIndexed{index,purpose->
                 var menu by remember(purpose){mutableStateOf(false)}
                 var includeUnknown by remember(purpose){mutableStateOf(false)}
                 val chosen=state.configs.firstOrNull{it.id==state.purposes[purpose]}
+                val options=purposeOptions(state.configs,purpose,chosen?.id.orEmpty(),includeUnknown)
                 Box{
                     Row(Modifier.fillMaxWidth().heightIn(min=72.dp).clickable(enabled=!state.busy,role=Role.Button){menu=true}.testTag("purpose-select-${purpose.key}").padding(16.dp),verticalAlignment=Alignment.CenterVertically){
-                        ControlIcon(if(purpose==ModelPurpose.MEMORY)"storage" else "model");Spacer(Modifier.width(14.dp))
+                        ControlIcon(when(purpose){ModelPurpose.EMBEDDING->"nodes";ModelPurpose.CHAT->"chat";ModelPurpose.MEMORY->"memory";ModelPurpose.AUX_VISION->"eye"},GreenText);Spacer(Modifier.width(14.dp))
                         Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
                             Text(purpose.title,style=MaterialTheme.typography.titleSmall,color=Ink)
                             Text(chosen?.let{"${it.name} · ${it.modelId}"}?:"尚未选择",style=MaterialTheme.typography.bodySmall,color=Muted)
+                            if(purpose==ModelPurpose.AUX_VISION)Text("视觉附件尚未接入",Modifier.testTag("purpose-vision-limit"),style=MaterialTheme.typography.bodySmall,color=Muted)
                         }
+                        IconButton(onClick={help=purpose},modifier=Modifier.size(UiSpace.action).testTag("purpose-help-${purpose.key}").semantics{contentDescription="${purpose.title}说明"}){ControlIcon("info")}
                         ControlIcon("chevron")
                     }
                     DropdownMenu(menu,{menu=false}){
                         DropdownMenuItem(text={Text("不选择")},onClick={menu=false;state.selectPurpose(purpose,"")},modifier=Modifier.testTag("purpose-clear-${purpose.key}"))
-                        ProviderCatalog.configurations(state.configs,purpose,chosen?.id.orEmpty(),includeUnknown).forEach{config->DropdownMenuItem(text={Column{Text(config.name);Text(config.modelId,style=MaterialTheme.typography.bodySmall)}},onClick={menu=false;state.selectPurpose(purpose,config.id)},modifier=Modifier.testTag("purpose-option-${purpose.key}-${config.id}"))}
-                        if(purpose==ModelPurpose.EMBEDDING&&!includeUnknown)DropdownMenuItem(text={Text("其他已保存配置（能力未核实）")},onClick={includeUnknown=true},modifier=Modifier.testTag("purpose-unknown-embedding"))
+                        options.visible.forEach{config->DropdownMenuItem(text={Column{Text(config.name);Text(config.modelId,style=MaterialTheme.typography.bodySmall)}},onClick={menu=false;state.selectPurpose(purpose,config.id)},modifier=Modifier.testTag("purpose-option-${purpose.key}-${config.id}"))}
+                        if(options.hasAdditionalUnknown)DropdownMenuItem(text={Text("其他已保存配置（能力未核实）")},onClick={includeUnknown=true},modifier=Modifier.testTag("purpose-unknown-embedding"))
                     }
                 }
                 if(index<ModelPurpose.entries.lastIndex)HorizontalDivider(Modifier.padding(start=64.dp,end=16.dp),color=Line)
             }
         }
-        Text("选择用途只保存设置，不发出请求。发送文字、主动总结记忆和已开启的后台评估会使用对应模型；视觉附件尚未接入。",style=MaterialTheme.typography.bodySmall,color=Muted)
     }
+    help?.let{purpose->AlertDialog(onDismissRequest={help=null},title={Text("${purpose.title}说明")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        Text(when(purpose){
+            ModelPurpose.EMBEDDING->"用于记忆语义检索，可不选择。先添加并保存向量模型配置，再指定为记忆向量；不用于聊天或总结记忆。"
+            ModelPurpose.CHAT->"发送文字和已开启的后台评估使用所选聊天模型。"
+            ModelPurpose.MEMORY->"主动总结记忆使用所选总结记忆模型；未选择时沿用聊天模型。"
+            ModelPurpose.AUX_VISION->"视觉附件尚未接入。此处保留辅助视觉模型选择，不代表已经能够处理图片或附件。"
+        })
+        Text("所有角色共用用途选择，不设角色单独覆盖。先在“服务商”页添加并保存配置，再选择对应模型。保存配置和选择用途只保存设置，不发出请求。",style=MaterialTheme.typography.bodyMedium,color=Muted)
+    }},confirmButton={TextButton(onClick={help=null},modifier=Modifier.testTag("purpose-help-close")){Text("知道了")}})}
 }

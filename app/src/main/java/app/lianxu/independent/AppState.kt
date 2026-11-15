@@ -30,6 +30,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     internal val processing=ProcessingRepository(store)
     private val roleAssets=RoleAssets(processing)
     internal var roleAvatars by mutableStateOf(emptyMap<String,ByteArray>());private set
+    internal var userAvatar by mutableStateOf<ByteArray?>(null);private set
     internal val companion=CompanionRepository(store){AppServices.companionClock()}
     private val companionNotifications=CompanionNotifications(application,store,companion)
     internal var companionReceipts by mutableStateOf(emptyList<CompanionReceipt>());private set
@@ -75,12 +76,17 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     }
     internal suspend fun exportBackup(id:String?,includeKeys:Boolean,password:CharArray?=null)=Diagnostics.span("backup.export",mapOf("scope" to if(id==null)"all" else "role","include_keys" to includeKeys)) {backup.export(id,includeKeys,password)}
     internal suspend fun importBackup(plan:BackupRepository.Preview,confirmed:Boolean,lease:ChatAttemptLease,password:CharArray?=null):List<String> = withContext(NonCancellable){Diagnostics.span("backup.import",mapOf("mode" to plan.mode,"scope" to if(plan.pack.all)"all" else "role")) {
-        val ids=backup.commit(plan,confirmed,lease,password=password)
+        val ids=if(plan.mode=="REPLACE"&&plan.pack.all)diagnosticSave.withLock{
+            val detailed=plan.pack.root["preferences"].asJsonObject["diagnostic-detailed"]?.asString=="1"
+            val restored=backup.commit(plan,confirmed,lease,password=password)
+            diagnosticChoice++;diagnosticDetailed=detailed;savedDiagnosticDetailed=detailed;Diagnostics.detailed=detailed
+            restored
+        }else backup.commit(plan,confirmed,lease,password=password)
         if(plan.mode=="REPLACE"){
             val replaced=if(plan.pack.all)friends.map{it.id}else listOf(requireNotNull(plan.target))
             replaced.forEach{runner.cancel(it);memory.cancel(it)}
         }
-        avatarCache.reset();messagePrints=emptyMap();reload();persona=store.persona();ids
+        avatarCache.reset();messagePrints=emptyMap();reload();persona=store.persona();refreshUserAvatar();ids
     }}
     internal val memory=MemoryEngine(viewModelScope,processing,modelAccess,diagnosticClient,{reload()})
     private val manualMemoryJobs=mutableMapOf<String,Job>()
@@ -145,7 +151,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     }
     init { viewModelScope.launch { runCatching { val savedDetailed=withContext(Dispatchers.IO){
         val saved=runCatching{store.preference("diagnostic-detailed","0")}.getOrDefault("0")=="1";Diagnostics.detailed=saved;saved
-    };diagnosticDetailed=savedDetailed;savedDiagnosticDetailed=savedDetailed;withContext(Dispatchers.IO){Diagnostics.configure(java.io.File(application.filesDir,"diagnostics/$vaultNamespace"),application.packageManager.getPackageInfo(application.packageName,0).versionName.orEmpty())};ledger.recoverInterrupted();companion.checkContinuity(CompanionRuntime.owner);reload();  persona=store.persona(); ready=true;settleCompanion();recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
+    };diagnosticDetailed=savedDetailed;savedDiagnosticDetailed=savedDetailed;withContext(Dispatchers.IO){Diagnostics.configure(java.io.File(application.filesDir,"diagnostics/$vaultNamespace"),application.packageManager.getPackageInfo(application.packageName,0).versionName.orEmpty())};ledger.recoverInterrupted();companion.checkContinuity(CompanionRuntime.owner);reload();  persona=store.persona();refreshUserAvatar(); ready=true;settleCompanion();recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
     private var reloadSerial=0L
     private val avatarCache=RoleAvatarCache()
     private var messagePrints=emptyMap<String,MessageFingerprint>()
@@ -254,6 +260,19 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
             roleAssets.put(id,RoleAssets.Asset("avatar.jpg","avatar",prepared.first,prepared.second))
             avatarCache.put(id,prepared.second)
             roleAvatars=roleAvatars+(id to prepared.second)
+        }
+    }
+    private suspend fun refreshUserAvatar(){
+        userAvatar=withContext(Dispatchers.IO){runCatching{UserAvatarData.checked(store.preference(UserAvatarData.KEY,""))}.getOrNull()}
+    }
+    fun setUserAvatar(uri:android.net.Uri){
+        save{
+            val raw=withContext(Dispatchers.IO){
+                val resolver=getApplication<Application>().contentResolver
+                requireNotNull(resolver.openInputStream(uri)).use{UserAvatarData.prepare(BackupArchive.bounded(it,BackupArchive.MAX_FILE))}
+            }
+            store.savePreference(UserAvatarData.KEY,raw)
+            refreshUserAvatar()
         }
     }
     private fun save(block: suspend () -> Unit) { saving=true; error=""; viewModelScope.launch { try { block() } catch(e: Exception) {error="保存未完成，请重试。"} finally {saving=false} } }

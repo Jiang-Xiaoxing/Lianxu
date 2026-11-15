@@ -4,6 +4,7 @@ import com.google.gson.JsonParseException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 
 /**
  * Format recovery is per structured stage (appraisal/reconsider). Protocol C keeps the user-facing
@@ -32,8 +33,10 @@ internal class StructuredModelCall(private val client:TextChatClient) {
                 if(fits(withDraft))outgoing=withDraft
             }
             val request=TextChatRequest(outgoing,outputLimit=config.outputTokens,timeoutMillis=REQUEST_TIMEOUT_MS,jsonObject=true)
-            Diagnostics.event("companion.structured.attempt",mapOf("stage" to stage,"attempt" to attempt,"maximum" to MAX_ATTEMPTS))
-            val result=execute?.invoke(request)?:client.complete(config,key,request)
+            val result=withContext(Diagnostics.linkedContext(mapOf("stage" to stage,"model_attempt" to attempt))){
+                Diagnostics.event("companion.structured.attempt",mapOf("stage" to stage,"model_attempt" to attempt,"maximum" to MAX_ATTEMPTS))
+                execute?.invoke(request)?:client.complete(config,key,request)
+            }
             currentCoroutineContext().ensureActive()
             if(!active())throw CompanionModelFailure(ChatFailure.SOURCE_CHANGED)
             var error="FORMAT"
@@ -43,14 +46,14 @@ internal class StructuredModelCall(private val client:TextChatClient) {
             }else if(result is TextChatResult.Success){
                 try{
                     require(result.toolCalls.isEmpty()){"UNEXPECTED_TOOL_OUTPUT"}
-                    return validate(result.text).also{Diagnostics.event("companion.structured.accepted",mapOf("stage" to stage,"attempt" to attempt))}
+                    return validate(result.text).also{Diagnostics.event("companion.structured.accepted",mapOf("stage" to stage,"model_attempt" to attempt,"commit_state" to "validated_not_committed"))}
                 }catch(e:CancellationException){throw e}
                 catch(e:RoleContractViolation){error=e.code}
                 catch(_:JsonParseException){error="JSON_SYNTAX"}
                 catch(_:IllegalArgumentException){error="FIELD_OR_SOURCE_CONTRACT"}
                 catch(_:IllegalStateException){error="JSON_TYPE"}
             }
-            Diagnostics.event("companion.structured.rejected",mapOf("stage" to stage,"attempt" to attempt,"code" to error))
+            Diagnostics.event("companion.structured.rejected",mapOf("stage" to stage,"model_attempt" to attempt,"code" to error))
             errors+=error
             // Only the last complete text candidate may be replayed, never tool calls or native reasoning.
             candidate=(result as? TextChatResult.Success)?.takeIf{it.toolCalls.isEmpty()&&it.text.length<=16000}?.text

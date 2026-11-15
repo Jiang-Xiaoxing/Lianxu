@@ -90,7 +90,10 @@ internal object BackupArchive {
         entries.toSortedMap().forEach{(name,data)->hash.update(name.toByteArray(Charsets.UTF_8));hash.update(0.toByte());hash.update(RoleArchive.hash(data).toByteArray(Charsets.US_ASCII))}
         return hash.digest().joinToString(""){"%02x".format(it)}
     }
-    fun write(root:JsonObject,assets:Map<String,ByteArray>,output:OutputStream){
+    private data class Prepared(val entries:Map<String,ByteArray>,val manifest:ByteArray)
+    /** All checks independent of the destination must pass before a system picker can replace a file. */
+    fun preflight(root:JsonObject,assets:Map<String,ByteArray>){prepare(root,assets)}
+    private fun prepare(root:JsonObject,assets:Map<String,ByteArray>):Prepared{
         validateRoot(root)
         require(assets.size<=4094&&assets.keys.all{assetPath.matches(it)}&&assets.values.all{it.size<=MAX_FILE}){"备份资源路径、数量或大小无效"}
         val bytes=root.toString().toByteArray(Charsets.UTF_8);require(bytes.size<=MAX_JSON){"备份文字资料超过8 MiB"}
@@ -98,10 +101,14 @@ internal object BackupArchive {
         val all=linkedMapOf("backup.json" to bytes).apply{putAll(assets)}
         val manifest=JsonObject().apply{addProperty("format","lianxu-backup");addProperty("version",2);add("files",JsonArray().apply{all.forEach{(name,data)->add(JsonObject().apply{addProperty("path",name);addProperty("size",data.size);addProperty("sha256",RoleArchive.hash(data))})}})}.toString().toByteArray(Charsets.UTF_8)
         require(manifest.size<=MAX_MANIFEST&&all.values.sumOf{it.size.toLong()}+manifest.size<=MAX_EXPANDED){"备份解压总量超过48 MiB"}
+        return Prepared(all,manifest)
+    }
+    fun write(root:JsonObject,assets:Map<String,ByteArray>,output:OutputStream){
+        val prepared=prepare(root,assets)
         val limited=object:FilterOutputStream(output){var count=0L
             override fun write(b:Int){require(++count<=MAX_BYTES){"备份文件超过64 MiB"};out.write(b)}
             override fun write(b:ByteArray,off:Int,len:Int){require(count+len<=MAX_BYTES){"备份文件超过64 MiB"};out.write(b,off,len);count+=len}}
-        ZipOutputStream(limited).use{z->z.putNextEntry(ZipEntry("manifest.json"));z.write(manifest);z.closeEntry()
-            all.forEach{(name,data)->z.putNextEntry(ZipEntry(name));z.write(data);z.closeEntry()}}
+        ZipOutputStream(limited).use{z->z.putNextEntry(ZipEntry("manifest.json"));z.write(prepared.manifest);z.closeEntry()
+            prepared.entries.forEach{(name,data)->z.putNextEntry(ZipEntry(name));z.write(data);z.closeEntry()}}
     }
 }

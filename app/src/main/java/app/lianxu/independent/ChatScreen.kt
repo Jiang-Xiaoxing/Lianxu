@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -13,6 +14,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -21,6 +23,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -28,6 +32,7 @@ import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -44,13 +49,14 @@ private suspend fun LazyListState.showEndOf(index:Int){
 }
 
 /** Centered history state for a committed memory batch; one line, wraps instead of clipping at large font scales. */
-@Composable internal fun MemorySummaryPill(pill:MemoryPill){
+@Composable internal fun MemorySummaryPill(pill:MemoryPill,onClick:(()->Unit)?=null){
     val shape=RoundedCornerShape(50)
+    val reveal=chatCapsuleReveal(memoryCapsuleKey(pill))
     Row(Modifier.fillMaxWidth().padding(vertical=2.dp).testTag("memory-pill-${pill.batchId}"),horizontalArrangement=Arrangement.Center){
-        Row(Modifier.widthIn(max=280.dp).clip(shape).background(Paper).border(.5.dp,Line,shape).padding(horizontal=12.dp,vertical=6.dp).testTag("memory-pill-box-${pill.batchId}"),
+        Row(Modifier.widthIn(max=280.dp).clip(shape).background(Paper).border(.5.dp,Line,shape).then(if(onClick==null)Modifier else Modifier.clickable(role=Role.Button,onClick=onClick)).padding(horizontal=12.dp,vertical=6.dp).testTag("memory-pill-box-${pill.batchId}"),
             verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){
-            ControlIcon("memory",GreenText,16.dp)
-            Text(pill.text,style=MaterialTheme.typography.labelMedium,color=GreenText,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
+            ControlIcon("memory",androidx.compose.ui.graphics.lerp(Muted,GreenText,reveal),16.dp)
+            ChatCapsuleLabel(pill.text,reveal,MaterialTheme.typography.labelMedium,GreenText,loading="正在整理…",textAlign=androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
 }
@@ -58,6 +64,8 @@ private suspend fun LazyListState.showEndOf(index:Int){
 @OptIn(ExperimentalMaterial3Api::class,androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable internal fun Chat(vm:AppState){
     val friend=vm.friends.find{it.id==vm.activeId}?:return
+    var memoryBatch by remember(friend.id){mutableStateOf<String?>(null)}
+    memoryBatch?.let{batch->ChatMemoryPillDetails(vm,friend.id,batch){memoryBatch=null}}
     val parameterCards=rememberParameterCards(vm,friend.id)
     // Pending prefixes are durable already, but the attempt preview owns their one visible copy.
     val pendingBodies=vm.turns.filter{it.friendId==friend.id&&it.state==TurnState.PENDING&&vm.chatPreview?.let{p->p.turnId==it.id&&p.attempt==it.attempt}==true}.mapNotNull{it.assistantMessageId}.toSet()
@@ -67,6 +75,16 @@ private suspend fun LazyListState.showEndOf(index:Int){
     val timeline=remember(messages,pills){chatTimeline(messages,pills)}
     val openTurn=vm.turns.lastOrNull{it.friendId==friend.id}?.takeIf{it.state!=TurnState.COMPLETED}
     val preview=vm.chatPreview?.takeIf{openTurn?.state==TurnState.PENDING&&it.turnId==openTurn.id&&it.attempt==openTurn.attempt}
+    val capsuleFrames=buildMap{
+        vm.turns.filter{it.friendId==friend.id}.forEach{turn->
+            putAll(chatCapsuleFrames(if(preview?.turnId==turn.id)preview.tools else turn.toolActivities,emptyList(),turn.id))
+        }
+        putAll(chatCapsuleFrames(emptyList(),pills))
+    }
+    val capsuleMotion=remember(friend.id){ChatCapsuleMotionTracker(capsuleFrames)}
+    val durationScale=rememberCoroutineScope().coroutineContext[androidx.compose.ui.MotionDurationScale]?.scaleFactor?:1f
+    val capsuleUpdate=capsuleMotion.prepare(capsuleFrames,capsuleMotionNow(),durationScale)
+    SideEffect{capsuleMotion.commit(capsuleUpdate)}
     val list=rememberLazyListState()
     val jump = remember(friend.id) { vm.memoryChatRequest.consume() }
     var highlighted by remember(friend.id) { mutableStateOf(false) }
@@ -103,6 +121,9 @@ private suspend fun LazyListState.showEndOf(index:Int){
     val memoryReader: suspend (String) -> StoredMemory? = remember(vm, friend.id) {
         { id -> vm.processing.read { db -> vm.processing.memory(db, friend.id, id) } }
     }
+    val recallReader:suspend(List<ChatToolActivity>)->List<RecallContentPart> = remember(vm,friend.id,vm.processingRevision){
+        {items->vm.processing.recallContents(friend.id,items)}
+    }
     val time=remember{SimpleDateFormat("HH:mm",Locale.getDefault())}
     // The attempt owns delivered bubbles, so switching pages never releases an unseen tail.
     val pacedTurn=preview?.turnId
@@ -130,10 +151,11 @@ private suspend fun LazyListState.showEndOf(index:Int){
         if(target!=null){val index=timeline.indexOfFirst{it is ChatRow.Group&&it.value.messages.any{m->m.id==target}};if(index>=0){list.scrollToItem(index);vm.notificationShown();lastSeen=id}}
         else if(id!=null&&id!=lastSeen&&timeline.isNotEmpty()){list.scrollToItem(timeline.lastIndex);lastSeen=id}
     }
+    CompositionLocalProvider(LocalChatCapsuleMotion provides capsuleUpdate.events){
     Column(Modifier.fillMaxSize().background(ChatPageBackground)){
         Row(Modifier.fillMaxWidth().heightIn(min=68.dp).background(ChatBarBackground).padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically){
             IconButton(onClick={vm.back()},modifier=Modifier.size(UiSpace.action).testTag("back").semantics{contentDescription="返回"}){ControlIcon("back",Ink)}
-            Text(if(typing)"对方正在输入…" else friend.name,Modifier.weight(1f).padding(horizontal=8.dp,vertical=8.dp).testTag("chat-title"),style=PageTitleStyle,maxLines=2,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            Text(if(typing)"对方正在输入…" else friend.name,Modifier.weight(1f).padding(horizontal=8.dp,vertical=8.dp).testTag("chat-title"),style=MaterialTheme.typography.titleLarge,maxLines=2,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             IconButton(onClick={vm.open("detail",friend.id)},modifier=Modifier.size(UiSpace.action).testTag("chat-role-detail").semantics{contentDescription="角色资料"}){ControlIcon("more")}
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned{val p=it.localToWindow(Offset.Zero);viewport=Rect(p,it.size.toSize())}){
@@ -157,13 +179,12 @@ private suspend fun LazyListState.showEndOf(index:Int){
             LazyColumn(Modifier.fillMaxSize().testTag("chat-history"),state=list,contentPadding=PaddingValues(horizontal=UiSpace.page,vertical=20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
                 items(timeline,key={it.key}){row->when(row){
                     is ChatRow.Date->{val date=LocalDate.ofEpochDay(row.day);Text(if(date==LocalDate.now())"今天" else date.format(DateTimeFormatter.ofPattern("M月d日")),Modifier.fillMaxWidth().padding(bottom=8.dp),style=MaterialTheme.typography.labelSmall,color=Muted,textAlign=androidx.compose.ui.text.style.TextAlign.Center)}
-                    is ChatRow.Pill->MemorySummaryPill(row.value)
+                    is ChatRow.Pill->MemorySummaryPill(row.value){memoryBatch=row.value.batchId}
                     is ChatRow.Group->{val group=row.value
                         Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
                         Row(Modifier.fillMaxWidth(),horizontalArrangement=if(group.mine)Arrangement.End else Arrangement.Start,verticalAlignment=Alignment.Top){
                             if(!group.mine){Avatar(friend,32);Spacer(Modifier.width(8.dp))}
-                            Column(horizontalAlignment=if(group.mine)Alignment.End else Alignment.Start,verticalArrangement=Arrangement.spacedBy(4.dp)){
-                                if(!group.mine)Text(friend.name,Modifier.padding(start=4.dp).testTag("sender-name-${group.messages.first().id}"),style=MaterialTheme.typography.labelMedium,color=Muted,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            Column(if(group.mine)Modifier.widthIn(max=width)else Modifier,horizontalAlignment=if(group.mine)Alignment.End else Alignment.Start,verticalArrangement=Arrangement.spacedBy(4.dp)){
                                 group.messages.forEach{message->
                                     var bounds by remember(message.id){mutableStateOf(Rect.Zero)}
                                     val shape=RoundedCornerShape(topStart=if(!group.mine)6.dp else 18.dp,topEnd=if(group.mine)6.dp else 18.dp,bottomStart=18.dp,bottomEnd=18.dp)
@@ -176,10 +197,12 @@ private suspend fun LazyListState.showEndOf(index:Int){
                                         val placed=placedReceipts(activities,turn?.attempt)
                                         val interleaved=placed.isNotEmpty()&&message.displayReasoning.isNotBlank()
                                         val outside=if(interleaved)activities.filterNot{it in placed} else activities
-                                        ChatToolActivities(outside,Modifier.width(width),loadMemory=memoryReader)
+                                        CompositionLocalProvider(LocalChatCapsuleOwner provides turn?.id.orEmpty()){
+                                        ChatToolActivities(outside,Modifier.width(width),loadMemory=memoryReader,loadRecall=recallReader)
                                         if(interleaved)ChatThinkingStream("message-${message.id}",message.displayReasoning,false,
-                                            placed.sortedBy{it.reasoningAt}.map{ChatThinkingBreak(it.reasoningAt,it.id)},activities,Modifier.width(width),loadMemory=memoryReader)
+                                            placed.sortedBy{it.reasoningAt}.map{ChatThinkingBreak(it.reasoningAt,it.id)},activities,Modifier.width(width),loadMemory=memoryReader,loadRecall=recallReader)
                                         else ChatReasoningPanel("message-${message.id}",message.displayReasoning,false,Modifier.width(width))
+                                        }
                                     }
                                     Column(Modifier.widthIn(max=width).onGloballyPositioned{val p=it.localToWindow(Offset.Zero);bounds=Rect(p,it.size.toSize())}.testTag("message-${message.id}").semantics(mergeDescendants=true){text=androidx.compose.ui.text.AnnotatedString(message.text)}.combinedClickable(onClick={},onLongClick={controlMessage=message}),verticalArrangement=Arrangement.spacedBy(5.dp)){
                                         val segments=ChatBubbleSegments.forMessage(message.text,message.mine)
@@ -192,12 +215,15 @@ private suspend fun LazyListState.showEndOf(index:Int){
                                 }
                                 if(row.showTime)Text(time.format(Date(group.messages.last().created)),Modifier.padding(horizontal=4.dp),style=MaterialTheme.typography.labelSmall,color=Muted)
                             }
+                            if(group.mine){Spacer(Modifier.width(8.dp));SelfAvatar(vm.userAvatar,32,"self-avatar-${group.messages.first().id}")}
                         }
                         group.messages.mapNotNull{message->vm.turns.firstOrNull{it.userMessageId==message.id&&it.state !in setOf(TurnState.COMPLETED,TurnState.SUPERSEDED)}}.forEach{turn->
                             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.Top){
                                 Avatar(friend,32);Spacer(Modifier.width(8.dp))
-                                if(turn.state==TurnState.PENDING)ChatReplyDraft(preview,turn,Modifier.width(width),if(pacedTurn==turn.id)pacedShown else 0,viewport){count->vm.replyShown(friend.id,turn.id,turn.attempt,count)}
-                                else Column(Modifier.width(width),verticalArrangement=Arrangement.spacedBy(8.dp)){if(turn.assistantMessageId==null)ChatToolActivities(mergeRecordPills(turn.toolActivities));ChatTurnControls(vm,turn)}
+                                CompositionLocalProvider(LocalChatCapsuleOwner provides turn.id){
+                                if(turn.state==TurnState.PENDING)ChatReplyDraft(preview,turn,Modifier.width(width),if(pacedTurn==turn.id)pacedShown else 0,viewport,loadRecall=recallReader){count->vm.replyShown(friend.id,turn.id,turn.attempt,count)}
+                                else Column(Modifier.width(width),verticalArrangement=Arrangement.spacedBy(8.dp)){if(turn.assistantMessageId==null)ChatToolActivities(mergeRecordPills(turn.toolActivities),loadRecall=recallReader);ChatTurnControls(vm,turn)}
+                                }
                             }
                         }
                         }
@@ -205,15 +231,28 @@ private suspend fun LazyListState.showEndOf(index:Int){
                 }}
             }
         }
-        Surface(color=ChatBarBackground,shadowElevation=0.dp){Column{
+        Surface(modifier=Modifier.testTag("chat-input-bar"),color=ChatBarBackground,shadowElevation=0.dp){Column{
             HorizontalDivider(color=ChatInputBorder,thickness=.5.dp)
-            Row(Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=10.dp),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                IconButton(onClick={attachmentInfo=true},modifier=Modifier.padding(bottom=4.dp).size(UiSpace.action).testTag("chat-attach").semantics{contentDescription="附件，暂未接入"}){ControlIcon("attach")}
-                val shape=RoundedCornerShape(6.dp)
-                TextField(draft,{draft=it.take(2000);draftVersion++},modifier=Modifier.weight(1f).onFocusChanged{focused=it.hasFocus}.border(if(focused)1.dp else .5.dp,ChatInputBorder,shape).testTag("message-input"),placeholder={Text("说点什么…",style=MaterialTheme.typography.bodyLarge)},textStyle=MaterialTheme.typography.bodyLarge,maxLines=4,shape=shape,keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),keyboardActions=KeyboardActions(onSend={send()}),colors=TextFieldDefaults.colors(focusedContainerColor=Color.White,unfocusedContainerColor=Color.White,disabledContainerColor=Color.White,focusedIndicatorColor=Color.Transparent,unfocusedIndicatorColor=Color.Transparent,cursorColor=ChatSendButton))
+            Row(Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=4.dp),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                IconButton(onClick={attachmentInfo=true},modifier=Modifier.size(UiSpace.action).testTag("chat-attach").semantics{contentDescription="附件，暂未接入"}){ControlIcon("plus")}
+                val shape=RoundedCornerShape(28.dp)
+                val interaction=remember{MutableInteractionSource()}
+                val fieldColors=TextFieldDefaults.colors(focusedContainerColor=Paper,unfocusedContainerColor=Paper,disabledContainerColor=Paper,focusedIndicatorColor=Color.Transparent,unfocusedIndicatorColor=Color.Transparent,cursorColor=ChatSendButton)
+                BasicTextField(draft,{draft=it.take(2000);draftVersion++},modifier=Modifier.weight(1f).padding(vertical=6.dp).heightIn(min=36.dp).onFocusChanged{focused=it.hasFocus}.border(if(focused)1.dp else .5.dp,ChatInputBorder,shape).testTag("message-input"),
+                    textStyle=MaterialTheme.typography.bodyLarge.copy(color=colors.onSurface),maxLines=4,interactionSource=interaction,cursorBrush=SolidColor(ChatSendButton),
+                    keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),keyboardActions=KeyboardActions(onSend={send()}),decorationBox={inner->
+                        TextFieldDefaults.DecorationBox(draft,inner,true,false,VisualTransformation.None,interaction,
+                            placeholder={Text("说点什么…",style=MaterialTheme.typography.bodyLarge)},shape=shape,colors=fieldColors,contentPadding=PaddingValues(horizontal=16.dp,vertical=6.dp))
+                    })
                 val stopping=vm.chatSending&&draft.isBlank()
                 val enabled=stopping||draft.isNotBlank()&&vm.chatInputAvailable
-                Box(Modifier.padding(bottom=4.dp).size(width=60.dp,height=48.dp).clip(RoundedCornerShape(8.dp))
+                val dark=Paper.luminance()<.5f
+                val actionColor=when{
+                    stopping->if(dark)Color(0xFFE9B6B1)else Color(0xFF915753)
+                    draft.isNotBlank()->if(dark)Color(0xFFAFC9B5)else Color(0xFF4E7058)
+                    else->Muted
+                }
+                Box(Modifier.size(width=60.dp,height=48.dp).clip(RoundedCornerShape(8.dp))
                     .clickable(enabled=enabled,role=Role.Button){if(stopping){
                         // The second tap of Send must not become Stop when persistence clears the
                         // field. Only this newly converted Stop is guarded; a new draft sends now.
@@ -221,12 +260,13 @@ private suspend fun LazyListState.showEndOf(index:Int){
                     }else send()}
                     .testTag(if(stopping)"cancel-turn-${openTurn?.id.orEmpty()}"else"send-message")
                     .semantics{contentDescription=if(stopping)"停止回复"else"发送"},contentAlignment=Alignment.Center){
-                    Box(Modifier.fillMaxWidth().height(36.dp).clip(RoundedCornerShape(8.dp)).background(ChatSendButton.copy(alpha=if(enabled).18f else .07f)),contentAlignment=Alignment.Center){
-                        Text(if(stopping)"停止"else"发送",style=MaterialTheme.typography.labelLarge,color=ChatSendButton.copy(alpha=if(enabled)1f else .38f))
+                    Box(Modifier.fillMaxWidth().heightIn(min=36.dp).clip(RoundedCornerShape(8.dp)).background(if(stopping){if(dark)Color(0xFF573A38)else Color(0xFFF1D6D2)}else if(enabled&&!stopping){if(dark)Color(0xFF35513F)else Color(0xFFD9F1DB)}else actionColor.copy(alpha=if(enabled).18f else .07f)).testTag("chat-send-face"),contentAlignment=Alignment.Center){
+                        Text(if(stopping)"停止"else"发送",style=MaterialTheme.typography.labelLarge,color=actionColor.copy(alpha=if(enabled)1f else .38f))
                     }
                 }
             }
         }}
+    }
     }
     controlMessage?.let{m->AlertDialog(onDismissRequest={controlMessage=null},title={Text("这条消息的使用方式")},text={Text("停止提醒会保留记忆。不再使用会停止相关原话、记忆与判断的AI使用，并取消回访；原聊天保留供你查看。")},
         confirmButton={TextButton(onClick={vm.sourceControl(m.id,true);controlMessage=null},modifier=Modifier.testTag("companion-forget")){Text("不再用于记忆和判断")}},

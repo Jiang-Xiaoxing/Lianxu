@@ -22,6 +22,7 @@ class HttpsModelClient(
         Diagnostics.event("model.http.request",mapOf("endpoint" to url,"provider" to config.providerId,"fetch_models" to fetchModels,"timeout_ms" to timeoutMillis),secrets=listOf(key))
         val path=if(fetchModels) null else provider.testPath
         var connection:HttpsURLConnection?=null
+        val requestDiagnostics=Diagnostics.requestState();val ownerJob=currentCoroutineContext()[Job]
         var cancellationWatcher:Job?=null
         val deadline=System.nanoTime()+timeoutMillis*3L*1_000_000L
         try {
@@ -29,7 +30,10 @@ class HttpsModelClient(
             connection=factory.open(URL(url))
             val opened=connection
             cancellationWatcher=launch(start=CoroutineStart.UNDISPATCHED){
-                try{awaitCancellation()}finally{opened.disconnect()}
+                try{awaitCancellation()}finally{
+                    if(ownerJob?.isCancelled==true){requestDiagnostics?.stop("cancellation_unknown");requestDiagnostics?.stage("model.http.abort_requested")}
+                    try{opened.disconnect()}catch(e:Exception){requestDiagnostics?.failure("model.http.disconnect_failed",e)}
+                }
             }
             connection.instanceFollowRedirects=false
             connection.connectTimeout=timeoutMillis; connection.readTimeout=timeoutMillis;connection.requestMethod="GET"
@@ -39,7 +43,7 @@ class HttpsModelClient(
             Diagnostics.event("model.http.status",mapOf("status" to status),secrets=listOf(key))
             if(status !in 200..299){DiagnosticHttp.errorBody(connection,deadline,key);return@withContext ConfigResult.Failure(when(status) {401->ConfigError.UNAUTHORIZED;403->ConfigError.FORBIDDEN;429->ConfigError.RATE_LIMIT;in 300..399->ConfigError.REDIRECT;else->ConfigError.HTTP},status)}
             // Bound untrusted directory responses; never show raw server errors or exception text.
-            val bytes=connection.inputStream.use {input ->
+            val bytes=(requestDiagnostics?.count(connection.inputStream)?:connection.inputStream).use {input ->
                 val output=ByteArrayOutputStream();val buffer=ByteArray(8192)
                 while(output.size()<=1024*1024) {
                     ensureActive()
@@ -60,12 +64,12 @@ class HttpsModelClient(
                 val entries=(0 until data.length()).mapNotNull{data.optJSONObject(it)?.let{obj->ModelDirectoryEntry(obj.optString("id"),obj.optJSONObject("api")?.optJSONObject("chat-completions")!=null)}}
                 ConfigResult.Success(ModelDirectoryParser.ids(entries,provider.openAiChatModelsOnly).filter{!it.contains(key)})
             }
-        } catch(e:CancellationException) {throw e}
-        catch(e:SocketTimeoutException) {ensureActive();Diagnostics.failure("model.http.timeout",e,secrets=listOf(key));ConfigResult.Failure(ConfigError.TIMEOUT)}
-        catch(e:SSLException) {ensureActive();Diagnostics.failure("model.http.tls_failed",e,secrets=listOf(key));ConfigResult.Failure(ConfigError.TLS)}
-        catch(e:org.json.JSONException) {ensureActive();Diagnostics.failure("model.http.format_failed",e,secrets=listOf(key));ConfigResult.Failure(ConfigError.FORMAT)}
-        catch(e:Exception) {ensureActive();Diagnostics.failure("model.http.failed",e,secrets=listOf(key));ConfigResult.Failure(ConfigError.NETWORK)}
-        finally {cancellationWatcher?.cancel();connection?.disconnect()}
+        } catch(e:CancellationException) {requestDiagnostics?.cancel(e);throw e}
+        catch(e:SocketTimeoutException) {val diagnostic=requestDiagnostics?.timeout(System.nanoTime()>=deadline);requestDiagnostics?.failure("model.http.timeout",e,diagnostic);ensureActive();ConfigResult.Failure(ConfigError.TIMEOUT)}
+        catch(e:SSLException) {requestDiagnostics?.failure("model.http.tls_failed",e);ensureActive();ConfigResult.Failure(ConfigError.TLS)}
+        catch(e:org.json.JSONException) {requestDiagnostics?.failure("model.http.format_failed",e);ensureActive();ConfigResult.Failure(ConfigError.FORMAT)}
+        catch(e:Exception) {requestDiagnostics?.failure("model.http.failed",e);ensureActive();ConfigResult.Failure(ConfigError.NETWORK)}
+        finally {cancellationWatcher?.cancel();requestDiagnostics?.transferEnd(null);try{connection?.disconnect()}catch(e:Exception){requestDiagnostics?.failure("model.http.disconnect_failed",e)}}
     }
 }
 

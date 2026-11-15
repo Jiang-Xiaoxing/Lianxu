@@ -119,13 +119,15 @@ class AdaptiveMemoryEngineTest {
         val summary=client{summaries++}
         val transport=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
             val used=sentCost(request);peak=maxOf(peak,used)
+            val data=runCatching{JSONObject(request.messages.last().content)}.getOrNull()
+            println("CAPACITY_16K_REQUEST context=${config.contextTokens} output=${request.outputLimit} content_estimate=${request.messages.sumOf{ConservativeTokens.tokens(it.content)}} wire_estimate=$used summary_sources=${data?.optJSONArray("target_dialogue")?.length()}")
             check(used<=config.contextTokens){"Synthetic request exceeded configured capacity: $used"}
             if(request.messages.any{"target_dialogue" in it.content})return summary.complete(config,key,request)
             replies++;return TextChatResult.Success("合成正式回复")
         }}
         val runner=runner(transport);withContext(Dispatchers.Main){assertTrue(runner.send("a","今天好吗"){})}
         withTimeout(20000){while("a" in runner.sending)delay(20)}
-        val last=ChatLedger(store).all().last();assertEquals("${last.failure}; summaries=$summaries replies=$replies recent=${repo.recentSources("a").size}",TurnState.COMPLETED,last.state)
+        val last=ChatLedger(store).all().last();assertEquals("${last.failure}; summaries=$summaries replies=$replies peak=$peak recent=${repo.recentSources("a").size}",TurnState.COMPLETED,last.state)
         assertTrue(summaries>0);assertEquals(1,replies);assertTrue(peak<=16000)
         assertEquals(71,repo.sources("a").size);assertEquals(142,store.messages().size);assertTrue(repo.recentSources("a").size<71)
         println("CAPACITY_16K summaries=$summaries replies=$replies peak_input_plus_output=$peak raw_rounds=71")

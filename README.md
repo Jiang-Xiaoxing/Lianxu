@@ -6,7 +6,9 @@
 
 **Android 8.0+ · Kotlin / Jetpack Compose / Material3 · 自备模型 API · GPL-3.0-only**
 
-当前正式版 **1.0.1（版本号 60）**。安装包和校验值见 [GitHub Releases](https://github.com/Jiang-Xiaoxing/Lianxu/releases/latest)；这一版改了什么、验证到哪一步、还有哪些没验，都写在 [1.0.1 更新说明](RELEASE-NOTES-1.0.1.md)里。旧版 [1.0.0](https://github.com/Jiang-Xiaoxing/Lianxu/releases/tag/v1.0.0) 仍保留。
+当前正式版 **1.0.2（版本号 61）**。安装包和校验值见 [GitHub Releases](https://github.com/Jiang-Xiaoxing/Lianxu/releases/latest)；这一版改了什么、验证到哪一步、还有哪些没验，都写在 [1.0.2 更新说明](RELEASE-NOTES-1.0.2.md)和[验证记录](VALIDATION-1.0.2.md)里。旧版 [1.0.1](https://github.com/Jiang-Xiaoxing/Lianxu/releases/tag/v1.0.1) 与 [1.0.0](https://github.com/Jiang-Xiaoxing/Lianxu/releases/tag/v1.0.0) 仍保留。
+
+本版保留原完整设备运行的失败与跳过记录，后续定向补测逐项对应，未宣称最新整套全绿。真实模型、模拟器和未验证的真机行为分开说明。
 
 ## 界面
 
@@ -39,7 +41,7 @@
 ## 一段用起来是什么样
 
 ```text
-写下角色的人设  →  开始聊天  →  她说「嗯…我记住了」
+写下角色的人设  →  开始聊天  →  成功保存后显示「我记住了」
                               ↓
                     点开胶囊看她到底存了什么
                               ↓

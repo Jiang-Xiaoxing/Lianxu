@@ -12,7 +12,7 @@ import org.junit.*
 import org.junit.Assert.*
 import java.io.File
 
-/** Compare the unchanged navigation path on original/candidate APKs using only synthetic data. */
+/** Verify settings navigation after rotation using only synthetic data. */
 class NavigationRotationAttributionTest {
  @get:Rule(order=0) val fixture=MockChatFixture()
  @get:Rule(order=1) val ui=createAndroidComposeRule<MainActivity>()
@@ -22,14 +22,14 @@ class NavigationRotationAttributionTest {
   require(label.matches(Regex("[a-z-]+")))
   lateinit var vm:AppState;ui.activityRule.scenario.onActivity{vm=ViewModelProvider(it)[AppState::class.java]}
   ui.waitUntil(15000){vm.ready};ui.onNodeWithTag("tab-2").performClick()
-  ui.onNodeWithTag("settings-display").performScrollTo().performClick()
-  ui.onNodeWithTag("settings-display-page").assertIsDisplayed()
+  ui.onNodeWithTag("settings-display").assertDoesNotExist()
   ui.activityRule.scenario.onActivity{it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE}
   ui.waitUntil(15000){ui.activity.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE}
-  ui.onNodeWithTag("settings-display-page").assertIsDisplayed()
+  ui.onNodeWithTag("settings-home").assertIsDisplayed()
+  ui.onNodeWithTag("settings-display").assertDoesNotExist()
   ui.activityRule.scenario.onActivity{it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}
   ui.waitUntil(15000){ui.activity.resources.configuration.orientation==Configuration.ORIENTATION_PORTRAIT}
-  ui.onNodeWithContentDescription("返回设置").performClick();ui.onNodeWithTag("settings-home").assertIsDisplayed()
+  ui.onNodeWithTag("settings-home").assertIsDisplayed()
   val info=ui.onNodeWithTag("settings-info");val beforeVisible=info.isDisplayed();val bounds=info.fetchSemanticsNode().boundsInRoot.toString()
   fun shot(suffix:String){val image=instrument.uiAutomation.takeScreenshot();File(instrument.targetContext.filesDir,"nav-$label-$suffix.png").outputStream().use{image.compress(Bitmap.CompressFormat.PNG,100,it)};image.recycle()}
   shot("before")

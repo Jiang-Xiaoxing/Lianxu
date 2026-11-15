@@ -2,7 +2,6 @@ package app.lianxu.independent
 
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.*
-import org.json.JSONObject
 import org.junit.*
 import org.junit.Assert.*
 import java.util.concurrent.atomic.AtomicInteger
@@ -61,7 +60,7 @@ class ToolReceiptStateAndroidTest {
         assertEquals(TurnState.COMPLETED,turn.state)
         val activity=turn.toolActivities.single{it.tool=="agent_memory_update"}
         assertEquals("success",activity.state);assertEquals("",activity.detail)
-        assertEquals("嗯…我记住了",activity.label())
+        assertEquals("我记住了",activity.label())
         assertEquals("回执要记住它出现时的思考位置","先想一想。".length,activity.reasoningAt)
         assertTrue("新回执必须带位置标记",activity.reasoningKnown)
         val message=store.messages().single{!it.mine}
@@ -87,7 +86,7 @@ class ToolReceiptStateAndroidTest {
         assertTrue(r.send("a","那你记一下，我喜欢吃意大利面"){});idle(r);val turn=done()
         assertEquals(TurnState.FAILED,turn.state)
         val activity=turn.toolActivities.single{it.tool=="agent_memory_update"}
-        assertEquals("failed",activity.state);assertEquals("没记下",activity.label())
+        assertEquals("failed",activity.state);assertEquals("没记住",activity.label())
         assertEquals("回话没完成，这条没存下",activity.detail)
         assertNull("没保存的胶囊不能链到任何记录",activity.memoryId)
         assertFalse("失败或取消的胶囊不能点开",activity.canOpenMemory)
@@ -148,8 +147,8 @@ class ToolReceiptStateAndroidTest {
 
     /**
      * 一次调用改已有记忆：回执仍链到同一条记录，展开读到的是改完后的内容。
-     * 这里直接提交一条真实的 update 暂存（走生产的 commit/link 路径）：合成的回查工具会按
-     * “本轮已投递的内容不重复展示”把这条挡掉，那属于既有回查规则，不是改写的提交路径。
+     * 从真实 runner 发出 update 工具调用，沿用本轮已投递的 M 编号和来源证据，
+     * 不手工拼接私有暂存格式；回复事务提交后再核对链接、版本和幂等结算。
      */
     @Test fun anUpdateLinksToTheSameRowAndKeepsItsNewText()=runBlocking{
         val add=runner{request->
@@ -161,46 +160,35 @@ class ToolReceiptStateAndroidTest {
         assertEquals(TurnState.COMPLETED,done().state)
         val original=repo.memories("a").single()
         val ledger=ChatLedger(store)
-        val turn=ledger.begin("a","我改名叫小周了","fake")
-        val refs=repo.references("a","我改名叫小周了",turn.userMessageId)
-        assertTrue(ledger.finish(turn.id,turn.attempt,"好"))
-        val sourceVersion=repo.read{db->db.rawQuery("SELECT source_revision FROM chat_turns WHERE id=?",arrayOf(turn.id)).use{it.moveToFirst();it.getLong(0)}}
-        val digest="update-digest"
-        val stage=JSONObject().put("op","update").put("target_id",original.id).put("target_version",original.version)
-            .put("content","用户改名叫小周了。").put("category","PREFERENCE_BOUNDARY").put("about","USER")
-            .put("evidence",org.json.JSONArray().put("S1")).put("source_version",sourceVersion)
-            .put("content_supplied",true).put("category_supplied",true).put("about_supplied",true)
-            .put("candidate",JSONObject.NULL).put("digest",digest)
-        repo.tx{db->
-            db.insertWithOnConflict("preferences",null,android.content.ContentValues().apply{
-                put("key","memory-tools:${turn.id}:${turn.attempt}");put("value",org.json.JSONArray().put(stage).toString())
-            },android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE)
-            ChatToolJournal.put(db,turn.id,ChatToolActivity("upd",turn.attempt,"嗯…我记住了","staged",
-                kind=ChatToolActivity.WRITE,tool="agent_memory_update",operation=digest))
-            Unit
+        val update=runner{request->
+            if(!toolRoundSeen(request))TextChatResult.Success("",listOf(ChatToolCall("upd","agent_memory_update",
+                """{"op":"update","target":"M1","category":"PREFERENCE_BOUNDARY","about":"USER","content":"用户改名叫小周了。","evidence":["S1"]}""")),displayReasoning="再记。")
+            else TextChatResult.Success("好",displayReasoning="改完。")
         }
-        val tools=MemoryTools(repo,turn,"我改名叫小周了",refs,active={true})
-        repo.tx{db->tools.commit(db)}
+        assertTrue(update.send("a","我改名叫小周了"){});idle(update)
+        val turn=done();assertEquals(TurnState.COMPLETED,turn.state)
         val updated=repo.memories("a").single()
         assertEquals("改的是同一条记录",original.id,updated.id)
         assertEquals("用户改名叫小周了。",updated.text)
         assertEquals(2,updated.version)
         val receipt=ChatLedger(store).activities(turn.id).single()
         assertEquals("update 也要链到同一条记录",original.id,receipt.memoryId)
-        // 与真实回复同一条结算路径：提交成功变已保存，关联保留，可点开。
+        assertEquals("success",receipt.state);assertTrue(receipt.canOpenMemory)
+        // 再结算一次仍保持成功与原有链接，不重复改写。
         ChatLedger(store).settleActivities(turn.id,turn.attempt,true,false,true)
         val settled=ChatLedger(store).activities(turn.id).single()
         assertEquals("success",settled.state)
         assertEquals(original.id,settled.memoryId)
         assertTrue(settled.canOpenMemory)
+        assertEquals("重复结算不再次升版",2,repo.memories("a").single().version)
         assertEquals("展开读的是当前行","用户改名叫小周了。",repo.memory(store.readableDatabase,"a",original.id)?.text)
         // 提交没发生时同一条暂存只能算没存下，不能点开。
         val draft=ledger.begin("a","再改一次","fake")
-        repo.tx{db->ChatToolJournal.put(db,draft.id,ChatToolActivity("draft",draft.attempt,"嗯…我记住了","staged",
+        repo.tx{db->ChatToolJournal.put(db,draft.id,ChatToolActivity("draft",draft.attempt,"我记住了","staged",
             kind=ChatToolActivity.WRITE,tool="agent_memory_update",operation="draft-op"))}
         repo.tx{db->ChatToolJournal.settle(db,draft.id,draft.attempt,false,false,false)}
         val unsaved=ChatLedger(store).activities(draft.id).single()
-        assertEquals("failed",unsaved.state);assertEquals("没记下",unsaved.label())
+        assertEquals("failed",unsaved.state);assertEquals("没记住",unsaved.label())
         assertFalse(unsaved.canOpenMemory);assertNull(unsaved.memoryId)
     }
 }

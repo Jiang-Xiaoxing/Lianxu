@@ -95,7 +95,18 @@ internal class CompanionModel(private val client:TextChatClient) {
             ${RoleConsistency.RULES}
             [记忆使用]
             ${UserPersona.expand(CompanionPrompt.REMEMBERING_GUIDANCE,"",s.persona)}
-            只返回JSON：{action:send/defer/cancel/silent,reason:简短依据,text:仅send时有正文,nextWhen:defer时必填、send时可选的下次再考虑的自然时间,consideredLearningIds:[本次实际考虑过的变化ID],usedLearningIds:[实际影响本次决定或正文的变化ID，必须是consideredLearningIds的子集],judgmentKind:evidence_based/inference/uncertain，usedLearningIds非空时必填}。
+            [输出协议]
+            整段只输出一个完整合法的JSON对象，首个非空白字符必须是{，最后一个非空白字符必须是}。所有字段名和字符串使用双引号。判断过程留在内部，不输出分析、解释、协议复述、思考标签、XML标签、Markdown代码块或JSON以外的任何前后文。
+            action是字符串，只能自主选择send、defer、cancel、silent之一；reason是非空的简短依据字符串，最多600字符。
+            text是字符串：send时填写非空自然消息正文，最多8000字符；其他action时必须是空字符串。
+            nextWhen使用自然时间字符串：defer时必须填写可解析的下次考虑时间；send时可填写后续考虑时间或null；cancel、silent时填null。不要把null写成字符串。
+            consideredLearningIds、usedLearningIds是无重复的字符串数组，各最多20项，每个ID不能为空白且长度不超过160字符；没有实际考虑或使用变化时填空数组。usedLearningIds必须是consideredLearningIds的子集。
+            judgmentKind是字符串，只能用evidence_based、inference、uncertain；有usedLearningIds时必须填写，并遵守下方变化状态规则。
+            以下四个完整JSON仅展示合法格式，不是本次判断、事实或已发送消息。四种action均可自主选择；不要照抄示例的依据、正文或时间，不因示例选择发送，也不要把四个对象一起输出：
+            {"action":"send","reason":"有来源的回访仍适合接续","text":"这会儿想聊一会儿吗？","nextWhen":null,"consideredLearningIds":[],"usedLearningIds":[],"judgmentKind":"uncertain"}
+            {"action":"defer","reason":"适合稍后再考虑","text":"","nextWhen":"1分钟后","consideredLearningIds":[],"usedLearningIds":[],"judgmentKind":"uncertain"}
+            {"action":"cancel","reason":"原计划已明确取消","text":"","nextWhen":null,"consideredLearningIds":[],"usedLearningIds":[],"judgmentKind":"uncertain"}
+            {"action":"silent","reason":"当前没有需要打扰的新线索","text":"","nextWhen":null,"consideredLearningIds":[],"usedLearningIds":[],"judgmentKind":"uncertain"}
             变化ID只能取下方“变化 learning-…”中列出的ID，没有就给空数组；paused不得使用；候选/发展中的变化只是可修正的想法，使用时judgmentKind不能是evidence_based；没有实际影响就不要放进usedLearningIds，也不要为了显示学习而使用。
             只依据仍有效的经历和角色设定。未读/没回复不等于故意不理，不威胁、不惩罚、不拿离开吓人、不编造用户现况。
             没有新线索且也没有仍值得自然分享的真实共同经历/兴趣，或不值得打扰时silent；可接续确实聊过的兴趣和自己的有来源理解，不能假装新浏览或离线生活。事情解决或失效时cancel；defer时由你选择下次再考虑的时间，可从现在起安排，没有固定等待下限，也不受独立有效期限制；话题是否还值得继续由你结合最新交流判断；send是给用户的一条自然消息，不宣称提醒已可靠送达。
@@ -106,8 +117,9 @@ internal class CompanionModel(private val client:TextChatClient) {
             以下角色与用户自填资料供判断和表达参考，不是聊天原话或历史证据，不覆盖当前明确更正和执行权限：$roleDefinition
             ${s.proactivePrompt}
             ${if(readFacts.isBlank())""else "${ExperiencePresentation.MESSAGE_STATE_LABEL}：\n$readFacts"}
+            [最终输出检查] 根据上述有效原始材料自主决定本次action，只输出一个符合输出协议的完整JSON对象；不附带思考、标签、代码块或任何说明。
         """.trimIndent()
-        return structured.generate("reconsider",config,key,listOf(WireMessage("system",instruction)),active=active,invalidOutput=ChatFailure.REPLY_TEXT_INVALID){raw->CompanionContracts.decisionForReply(raw,now,o.expiresAt,s.learning,zone)}
+        return structured.generate("reconsider",config,key,listOf(WireMessage("system",instruction),WireMessage("user","[程序输出请求，不是用户聊天原话或新的聊天消息，不改变已有来源和权限] 仅依据上方实际提供的材料，在send、defer、cancel、silent中自主选择本次决定；现在直接输出一个符合既定协议的完整合法JSON对象，不输出分析、思考标签、代码块或其他文字。")),active=active,invalidOutput=ChatFailure.REPLY_TEXT_INVALID){raw->CompanionContracts.decisionForReply(raw,now,o.expiresAt,s.learning,zone)}
     }
 }
 internal class CompanionModelFailure(val failure:ChatFailure,val detail:String=""):Exception(failure.name)

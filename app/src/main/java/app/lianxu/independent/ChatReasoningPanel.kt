@@ -22,6 +22,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /** One piece of the live thinking stream: model text, or the receipt of a tool called inside it. */
 internal sealed interface ChatThinkingPart {
@@ -58,9 +59,10 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
  * between cards, never inside a card and never inside a wrapping container. When the model returns
  * no text after a call, no second card is invented.
  */
-@Composable internal fun ChatThinkingStream(owner:String,text:String,inProgress:Boolean,breaks:List<ChatThinkingBreak>,tools:List<ChatToolActivity>,modifier:Modifier=Modifier,loadMemory:(suspend(String)->StoredMemory?)?=null){
+@Composable internal fun ChatThinkingStream(owner:String,text:String,inProgress:Boolean,breaks:List<ChatThinkingBreak>,tools:List<ChatToolActivity>,modifier:Modifier=Modifier,loadMemory:(suspend(String)->StoredMemory?)?=null,loadRecall:(suspend(List<ChatToolActivity>)->List<RecallContentPart>)?=null){
     val parts=chatThinkingParts(text,breaks,tools)
     if(parts==null){ChatReasoningPanel(owner,text,inProgress,modifier);return}
+    val recallGroups=remember(tools){recallReceiptGroups(tools)}
     var textIndex=0
     Column(modifier.testTag("thinking-stream-$owner"),verticalArrangement=Arrangement.spacedBy(8.dp)){
         parts.forEachIndexed{index,part->
@@ -69,7 +71,7 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
                     ChatThinkingCard("$owner-$textIndex",part.text,inProgress&&index==parts.lastIndex,defaultExpanded=true)
                     textIndex++
                 }
-                is ChatThinkingPart.Tool->ChatToolReceipt(part.item,Modifier.padding(horizontal=14.dp),loadMemory)
+                is ChatThinkingPart.Tool->ChatToolReceipt(part.item,Modifier.padding(horizontal=14.dp),loadMemory,recallGroups[part.item.id],loadRecall)
             }
         }
     }
@@ -83,21 +85,24 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
     var expanded by rememberSaveable(owner,if(defaultExpanded)0 else inProgress,defaultExpanded){mutableStateOf(inProgress||defaultExpanded)}
     val faint=Muted.copy(alpha=.82f)
     Column(modifier.testTag("thinking-card-$owner"),verticalArrangement=Arrangement.spacedBy(4.dp)){
-        if(!expanded){
-            Text("想了想 ›",Modifier.clickable(role=Role.Button){expanded=true}.testTag("thinking-toggle-$owner").semantics{contentDescription="展开思考过程";stateDescription="已收起"}.padding(vertical=2.dp),style=MaterialTheme.typography.labelSmall,color=faint)
-        }else{
+        Row(Modifier.fillMaxWidth().clickable(role=Role.Button){expanded=!expanded}.testTag("thinking-toggle-$owner")
+            .semantics{contentDescription=if(expanded)"收起思考过程"else"展开思考过程";stateDescription=if(expanded)"已展开"else"已收起"}
+            .padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){
+            Text("思考内容",style=MaterialTheme.typography.labelSmall.copy(fontSize=13.sp,lineHeight=18.sp),color=faint)
+            Box(Modifier.rotate(if(expanded)0f else 180f)){ControlIcon("up",faint,14.dp)}
+        }
+        if(expanded){
             Box(Modifier.fillMaxWidth().heightIn(max=220.dp).testTag("thinking-scroll-$owner")){
                 SelectionContainer{
                     Text(text,Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).testTag("thinking-text-$owner"),style=MaterialTheme.typography.bodySmall,color=faint)
                 }
             }
-            Text("收起",Modifier.clickable(role=Role.Button){expanded=false}.testTag("thinking-toggle-$owner").semantics{contentDescription="收起思考过程";stateDescription="已展开"}.padding(vertical=2.dp),style=MaterialTheme.typography.labelSmall,color=faint)
         }
     }
 }
 
 /** [visible]: how many reply bubbles have been let out so far; the rest wait their turn (she is still typing). */
-@Composable internal fun ChatReplyDraft(preview:ChatReplyPreview?,turn:ChatTurn,modifier:Modifier=Modifier,visible:Int=Int.MAX_VALUE,viewport:androidx.compose.ui.geometry.Rect=androidx.compose.ui.geometry.Rect.Zero,onShown:(Int)->Unit={}){
+@Composable internal fun ChatReplyDraft(preview:ChatReplyPreview?,turn:ChatTurn,modifier:Modifier=Modifier,visible:Int=Int.MAX_VALUE,viewport:androidx.compose.ui.geometry.Rect=androidx.compose.ui.geometry.Rect.Zero,loadRecall:(suspend(List<ChatToolActivity>)->List<RecallContentPart>)?=null,onShown:(Int)->Unit={}){
     // Never display an old attempt after retry, cancellation, or a role/page switch.
     val current=preview?.takeIf{turn.state==TurnState.PENDING&&it.turnId==turn.id&&it.attempt==turn.attempt}
     val owner="${turn.id}-${turn.attempt}"
@@ -106,9 +111,9 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
     // Once there is thinking to cut into, receipts move out of the card and into the chat flow.
     val interleaved=current?.let{it.reasoning.isNotBlank()&&chatThinkingParts(it.reasoning,it.thinkingBreaks,tools.orEmpty())!=null}==true
     Column(modifier.testTag("reply-preview-$owner"),verticalArrangement=Arrangement.spacedBy(8.dp)){
-        ChatToolActivities(items,Modifier.fillMaxWidth(),capsules=!interleaved)
+        ChatToolActivities(items,Modifier.fillMaxWidth(),capsules=!interleaved,loadRecall=loadRecall)
         current?.let{
-            if(interleaved)ChatThinkingStream(owner,it.reasoning,it.phase!=ChatReplyPhase.REPLYING,it.thinkingBreaks,tools.orEmpty(),Modifier.fillMaxWidth())
+            if(interleaved)ChatThinkingStream(owner,it.reasoning,it.phase!=ChatReplyPhase.REPLYING,it.thinkingBreaks,tools.orEmpty(),Modifier.fillMaxWidth(),loadRecall=loadRecall)
             else ChatReasoningPanel(owner,it.reasoning,it.phase!=ChatReplyPhase.REPLYING,Modifier.fillMaxWidth())
         }
         val shown=current?.bubbles?.take(visible).orEmpty()
@@ -134,10 +139,16 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
 
 /** The small receipt pill. Display only; it never becomes dialogue, a memory or a relationship event.
  *  One pill from start to finish: on failure its text is replaced, not extended with a second line. */
-@Composable internal fun ChatToolReceipt(item:ChatToolActivity,modifier:Modifier=Modifier,loadMemory:(suspend(String)->StoredMemory?)?=null){
+@Composable internal fun ChatToolReceipt(item:ChatToolActivity,modifier:Modifier=Modifier,loadMemory:(suspend(String)->StoredMemory?)?=null,recallGroup:RecallReceiptGroup?=null,loadRecall:(suspend(List<ChatToolActivity>)->List<RecallContentPart>)?=null){
     if(item.state==ChatToolActivity.SUPERSEDED)return
+    if(item.tool in ChatToolActivity.RECALL_TOOLS){
+        val group=recallGroup?:RecallReceiptGroup(listOf(item))
+        if(group.id==item.id)ChatRecallReceipt(group,modifier,loadRecall)
+        return
+    }
     // Only a committed write linked to a stored row may open; staged/failed/candidate receipts stay shut.
     val canOpen=item.canOpenMemory&&loadMemory!=null
+    val reveal=chatCapsuleReveal(toolCapsuleKey(item,LocalChatCapsuleOwner.current),item.state !in setOf("running","staged"))
     // A collapse default must survive a page rebuild: plain remember drops the state on recreation.
     var expanded by remember(item.id){mutableStateOf(false) }
     var peek by remember(item.id){mutableStateOf<ChatMemoryPeek?>(null)}
@@ -160,8 +171,14 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
                     .semantics{contentDescription=if(expanded)"收起这条记忆" else "查看这条记忆";stateDescription=if(expanded)"已展开" else "已收起"} else Modifier)
                 .padding(start=12.dp,end=if(canOpen)8.dp else 12.dp,top=6.dp,bottom=6.dp),
                 verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){
-                Text(item.label(),style=MaterialTheme.typography.labelMedium,color=when(item.state){"failed"->MaterialTheme.colorScheme.error;"unknown"->Muted;else->GreenText})
-                if(canOpen)Box(Modifier.rotate(if(expanded)0f else 180f)){ControlIcon("up",GreenText,14.dp)}
+                val memoryWrite=item.tool=="agent_memory_update"
+                val resultColor=when{
+                    item.state=="failed"->MaterialTheme.colorScheme.error
+                    item.state=="unknown"||(memoryWrite&&!item.canOpenMemory)->Muted
+                    else->GreenText
+                }
+                ChatCapsuleLabel(item.label(),reveal,MaterialTheme.typography.labelMedium,resultColor,loading=if(memoryWrite)"正在记住"else"正在处理…")
+                if(canOpen)Box(Modifier.rotate(if(expanded)0f else 180f)){ControlIcon("up",androidx.compose.ui.graphics.lerp(Muted,GreenText,reveal),14.dp)}
             }
         }
         if(item.detail.isNotBlank())Text(item.detail,style=MaterialTheme.typography.bodySmall,color=Muted)
@@ -197,14 +214,15 @@ internal fun memoryPeekOf(saved:StoredMemory?):ChatMemoryPeek = when{
     else->ChatMemoryPeek.Saved(saved.text)
 }
 
-@Composable internal fun ChatToolActivities(items:List<ChatToolActivity>,modifier:Modifier=Modifier,capsules:Boolean=true,loadMemory:(suspend(String)->StoredMemory?)?=null){
+@Composable internal fun ChatToolActivities(items:List<ChatToolActivity>,modifier:Modifier=Modifier,capsules:Boolean=true,loadMemory:(suspend(String)->StoredMemory?)?=null,loadRecall:(suspend(List<ChatToolActivity>)->List<RecallContentPart>)?=null){
     if(items.isEmpty())return
+    val recallGroups=remember(items){recallReceiptGroups(items)}
     Column(modifier,verticalArrangement=Arrangement.spacedBy(8.dp)){
         items.forEach{item->
             if(item.before.isNotBlank())Surface(shape=RoundedCornerShape(topStart=6.dp,topEnd=18.dp,bottomStart=18.dp,bottomEnd=18.dp),color=ChatRoleBubble){
                 Text(item.before,Modifier.padding(UiSpace.bubble).testTag("tool-before-${item.id}"),style=MaterialTheme.typography.bodyLarge,color=ChatRoleText)
             }
-            if(capsules)ChatToolReceipt(item,loadMemory=loadMemory)
+            if(capsules)ChatToolReceipt(item,loadMemory=loadMemory,recallGroup=recallGroups[item.id],loadRecall=loadRecall)
         }
     }
 }

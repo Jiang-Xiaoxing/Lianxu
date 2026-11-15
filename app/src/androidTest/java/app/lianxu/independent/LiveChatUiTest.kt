@@ -33,6 +33,7 @@ class LiveChatUiTest {
     @Test fun purposesCustomPromptNewRoleAndActualHttpReply(){
         ui.waitUntil(15000){ui.onAllNodesWithTag("tab-2").fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithTag("tab-2").performClick();ui.onNodeWithTag("settings-models").performClick()
+        ui.onNodeWithTag("config-tab-purposes").performClick()
         for(p in ModelPurpose.entries){
             ui.waitUntil(30000){ui.onAllNodes(hasTestTag("purpose-select-${p.key}") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
             ui.onNodeWithTag("purpose-select-${p.key}").performScrollTo().performClick()

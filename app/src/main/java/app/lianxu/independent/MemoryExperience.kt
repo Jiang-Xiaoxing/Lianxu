@@ -199,6 +199,6 @@ internal fun lifeLabel(life:MemoryLife)=when(life){MemoryLife.ACTIVE->"进行中
 @Composable
 private fun MemoryClarityDot(level:Int,size:Int){
     val shape=androidx.compose.foundation.shape.CircleShape
-    val fill=androidx.compose.ui.graphics.Color(listOf(0xFF07C160,0xFF4CD68A,0xFF9AE8C0,0xFFE7F8EE)[level])
-    Box(Modifier.size(size.dp).background(fill,shape).then(if(level==3) Modifier.border(1.dp,androidx.compose.ui.graphics.Color(0xFF9AE8C0),shape) else Modifier))
+    val fill=GreenText.copy(alpha=listOf(1f,.7f,.4f,.12f)[level])
+    Box(Modifier.size(size.dp).background(fill,shape).then(if(level==3) Modifier.border(1.dp,GreenText.copy(alpha=.4f),shape) else Modifier))
 }

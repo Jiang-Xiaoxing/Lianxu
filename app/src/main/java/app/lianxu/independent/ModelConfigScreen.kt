@@ -7,10 +7,13 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,6 +44,9 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
 @Composable fun ModelConfigScreen(onBack:()->Unit,state:ModelConfigState=viewModel()) {
     LaunchedEffect(Unit){state.refresh()}
     var screen by remember {mutableStateOf("overview")}
+    var overviewTab by rememberSaveable {mutableIntStateOf(0)}
+    val servicesScroll=rememberLazyListState()
+    val purposesScroll=rememberLazyListState()
     var embeddingEditor by remember {mutableStateOf(false)}
     var allProviders by remember {mutableStateOf(false)}
     var regionGroup by remember {mutableStateOf<ProviderGroup?>(null)}
@@ -95,16 +101,27 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
             onBack={back()},backTag="config-back",enabled=!state.saving,
             extra={when(screen){
                 "edit"->SaveAction(!state.busy){reveal=false;state.save(draft(),enteredKey(),if(embeddingEditor)ModelPurpose.EMBEDDING else null){key="";screen="overview"}}
-                "overview"->IconButton(onClick={add()},modifier=Modifier.size(UiSpace.action).testTag("config-add-top").semantics{contentDescription="添加服务商"}){ControlIcon("add")}
                 else->Spacer(Modifier.width(48.dp))
             }}
         )
         if(screen=="overview"){
-            LazyColumn(Modifier.fillMaxSize().testTag("config-overview"),contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
-                item{SectionLabel("已保存的服务")}
+            Row(Modifier.padding(horizontal=UiSpace.page,vertical=12.dp).fillMaxWidth().selectableGroup().clip(RoundedCornerShape(28.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(4.dp)){
+                listOf("服务商","模型用途").forEachIndexed{index,label->
+                    Tab(selected=overviewTab==index,onClick={overviewTab=index},
+                        modifier=Modifier.weight(1f).heightIn(min=UiSpace.action).clip(RoundedCornerShape(24.dp)).background(if(overviewTab==index)Paper else Color.Transparent).testTag(if(index==0)"config-tab-services" else "config-tab-purposes"),
+                        selectedContentColor=ConfigInk,unselectedContentColor=ConfigGreen,text={Text(label,style=MaterialTheme.typography.labelLarge)})
+                }
+            }
+            LazyColumn(Modifier.fillMaxSize().testTag("config-overview"),state=if(overviewTab==0)servicesScroll else purposesScroll,contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
                 if(state.status.isNotBlank())item{Notice(state.status,state.statusError)}
+                if(overviewTab==0){
+                if(state.configs.isEmpty())item{Column(Modifier.fillMaxWidth().heightIn(min=240.dp).testTag("config-services-empty"),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
+                    ControlIcon("services",ConfigMuted,64.dp);Spacer(Modifier.height(20.dp))
+                    Text("还没有保存的服务",style=MaterialTheme.typography.titleMedium,color=ConfigMuted)
+                }}
+                else {
+                item{SectionLabel("已保存的服务")}
                 item{Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
-                    if(state.configs.isEmpty())Text("还没有保存的服务",Modifier.padding(22.dp),color=ConfigMuted)
                     state.configs.forEachIndexed {index,config->
                         val p=ProviderPresets.get(config.providerId)
                         Row(Modifier.fillMaxWidth().clickable(enabled=!state.busy){edit(config)}.testTag("config-edit-${config.id}").padding(18.dp),verticalAlignment=Alignment.CenterVertically){
@@ -123,10 +140,12 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
                         if(index<state.configs.lastIndex)HorizontalDivider(Modifier.padding(start=72.dp,end=18.dp),color=ConfigLine)
                     }
                 }}
-                item{Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper).clickable{add()}.testTag("config-add").padding(18.dp),verticalAlignment=Alignment.CenterVertically){ControlIcon("add");Spacer(Modifier.width(14.dp));Text("添加服务商",Modifier.weight(1f),style=MaterialTheme.typography.titleSmall);ControlIcon("chevron")}}
+                }
+                item{OutlinedButton(onClick={add()},enabled=!state.saving,modifier=Modifier.fillMaxWidth().heightIn(min=UiSpace.action).testTag("config-add")){Text("添加服务商")}}
                 item{OutlinedButton(onClick={add(true)},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).testTag("config-add-embedding")){Text("添加向量模型")}}
+                }else{
                 item{PurposeSelection(state)}
-                item{Text("先添加并保存模型配置，再在下方选择用途；向量模型请选择“记忆向量”。保存与用途选择不发起请求。",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)}
+                }
             }
         }else if(screen=="providers"){
             OutlinedTextField(query,{query=it.take(80)},placeholder={Text("搜索服务商")},singleLine=true,leadingIcon={ControlIcon("search")},modifier=Modifier.fillMaxWidth().padding(horizontal=UiSpace.page,vertical=12.dp).testTag("provider-search"),shape=RoundedCornerShape(16.dp),colors=OutlinedTextFieldDefaults.colors(unfocusedContainerColor=Paper,focusedContainerColor=Paper,unfocusedBorderColor=Color.Transparent))

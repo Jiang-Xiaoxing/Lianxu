@@ -119,11 +119,25 @@ ${thinkingNaming(a)}
         val prefix=mutableListOf(WireMessage("system",fixed,capabilityRange=capabilityRange))
         // Informational only (summary trigger reached); it never gates the build.
         val boundary=rounds>=recentLimit
-        // Each history message carries a short time head for the model only (never stored or shown).
-        prefix+=recent.mapIndexed{i,m->val head=ChatTimeLabels.prefix(recent,i,now,zone);WireMessage(if(m.mine)"user" else "assistant",head+m.text,sourceMessageId=m.id.toString(),sourcePrefix=head.length)}
+        // Empty stored rows are not speech; leave storage intact and never invent text for them.
+        val history=recent.filter{it.text.isNotBlank()}
+        // History stays verbatim; program-owned sending times belong only to the system reference.
+        prefix+=history.map{m->WireMessage(if(m.mine)"user" else "assistant",m.text,sourceMessageId=m.id.toString())}
+        val historyTimes=buildString{
+            if(history.isNotEmpty()){
+                append("\n历史消息发送时间（按上方历史消息顺序，不包括当前输入）：\n")
+                history.forEachIndexed{i,m->
+                    append("第${i+1}条（${if(m.mine)"对方"else"我"}）：${ChatTimeLabels.label(m.created,now,zone).removeSurrounding("[","]")}")
+                    history.getOrNull(i-1)?.let{previous->ChatTimeLabels.gap(previous.created,m.created)?.let{append("，$it")}}
+                    append('\n')
+                }
+            }
+        }
         val tail=buildString{
             append("[程序时间参考，不是用户原话]\n当前设备时间：${ProactiveMaterial.currentTime(now,zone)}。")
-            recent.lastOrNull()?.let{val elapsed=Duration.between(Instant.ofEpochMilli(it.created),now);append(if(!elapsed.isNegative)" 距上条原消息约 ${ProactiveMaterial.ago(elapsed.toMillis())}。" else " 历史消息时间晚于当前设备时间，请勿据此臆测事件日期。")}
+            history.lastOrNull()?.let{val elapsed=Duration.between(Instant.ofEpochMilli(it.created),now);append(if(!elapsed.isNegative)" 距上条原消息约 ${ProactiveMaterial.ago(elapsed.toMillis())}。" else " 历史消息时间晚于当前设备时间，请勿据此臆测事件日期。")}
+            append("\n发送时间只供理解先后和间隔，不是角色原话或回复格式。不要自行给正文加时间标签；对方明确要求的时间、原话里的时间和自然的时间表达照常保留。")
+            append(historyTimes)
         }
         fun compose(refs:List<PromptReference>,candidates:List<String>):List<WireMessage> = buildList{
             addAll(prefix)
@@ -138,7 +152,8 @@ ${thinkingNaming(a)}
         val inputLimit=if(adaptive)AdaptiveContext.inputLimit(capacity,outputLimit,toolReserve)else capacity-outputLimit-toolReserve
         val minimum=compose(mandatory,emptyList()).sumOf{ConservativeTokens.tokens(it.content)}
         if(adaptive){
-            val historyCost=prefix.filter{it.sourceMessageId.isNotEmpty()}.sumOf{ConservativeTokens.tokens(it.content)}
+            val historyCost=prefix.filter{it.sourceMessageId.isNotEmpty()}.sumOf{ConservativeTokens.tokens(it.content)}+
+                (ConservativeTokens.tokens(tail)-ConservativeTokens.tokens(tail.removeSuffix(historyTimes)))
             val available=inputLimit-(minimum-historyCost)
             if(available<0)return PromptBuild.Blocked(ChatFailure.CONTEXT_CAPACITY)
             if(AdaptiveContext.needsSummary(historyCost,available,rounds))return PromptBuild.Blocked(ChatFailure.CONTEXT_NEEDS_MEMORY)

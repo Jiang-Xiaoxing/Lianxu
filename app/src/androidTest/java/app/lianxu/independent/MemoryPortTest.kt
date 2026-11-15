@@ -242,9 +242,10 @@ class MemoryPortTest {
     }
     @Test fun sequentialClarificationThenCompletionKeepsLatestTextAndResolvesOnce()=runBlocking{
         val old=automatic();repo.tx{db->repo.candidate(db,"a",old.id,old.copy(text="maybe ocean",version=2),"uncertain","candidate-one")}
-        val t=ChatLedger(store).begin("a","我确认喜欢花园并已完成约定",config.id);val tools=runtime(t);var count=0
+        val input="我确认喜欢花园并已完成约定"
+        val t=ChatLedger(store).begin("a",input,config.id);val tools=runtime(t);var count=0
         val last=JSONObject().put("op","complete").put("target","M1").put("evidence",JSONArray().put("S1"))
-        val result=tools.run(config,"synthetic-only",request("clarify"),client{if(count++==0)TextChatResult.Success("",listOf(
+        val result=tools.run(config,"synthetic-only",request(input),client{if(count++==0)TextChatResult.Success("",listOf(
             ChatToolCall("first","agent_memory_update",args("update","M1","我确认对方喜欢花园。").toString()),ChatToolCall("second","agent_memory_update",last.toString()))) else TextChatResult.Success("final")})
         assertTrue(result is TextChatResult.Success);assertTrue(commit(t,tools));assertTrue(repo.candidates("a").isEmpty())
         val m=repo.memories("a").single();assertEquals("我确认对方喜欢花园。",m.text);assertEquals(MemoryLife.COMPLETED,m.life);assertEquals(3,m.version)

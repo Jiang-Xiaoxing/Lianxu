@@ -16,7 +16,8 @@ class LiveChatRaceUiTest(private val repetition:Int) {
     companion object { @JvmStatic @org.junit.runners.Parameterized.Parameters(name="pressure-{0}") fun repetitions()=(1..8).map{arrayOf(it)} }
     private class Replies:TextChatClient {
         val pending=ConcurrentLinkedQueue<CompletableDeferred<TextChatResult>>();val calls=AtomicInteger()
-        fun queue()=CompletableDeferred<TextChatResult>().also{pending.add(it)}
+        val all=ConcurrentLinkedQueue<CompletableDeferred<TextChatResult>>()
+        fun queue()=CompletableDeferred<TextChatResult>().also{pending.add(it);all.add(it)}
         override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
             syntheticCompanionStage(request)?.let{return it}
             calls.incrementAndGet();return withContext(NonCancellable){checkNotNull(pending.poll()).await()}
@@ -26,13 +27,30 @@ class LiveChatRaceUiTest(private val repetition:Int) {
     @get:Rule(order=0) val mock=MockChatFixture({client})
     @get:Rule(order=1) val ui=createAndroidComposeRule<MainActivity>()
     private fun app():AppState {lateinit var value:AppState;ui.activityRule.scenario.onActivity{value=ViewModelProvider(it)[AppState::class.java]};return value}
+    @After fun releaseResponses(){client.all.forEach{it.cancel()}}
     @Test fun doubleSendThenExplicitCancelRetryFailureAndLateCallback(){
         ui.waitUntil(15000){app().ready}
         ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("创建角色").performClick()
         ui.onNodeWithTag("friend-name").performTextInput("合成·取消测试");ui.onNodeWithTag("friend-bio").performTextInput("仅供自动测试")
         ui.onNodeWithTag("create-friend").performScrollTo().performClick();ui.waitUntil(10000){app().page=="chat"}
         val late=client.queue();ui.onNodeWithTag("message-input").performTextInput("唯一用户消息");ui.onNodeWithTag("send-message").performTouchInput{doubleClick(delayMillis=40)}
-        ui.waitUntil(10000){client.calls.get()==1&&app().turns.isNotEmpty()};val turn=app().turns.last()
+        try{ui.waitUntil(10000){client.calls.get()==1&&app().turns.isNotEmpty()}}catch(error:Throwable){
+            println("RACE_UI_FAILURE repetition=$repetition calls=${client.calls.get()} original=${error.javaClass.simpleName}")
+            runCatching{
+                val instrument=InstrumentationRegistry.getInstrumentation()
+                val dir=java.io.File(instrument.targetContext.getExternalFilesDir(null),"failure-chat-race/${System.currentTimeMillis()}-$repetition-${System.nanoTime()}").apply{mkdirs()}
+                val state=linkedMapOf<String,Any?>("calls" to client.calls.get(),"originalFailure" to error.toString())
+                java.io.File(dir,"state.json").writeText(com.google.gson.Gson().toJson(state))
+                runCatching{val vm=app();state["page"]=vm.page;state["sending"]=vm.chatSending;state["turns"]=vm.turns;state["preview"]=vm.chatPreview}
+                    .onFailure{state["viewModelError"]=it.toString()}
+                state["imeVisible"]=runCatching{androidx.core.view.ViewCompat.getRootWindowInsets(ui.activity.window.decorView)?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime())}.fold({it},{"captureError:${it.javaClass.simpleName}"})
+                state["sendBounds"]=runCatching{ui.onNodeWithTag("send-message").fetchSemanticsNode().boundsInRoot.toString()}.getOrElse{"captureError:${it.javaClass.simpleName}"}
+                java.io.File(dir,"state.json").writeText(com.google.gson.Gson().toJson(state))
+                runCatching{val bitmap=instrument.uiAutomation.takeScreenshot();try{java.io.File(dir,"screen.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}}finally{bitmap.recycle()}}
+                    .onFailure{java.io.File(dir,"screenshot-error.txt").writeText(it.toString())}
+            }.onFailure{println("RACE_UI_CAPTURE_ERROR ${it.javaClass.simpleName}")}
+            throw error
+        };val turn=app().turns.last()
         lateinit var oldJob:Job
         ui.runOnIdle{
             val runner=AppState::class.java.getDeclaredField("runner").apply{isAccessible=true}.get(app())

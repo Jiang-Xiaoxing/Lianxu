@@ -26,16 +26,25 @@ class ChatTimeFooterTest {
     @Test fun fullDateWeekdayAndYearSurviveTheYearBoundary(){
         val at=Instant.parse("2026-12-31T16:05:00Z")
         val m=build(Instant.parse("2026-12-30T16:05:00Z"),at).request.messages
+        assertEquals("system",m.last().role);assertTrue(m.last().turnContext)
         assertTrue(m.last().content.contains("2027年1月1日 星期五 00:05"))
         assertTrue(m.last().content.contains("约 1 天"))
-        assertTrue(m.first{it.sourceMessageId=="1"}.content.startsWith("[昨天 00:05]"))
+        assertTrue(m.last().content.contains("第1条（对方）：昨天 00:05"))
+        assertEquals(raw,m.first{it.sourceMessageId=="1"}.content)
+        assertEquals(0,m.first{it.sourceMessageId=="1"}.sourcePrefix)
         assertFalse(m.last().content.contains("+08:00"))
+        val reply=m.first{it.sourceMessageId=="2"}
+        assertEquals("assistant",reply.role);assertEquals("好的",reply.content);assertEquals(0,reply.sourcePrefix)
+        assertTrue(m.last().content.contains("第2条（我）：昨天 00:05"))
     }
     @Test fun footerAndHistoryUseTheSameExplicitTimezone(){
         for((tz,date,previousLabel) in listOf(Triple(ZoneId.of("Asia/Shanghai"),"2027年1月1日 星期五 08:05","[今天 07:55]"),Triple(ZoneId.of("America/Los_Angeles"),"2026年12月31日 星期四 16:05","[今天 15:55]"))){
             val m=build(now.minusSeconds(600),tz=tz).request.messages
+            assertEquals("system",m.last().role);assertTrue(m.last().turnContext)
             assertTrue(m.last().content.contains(date));assertTrue(m.last().content.contains("约 10 分钟"))
-            assertTrue(m.first{it.sourceMessageId=="1"}.content.startsWith(previousLabel))
+            assertTrue(m.last().content.contains("第1条（对方）：${previousLabel.removeSurrounding("[","]")}"))
+            assertEquals(raw,m.first{it.sourceMessageId=="1"}.content)
+            assertEquals(0,m.first{it.sourceMessageId=="1"}.sourcePrefix)
         }
     }
     @Test fun futureHistoryKeepsTheWarningRatherThanClampingToJustNow(){
