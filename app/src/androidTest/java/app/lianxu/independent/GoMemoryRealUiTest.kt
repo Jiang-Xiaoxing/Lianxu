@@ -8,6 +8,8 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.lifecycle.ViewModelProvider
+import androidx.work.WorkManager
 import com.google.gson.Gson
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
@@ -17,12 +19,17 @@ import org.junit.Test
 import org.junit.rules.ExternalResource
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.TimeUnit
 import javax.net.ssl.HttpsURLConnection
 
 /** Opt-in actual UI and production runner/tools/SQLite; only the data/vault and observer are isolated. */
 class GoMemoryRealUiTest {
-    private val supplement get()=InstrumentationRegistry.getArguments().getString("controlledSupplement")=="true"
-    private val inputs get()=if(supplement)listOf(
+    private val contactMode get()=InstrumentationRegistry.getArguments().getString("controlledContact")=="true"
+    private val supplement get()=!contactMode&&InstrumentationRegistry.getArguments().getString("controlledSupplement")=="true"
+    private val inputs get()=if(contactMode)listOf(
+        "我是虚构旅人青禾。我喜欢的茶叫雨巷桂花乌龙，请把这个茶名偏好记住。另外，请大约30秒后主动来问我杯子里的茶凉了没有；这次问过就不再续约。",
+        "我刚才说喜欢喝哪一种茶？别只靠这会儿的聊天，翻翻你保存的那条记忆再告诉我。",
+        "那请读取现在还有效的角色记忆，确认我喜欢的茶名，照记忆原文复述给我。")else if(supplement)listOf(
         "我在这个纯虚构故事里长期喜欢喝桂花乌龙，请把这条饮茶偏好保存到记忆里。",
         "这轮是回想工具验收：请先实际调用 agent_recall_search 检索“桂花乌龙”，依据工具命中的记忆回复。即使你从上下文已知道，也请真正执行这次检索；查不到就如实说查不到。",
         "我不能喝咖啡，喝了会心慌。明天我打算去青榕书店借一本植物图鉴。")else listOf(
@@ -32,7 +39,8 @@ class GoMemoryRealUiTest {
         "请实际查一下我们前面的聊天原话，看看我什么时候过生日、什么时候看展，找到后用一句话告诉我。",
         "请实际从已存记忆里回想我的生日和饮食偏好，再告诉我。不要凭空猜。",
         "谢谢。现在不用查也不用记，陪我安静聊一句喝茶的事就好。")
-    private val friendId="fictional-ui-memory-20261115"
+    private val friendId get()=if(contactMode)"fictional-ui-contact-20261115"else"fictional-ui-memory-20261115"
+    private val friendName get()=if(contactMode)"知夏"else"明溪"
     private val shared=ControlledGoTimeReferenceTest()
     private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
     private val rows=mutableListOf<JSONObject>()
@@ -41,14 +49,16 @@ class GoMemoryRealUiTest {
     private val preflight=JSONArray()
     private val lock=Any()
     private val calls=AtomicInteger()
+    private val inFlight=AtomicInteger()
     private var status="incomplete"
     private var summary:JSONObject?=null
+    private var contactObservation:JSONObject?=null
     private fun save()=synchronized(lock){
         File(shared.folder,"ui.json").writeText(JSONObject().put("phase","ui").put("status",status)
             .put("purelySynthetic",true).put("realUiRunnerChain",true).put("realChatRead",false)
             .put("maxUserTurns",inputs.size).put("maxMainRequestsIncludingTools",30).put("automaticTestRetries",0)
             .put("requestCount",calls.get()).put("requests",JSONArray(rows)).put("turns",turns)
-            .put("completedCount",turns.length()).put("capsuleSamples",samples).put("preflight",preflight).put("summary",summary).toString(2))
+            .put("completedCount",turns.length()).put("capsuleSamples",samples).put("preflight",preflight).put("summary",summary).put("contactObservation",contactObservation).toString(2))
     }
     private fun <T> stored(block:suspend(Store)->T):T=runBlocking{
         val store=Store(context,shared.database);try{block(store)}finally{store.close()}
@@ -60,6 +70,15 @@ class GoMemoryRealUiTest {
             .put("pills",JSONArray(ChatMemoryPills.read(store.readableDatabase,friendId).map{JSONObject(Gson().toJson(it))}))
             .put("task",JSONObject(Gson().toJson(repo.memoryStatus(friendId))))
             .put("batches",store.readableDatabase.rawQuery("SELECT id,state,attempt,error FROM memory_batches WHERE friend_id=? ORDER BY rowid",arrayOf(friendId)).use{c->JSONArray().apply{while(c.moveToNext())put(JSONObject().put("id",c.getString(0)).put("state",c.getString(1)).put("attempt",c.getInt(2)).put("error",c.getString(3)))}})
+            .apply{if(contactMode){
+                val companion=CompanionRepository(store)
+                put("contactPolicy",companion.policy(friendId))
+                put("opportunities",store.readableDatabase.rawQuery("SELECT id,state,not_before,attempt,reason,fail_kind,fail_at FROM companion_opportunities WHERE role=? ORDER BY rowid",arrayOf(friendId)).use{c->JSONArray().apply{while(c.moveToNext())put(JSONObject().put("id",c.getString(0)).put("state",c.getString(1)).put("notBefore",c.getLong(2)).put("attempt",c.getInt(3)).put("reason",c.getString(4)).put("failKind",c.getString(5)).put("failAt",if(c.isNull(6))null else c.getLong(6)))}})
+                put("receipts",JSONArray(companion.receipts(friendId).map{JSONObject(Gson().toJson(it))}))
+                put("receiptLinks",store.readableDatabase.rawQuery("SELECT message_id,opportunity_id,delivery FROM companion_receipts WHERE role=? AND opportunity_id IS NOT NULL",arrayOf(friendId)).use{c->JSONArray().apply{while(c.moveToNext())put(JSONObject().put("messageId",c.getLong(0)).put("opportunityId",c.getString(1)).put("delivery",c.getString(2)))}})
+                put("messages",JSONArray(store.messagesFor(friendId).map{JSONObject().put("id",it.id).put("mine",it.mine).put("text",it.text).put("created",it.created)}))
+                put("contactFailure",companion.latestContactFailure(friendId)?.let{JSONObject(Gson().toJson(it))})
+            }}
     }
     private fun shot(name:String){
         val bitmap=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
@@ -72,7 +91,10 @@ class GoMemoryRealUiTest {
             check(config.providerId=="opencode-go"&&config.modelId=="deepseek-v4.1-flash"&&config.baseUrl=="https://opencode.ai/inference/go/openai/v1")
             check(ConservativeTokens.tokens(Gson().toJson(request))+2048<=24000&&request.outputLimit<=4096){"Synthetic complete request size budget"}
             val row=JSONObject().put("stream",event!=null).put("purpose",Diagnostics.traceState.get()?.purpose)
-                .put("startedAt",System.currentTimeMillis()).put("input",request.latestUserText())
+                .put("startedAt",System.currentTimeMillis()).put("input",if(request.messages.any{it.role=="user"})request.latestUserText()else"[system-only request]")
+                .put("reconsider",request.messages.any{"[companion.reconsider.v1]" in it.content})
+                .put("toolResults",JSONArray(request.messages.filter{it.role=="tool"}.map{JSONObject().put("name",it.name).put("callId",it.toolCallId).put("output",Diagnostics.redact(it.content,listOf(key)))}))
+            if(contactMode&&request.messages.any{it.role=="tool"&&it.name==ImmediateContact.NAME})row.put("contactStateBeforeCall",snapshot())
             synchronized(lock){rows.add(row);save()}
             val real=HttpsTextChatClient(HttpsConnectionFactory{url->
                 check(url.toExternalForm()=="https://opencode.ai/inference/go/openai/v1/chat/completions")
@@ -91,10 +113,12 @@ class GoMemoryRealUiTest {
                 }
             })
             val start=System.nanoTime()
+            inFlight.incrementAndGet()
             val result=try{if(event==null)real.complete(config,key,request)else real.streamEvents(config,key,request){chunk->
                 if(chunk is TextStreamEvent.Content)synchronized(lock){if(!row.has("firstContentAtMs"))row.put("firstContentAtMs",(System.nanoTime()-start)/1_000_000)}
                 event(chunk)
-            }}finally{synchronized(lock){row.put("elapsedMs",(System.nanoTime()-start)/1_000_000)}}
+            }}catch(e:kotlinx.coroutines.CancellationException){synchronized(lock){row.put("status","cancelled");save()};throw e}
+            finally{inFlight.decrementAndGet();synchronized(lock){row.put("elapsedMs",(System.nanoTime()-start)/1_000_000)}}
             synchronized(lock){
                 when(result){
                     is TextChatResult.Success->{row.put("status","success").put("returnedToolCalls",JSONArray(result.toolCalls.map{JSONObject().put("name",it.name).put("arguments",it.arguments)}));if(event==null)row.put("returnedStructuredText",Diagnostics.redact(result.text,listOf(key)))}
@@ -119,7 +143,7 @@ class GoMemoryRealUiTest {
                     val c=checkNotNull(SelectedModelTestAccess.credential(v,ModelPurpose.CHAT))
                     check(c.config.id=="synthetic-go-model")
                     v.save(c.config.copy(outputTokens=4096),c.key);v.setPurpose(ModelPurpose.MEMORY,c.config.id)
-                    store.add(listOf(Friend(friendId,"明溪","温和自然的虚构茶室角色，只用简短中文回应。本次对话和用户资料全是验收用虚构内容。")),true)
+                    store.add(listOf(Friend(friendId,friendName,"温和自然的虚构茶室角色，只用简短中文回应。本次对话和用户资料全是验收用虚构内容。")),true)
                     val rules=MemoryRules(recentRounds=40,summaryRounds=inputs.size,immediateWrite=true)
                     store.writableDatabase.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",MemoryRules.KEY);put("value",rules.json().put("version",1).toString())},SQLiteDatabase.CONFLICT_REPLACE)
                     val code=InstalledBuild.read(context).versionCode
@@ -138,9 +162,24 @@ class GoMemoryRealUiTest {
                     }
                     save()
                 }
-            }catch(e:Throwable){restore();throw AssertionError("Isolated fixture failed: ${e.javaClass.simpleName}")}
+            }catch(e:Throwable){if(!contactMode)restore();throw AssertionError("Isolated fixture failed: ${e.javaClass.simpleName}")}
         }
-        override fun after(){try{save()}finally{restore()}}
+        override fun after(){try{
+            if(contactMode){
+                val cleanup=JSONObject().put("servicesKeptIsolatedUntilHostForceStop",true)
+                try{
+                    stored{CompanionRepository(it).setPolicy(friendId,false,CompanionRuntime.owner)};cleanup.put("rolePaused",true)
+                    val manager=WorkManager.getInstance(context)
+                    manager.cancelAllWorkByTag("companion:$friendId").result.get(15,TimeUnit.SECONDS);cleanup.put("roleCancelOperationCompleted",true)
+                    val until=System.nanoTime()+TimeUnit.SECONDS.toNanos(8)
+                    var settled=false
+                    while(!settled&&System.nanoTime()<until){settled=inFlight.get()==0&&manager.getWorkInfosByTag("companion:$friendId").get(2,TimeUnit.SECONDS).all{it.state.isFinished};if(!settled)Thread.sleep(50)}
+                    cleanup.put("requestsAndWorkStatesSettled",settled).put("inFlight",inFlight.get())
+                    if(!settled)cleanup.put("cleanupFailed",true).put("reason","role_shutdown_wait_expired")
+                }catch(e:Throwable){cleanup.put("errorType",e.javaClass.simpleName).put("cleanupFailed",true)}
+                synchronized(lock){contactObservation=(contactObservation?:JSONObject()).put("roleCleanup",cleanup);save()}
+            };save()
+        }finally{if(!contactMode)restore() /* Contact host force-stops before reopening cleanup; no default-DB window. */}}
     }
     @get:Rule(order=1) val ui=createAndroidComposeRule<MainActivity>()
     private fun waitReal(limit:Long,predicate:()->Boolean){
@@ -154,8 +193,18 @@ class GoMemoryRealUiTest {
         try{
             Diagnostics.configure(File(context.filesDir,"diagnostics/${shared.namespace}"),"controlled-ui-20261115");Diagnostics.detailed=false;diagnosticOwned=true
             ui.waitUntil(30000){ui.onAllNodesWithTag("tab-0").fetchSemanticsNodes().isNotEmpty()};ui.onNodeWithTag("tab-0").performClick()
-            ui.waitUntil(30000){ui.onAllNodesWithText("明溪").fetchSemanticsNodes().isNotEmpty()};ui.onNodeWithText("明溪").performClick()
+            ui.waitUntil(30000){ui.onAllNodesWithText(friendName).fetchSemanticsNodes().isNotEmpty()};ui.onNodeWithText(friendName).performClick()
+            if(contactMode){
+                ui.onNodeWithTag("chat-role-detail").performClick();ui.onNodeWithTag("role-companion-open").performScrollTo().performClick()
+                ui.waitUntil(10000){runCatching{ui.onNodeWithTag("companion-enabled").assertIsEnabled();true}.getOrDefault(false)}
+                ui.onNodeWithTag("companion-enabled").performClick()
+                ui.waitUntil(10000){stored{CompanionRepository(it).policy(friendId)}=="enabled"}
+                if(ui.onAllNodesWithTag("companion-background-close").fetchSemanticsNodes().isNotEmpty())ui.onNodeWithTag("companion-background-close").performClick()
+                val enabled=snapshot();synchronized(lock){contactObservation=JSONObject().put("enabledFromActualUi",true).put("enabledSnapshot",enabled);save()};shot("ui-contact-enabled")
+                ui.runOnIdle{ViewModelProvider(ui.activity)[AppState::class.java].open("chat",friendId)}
+            }
             inputs.forEachIndexed{i,input->
+                if(contactMode&&i==2&&synchronized(lock){(0 until turns.length()).any{n->val a=turns.getJSONObject(n).getJSONArray("toolActivities");(0 until a.length()).any{a.getJSONObject(it).optString("tool")=="agent_memory_read"&&a.getJSONObject(it).optString("state")=="success"}}})return@forEachIndexed
                 ui.mainClock.autoAdvance=true
                 if(supplement&&i==2)stored{store->store.savePreference(MemoryRules.KEY,MemoryRules(recentRounds=40,summaryRounds=inputs.size,immediateWrite=false).json().put("version",2).toString())}
                 ui.waitUntil(30000){ui.onAllNodes(hasTestTag("message-input") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
@@ -181,10 +230,11 @@ class GoMemoryRealUiTest {
                 val turn=ledger().last();val reply=stored{store->store.messagesFor(friendId).firstOrNull{it.id==turn.assistantMessageId}?.text.orEmpty()}
                 val row=JSONObject().put("turn",i+1).put("input",input).put("reply",reply).put("state",turn.state.name)
                     .put("completedAtMs",System.currentTimeMillis()-started).put("toolActivities",JSONArray(turn.toolActivities.map{JSONObject(Gson().toJson(it))})).put("stored",snapshot())
+                    .put("userMessageId",turn.userMessageId).put("sourceRevision",stored{store->store.readableDatabase.rawQuery("SELECT source_revision FROM chat_turns WHERE id=?",arrayOf(turn.id)).use{check(it.moveToFirst());it.getLong(0)}})
                 synchronized(lock){turns.put(row);save()}
                 val settle=System.currentTimeMillis();waitReal(2500){sample();System.currentTimeMillis()-settle>=2000}
-                row.put("firstReplyNodeAtMs",firstVisible)
-                row.put("uiEqualsStoredReply",turn.assistantMessageId?.let{id->ui.onAllNodes(hasTestTag("message-$id") and hasText(reply)).fetchSemanticsNodes().isNotEmpty()}?:false)
+                val uiMatches=turn.assistantMessageId?.let{id->ui.onAllNodes(hasTestTag("message-$id") and hasText(reply)).fetchSemanticsNodes().isNotEmpty()}?:false
+                synchronized(lock){row.put("firstReplyNodeAtMs",firstVisible).put("uiEqualsStoredReply",uiMatches);save()}
                 shot("ui-${i+1}")
                 if(supplement){
                     var expanded=false
@@ -200,7 +250,7 @@ class GoMemoryRealUiTest {
                                 if(ready)loaded=content
                                 ready
                             }
-                            expanded=true;row.put("expandedRecallText",JSONArray(loaded));shot("ui-${i+1}-recall-expanded")
+                            expanded=true;synchronized(lock){row.put("expandedRecallText",JSONArray(loaded));save()};shot("ui-${i+1}-recall-expanded")
                             ui.onNodeWithTag(tag).performClick()
                         }
                     }
@@ -208,6 +258,32 @@ class GoMemoryRealUiTest {
                 }
                 check(turn.state==TurnState.COMPLETED){"Actual UI turn failed"}
             }
+            if(contactMode){
+                ui.mainClock.autoAdvance=true
+                ui.runOnIdle{ViewModelProvider(ui.activity)[AppState::class.java].home()}
+                val before=snapshot()
+                val first=turns.getJSONObject(0);val expectedId="$friendId:${first.getLong("userMessageId")}:${first.getLong("sourceRevision")}"
+                val evidence=synchronized(lock){rows.firstOrNull{r->r.optString("input")==inputs.first()&&r.optJSONArray("toolResults")?.let{a->(0 until a.length()).any{n->val t=a.getJSONObject(n);t.optString("name")==ImmediateContact.NAME&&runCatching{JSONObject(t.getString("output")).optBoolean("success")}.getOrDefault(false)}}==true}?.let{JSONObject(it.toString())}}
+                val initial=evidence?.optJSONObject("contactStateBeforeCall")?.optJSONArray("opportunities")
+                val original=(0 until (initial?.length()?:0)).map{initial!!.getJSONObject(it)}.firstOrNull{it.getString("id")==expectedId}
+                synchronized(lock){contactObservation=(contactObservation?:JSONObject()).put("beforeWait",before).put("waitStartedAt",System.currentTimeMillis()).put("expectedIdFromRealSource",expectedId).put("successToolEvidence",evidence).put("originalOpportunity",original);save()}
+                if(original!=null){
+                    val initialDue=mapOf(expectedId to original.getLong("notBefore"))
+                    val until=System.nanoTime()+TimeUnit.SECONDS.toNanos(170)
+                    var ended=false
+                    while(!ended&&System.nanoTime()<until){
+                        Thread.sleep(250)
+                        val state=snapshot();synchronized(lock){contactObservation!!.put("afterWait",state).put("observedAt",System.currentTimeMillis());save()}
+                        val opportunities=state.getJSONArray("opportunities")
+                        val links=state.getJSONArray("receiptLinks")
+                        ended=(0 until links.length()).any{links.getJSONObject(it).getString("opportunityId") in initialDue}||(0 until opportunities.length()).any{n->val o=opportunities.getJSONObject(n);o.getString("id") in initialDue&&(o.getString("state") in setOf("send","silent","cancel","cancelled","failed")||o.getString("state")=="queued"&&o.getLong("notBefore")!=initialDue[o.getString("id")])}
+                    }
+                    synchronized(lock){contactObservation!!.put("observedStateChange",ended);save()}
+                }else synchronized(lock){contactObservation!!.put("firstArrangementNotConfirmed",true);save()}
+                shot("ui-contact-after-wait")
+                ui.runOnIdle{ViewModelProvider(ui.activity)[AppState::class.java].open("chat",friendId)}
+                ui.waitForIdle();shot("ui-contact-final-chat")
+            }else{
             ui.mainClock.autoAdvance=true
             ui.onNodeWithTag("chat-role-detail").performClick();ui.onNodeWithTag("role-processing-open").performScrollTo().performClick()
             ui.onNodeWithText("更多").performClick();ui.onNodeWithTag("memory-maintenance").performClick()
@@ -220,6 +296,7 @@ class GoMemoryRealUiTest {
             }
             summary=JSONObject().put("triggeredFromUi",true).put("elapsedMs",System.currentTimeMillis()-start).put("before",before).put("after",snapshot())
             shot("ui-summary");save()
+            }
             status="completed_pending_independent_review"
         }catch(e:Throwable){status="failed";shot("ui-failed");throw AssertionError("Actual UI validation failed: ${e.javaClass.simpleName}")}
         finally{
