@@ -107,7 +107,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
     }
     private fun writeDefinition():Map<String,Any> {
         fun field(type:String,description:String)=mapOf("type" to type,"description" to description)
-        return mapOf("type" to "function","function" to mapOf("name" to "agent_memory_update","description" to "根据本次上下文提供的有效用户原话S编号存记忆或澄清待确认记忆；S1为当前句，历史事实用相应S编号。相对日期按所引原话当时时间计算，不能省略日期逃避检查。写入随最终回复同一事务完成，保留人工/锁定保护。",
+        return mapOf("type" to "function","function" to mapOf("name" to "agent_memory_update","description" to """根据本次上下文提供的有效用户原话S编号存记忆或澄清待确认记忆；S1为当前句，历史事实用相应S编号。记录日期事实时，即使content概括后省去了时间词，也必须提供含对应完整时间词的quote和time_text；相对日期按所引原话当时的日期、时区计算。例如S2原话为“明天，我去看展”，可调用{"op":"add","content":"我计划去看展","quote":"明天，我去看展","evidence":["S2"],"time_text":"明天","date_type":"day"}。非日期事实只引用对应证据，不绑定同句其他事实的日期。写入随最终回复同一事务完成，保留人工/锁定保护。""",
             "parameters" to mapOf("type" to "object","properties" to mapOf(
                 "op" to mapOf("type" to "string","enum" to listOf("add","update","cancel","complete","retract")),
                 "target" to field("string","已有记忆或待确认的M编号；add不填"),"content" to field("string","忠于所选用户证据提取或概括记忆，不必复制整句话；不要混入助手或人设的事实"),

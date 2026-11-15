@@ -134,6 +134,21 @@ class ImmediateMemoryEvidenceTest {
         rejected("DATE_EVIDENCE"){ImmediateMemoryEvidence.dates(args(text=november.snapshot,time="1月20日"),november,november.snapshot)}
         assertEquals(null to "11-20",ImmediateMemoryEvidence.dates(args(text=november.snapshot,time="11月20日"),november,november.snapshot))
     }
+    @Test fun datedParaphraseWithPromptExampleKeepsDateFromOriginalSource(){
+        val old=proof(1,"明天，我去看展","2026-11-15T04:30:00Z","America/New_York") // Nov 14 locally.
+        val op=JSONObject("""{"op":"add","content":"我计划去看展","quote":"明天，我去看展","evidence":["S2"],"time_text":"明天","date_type":"day"}""")
+        val selected=ImmediateMemoryEvidence.quote(ImmediateMemoryEvidence.select(op,aliases(old)),op)
+        val staged=ImmediateMemoryEvidence.stamp(selected,op)
+        val verified=ImmediateMemoryEvidence.revalidate(staged,listOf(old,confirmation))
+        val dates=ImmediateMemoryEvidence.dates(staged,verified,op.getString("content"))
+        assertEquals("2026-11-15" to null,dates)
+        assertNotEquals(MemoryDates.resolve("明天",confirmation.sourceAt,confirmation.zone),dates.first)
+        val memory=StoredMemory("exhibition","role",MemoryCategory.STATE_FACT,op.getString("content"),evidence=listOf(verified),eventDate=dates.first,dateType="day",about=MemoryAbout.USER)
+        val restored=StoredMemory.from(memory.json())
+        assertEquals("我计划去看展",restored.text);assertEquals("2026-11-15",restored.eventDate)
+        assertEquals(old.snapshot,restored.evidence.single().quote);assertEquals(old.snapshot,restored.evidence.single().snapshot)
+        assertEquals(old.source,restored.evidence.single().source);assertEquals(old.zone,restored.evidence.single().zone)
+    }
     @Test fun currentNonDateParaphraseDoesNotBorrowAnotherFactsDate(){
         val current=proof(3,"我喜欢喝茶。明天去看展。")
         val op=args(alias="S1",text="我爱喝茶",time=null,type=null)
