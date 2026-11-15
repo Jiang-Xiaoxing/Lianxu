@@ -171,7 +171,13 @@ internal fun chatThinkingParts(text:String,breaks:List<ChatThinkingBreak>,tools:
                     .semantics{contentDescription=if(expanded)"收起这条记忆" else "查看这条记忆";stateDescription=if(expanded)"已展开" else "已收起"} else Modifier)
                 .padding(start=12.dp,end=if(canOpen)8.dp else 12.dp,top=6.dp,bottom=6.dp),
                 verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){
-                ChatCapsuleLabel(item.label(),reveal,MaterialTheme.typography.labelMedium,when(item.state){"failed"->MaterialTheme.colorScheme.error;"unknown"->Muted;else->GreenText})
+                val memoryWrite=item.tool=="agent_memory_update"
+                val resultColor=when{
+                    item.state=="failed"->MaterialTheme.colorScheme.error
+                    item.state=="unknown"||(memoryWrite&&!item.canOpenMemory)->Muted
+                    else->GreenText
+                }
+                ChatCapsuleLabel(item.label(),reveal,MaterialTheme.typography.labelMedium,resultColor,loading=if(memoryWrite)"正在记住"else"正在处理…")
                 if(canOpen)Box(Modifier.rotate(if(expanded)0f else 180f)){ControlIcon("up",androidx.compose.ui.graphics.lerp(Muted,GreenText,reveal),14.dp)}
             }
         }

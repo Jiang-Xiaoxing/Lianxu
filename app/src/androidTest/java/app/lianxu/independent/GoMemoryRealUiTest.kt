@@ -290,7 +290,7 @@ class GoMemoryRealUiTest {
                     val labels=newTags.flatMap{tag->ui.onAllNodes(hasAnyAncestor(hasTestTag(tag)),useUnmergedTree=true).fetchSemanticsNodes().flatMap{it.config.getOrNull(SemanticsProperties.Text).orEmpty().map{t->t.text}}}
                     val sample=labels.joinToString("|")
                     if(sample!=lastSample){synchronized(lock){samples.put(JSONObject().put("turn",i+1).put("atMs",System.currentTimeMillis()-started).put("capsuleTags",JSONArray(newTags)).put("labels",JSONArray(labels)))};lastSample=sample}
-                    if(!loadingShot&&labels.any{it in listOf("正在处理…","让我想一想")}){shot("ui-${i+1}-loading");loadingShot=true}
+                    if(!loadingShot&&labels.any{it in listOf("正在处理…","正在记住","让我想一想")}){shot("ui-${i+1}-loading");loadingShot=true}
                     if(firstVisible==null)ledger().lastOrNull{it.id !in priorTurns}?.assistantMessageId?.let{id->if(ui.onAllNodesWithTag("message-$id").fetchSemanticsNodes().isNotEmpty())firstVisible=System.currentTimeMillis()-started}
                 }
                 waitReal(240000){

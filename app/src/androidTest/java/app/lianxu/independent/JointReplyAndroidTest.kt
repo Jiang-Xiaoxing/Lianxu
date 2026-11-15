@@ -167,7 +167,7 @@ class JointReplyAndroidTest {
         assertEquals(TurnState.COMPLETED,turn.state)
         // The control withdrew the source the staged candidate cited; the turn then committed.
         val stage=turn.toolActivities.single{it.tool=="agent_memory_update"}
-        assertEquals("failed",stage.state);assertEquals("没记下",stage.label())
+        assertEquals("failed",stage.state);assertEquals("没记住",stage.label())
         assertEquals("根据后续操作，这条没有保存",stage.detail)
         assertTrue(repo.memories("a").none{it.text=="会被丢掉的事实"})
     }

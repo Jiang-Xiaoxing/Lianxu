@@ -34,13 +34,13 @@ class ChatToolActivityTest {
         assertEquals("success",ChatToolJournal.settleRows(listOf(memory.copy(memoryId="mem-1")),1,true,false,true).single().state)
         // 只留下待确认候选、没有正式记录时不能报已保存。
         val candidate=ChatToolJournal.settleRows(listOf(memory),1,true,false,true).single()
-        assertEquals("failed",candidate.state);assertEquals("没记下",candidate.label())
+        assertEquals("failed",candidate.state);assertEquals("没记住",candidate.label())
         assertEquals("这条还在待确认，没有写成记忆",candidate.detail);assertFalse(candidate.canOpenMemory)
         // A control in the same turn discards the staged memory candidates; the capsule says so.
         assertEquals("failed",ChatToolJournal.settleRows(listOf(memory),1,true,false,false).single().state)
         // Cancelled or failed before commit: the same honest "not saved" wording, never a success.
         val memoryCancel=ChatToolJournal.settleRows(listOf(memory),1,false,false,false).single()
-        assertEquals("failed",memoryCancel.state);assertEquals("没记下",memoryCancel.label())
+        assertEquals("failed",memoryCancel.state);assertEquals("没记住",memoryCancel.label())
         assertEquals("回话没完成，这条没存下",memoryCancel.detail)
         val running=start(CompanionRecord.NAME,"{}")
         assertEquals("unknown",ChatToolJournal.settleRows(listOf(running),1,false,false,false).single().state)
@@ -67,7 +67,7 @@ class ChatToolActivityTest {
         // 搜聊天与读原话 share one phrase.
         assertEquals("让我查一下聊天记录",label("agent_history_search","""{"terms":["生日"]}"""))
         assertEquals("让我查一下聊天记录",label("agent_history_read","""{"message_id":"1"}"""))
-        assertEquals("嗯…我记住了",label("agent_memory_update","""{"op":"add"}"""))
+        assertEquals("正在记住",label("agent_memory_update","""{"op":"add"}"""))
         assertEquals("让我想想以前",label(RelationshipRecall.NAME))
     }
     /** Failure replaces the whole text in the same pill; it is never glued onto the phrase. */
@@ -77,15 +77,30 @@ class ChatToolActivityTest {
         assertEquals("没想起来",label("agent_history_read","{}",mapOf("status" to "context_full")))
         assertEquals("没想起来",label(RelationshipRecall.NAME,"{}",mapOf("status" to "quota_exhausted")))
         val writeFailed=label("agent_memory_update","""{"op":"add"}""",mapOf("success" to false))
-        assertEquals("没记下",writeFailed);assertFalse(writeFailed.contains("嗯…我记住了"))
+        assertEquals("没记住",writeFailed);assertFalse(writeFailed.contains("嗯…我记住了"))
     }
-    @Test fun runningAndSuccessKeepTheSamePhrase(){
+    @Test fun immediateMemoryWriteUsesPendingUntilItsCommitIsConfirmed(){
         val running=start("agent_memory_update","""{"op":"add"}""")
-        assertEquals("嗯…我记住了",running.label())
-        assertEquals("嗯…我记住了",ChatToolJournal.result(running,mapOf("success" to true,"status" to "staged_until_reply_commit")).label())
+        assertEquals("正在记住",running.label())
+        assertEquals("正在记住",ChatToolJournal.result(running,mapOf("success" to true,"status" to "staged_until_reply_commit")).label())
         val read=start("agent_recall_search","""{"query":"生日"}""")
         assertEquals("让我想一想",read.label())
         assertEquals("想起来了",ChatToolJournal.result(read,mapOf("success" to true,"results" to listOf(mapOf("id" to "1")))).label())
+    }
+    @Test fun historicalMemoryTitlesFollowTheirConfirmedStateWithoutRewritingTheReceipt(){
+        val old=ChatToolActivity("legacy",1,"嗯…我记住了","staged",kind=ChatToolActivity.WRITE,tool="agent_memory_update")
+        assertEquals("正在记住",old.label())
+        assertEquals("我记住了",old.copy(state="success",memoryId="saved-row").label())
+        assertEquals("没记住",old.copy(state="failed").label())
+        assertEquals("结果未确认",old.copy(state="success").label())
+        assertEquals("结果未确认",old.copy(state="success",memoryId="").label())
+        assertFalse(old.copy(state="success",memoryId="").canOpenMemory)
+        assertFalse(old.copy(state="success",memoryId=" ").canOpenMemory)
+        assertEquals("failed",ChatToolJournal.settleRows(listOf(old.copy(memoryId=" ")),1,true,false,true).single().state)
+        assertEquals("结果未确认",old.copy(state="unknown").label())
+        assertEquals("旧title不被改写","嗯…我记住了",old.title)
+        assertEquals("嗯…我记住了",old.copy(tool=CompanionRecord.NAME).label())
+        assertEquals("没记下",old.copy(tool=CompanionRecord.NAME,state="failed").label())
     }
     /** 回想成功（含命中但已在本轮参考资料里被去重）说“想起来了”；真没命中只留一颗“没想起来”。 */
     @Test fun recallFoundSaysRememberedAndRealMissKeepsOneCleanCapsule(){
@@ -130,7 +145,7 @@ class ChatToolActivityTest {
         assertEquals("failed",blocked.state);assertEquals("没想起来",blocked.label());assertEquals("这一页超出容量，没取到内容",blocked.detail)
         // Write receipts never turn into "not found" because of an unrelated list field.
         val write=ChatToolJournal.result(start("agent_memory_update","""{"op":"add"}"""),mapOf("success" to true,"results" to emptyList<Any>()))
-        assertEquals("success",write.state);assertEquals("嗯…我记住了",write.label())
+        assertEquals("success",write.state);assertEquals("结果未确认",write.label())
     }
     /** The stage digest is what the reply transaction later maps to the row that was really written. */
     @Test fun aStagedWriteKeepsTheOperationItsCommitWillLookUp(){
@@ -153,7 +168,7 @@ class ChatToolActivityTest {
         assertFalse(base.copy(state="failed").canOpenMemory)
         // A settled failure for a staged write drops the link so the pill stays shut and shows 没记下.
         val staged=ChatToolJournal.result(start("agent_memory_update","""{"op":"add"}"""),mapOf("success" to true,"status" to "staged_until_reply_commit","operation" to "d"))
-        assertEquals("没记下",ChatToolJournal.settleRows(listOf(staged),1,false,false,false).single().label())
+        assertEquals("没记住",ChatToolJournal.settleRows(listOf(staged),1,false,false,false).single().label())
     }
     /** What the opened card shows: the current row, or an honest "deleted" when it is gone. */
     @Test fun theOpenedCardShowsTheCurrentRowOrSaysItWasDeleted(){

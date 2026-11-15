@@ -16,16 +16,24 @@ import com.google.gson.reflect.TypeToken
  * as giving up before thinking. [kind] chooses the replacement text only (reads vs writes).
  */
 data class ChatToolActivity(val id:String,val attempt:Int,val title:String,val state:String,val before:String="",val detail:String="",val kind:String?=null,val tool:String?=null,val reasoningAt:Int=0,val reasoningKnown:Boolean=false,val operation:String?=null,val memoryId:String?=null,val recallGroup:String?=null,val recallRefs:List<RecallContentRef?>?=null) {
-    fun label():String = when(state){
+    fun label():String {
+        if(tool=="agent_memory_update")return when(state){
+            "running","staged"->"正在记住"
+            "success"->if(!memoryId.isNullOrBlank())"我记住了"else"结果未确认"
+            "failed"->"没记住"
+            else->"结果未确认"
+        }
+        return when(state){
         "failed"->when(kind){WRITE->"没记下";READ->"没想起来";else->title}
         // A turn that ended before the tool reported keeps the honest "not confirmed" wording.
         "unknown"->title+"，结果未确认"
         // 回想出结果就换成“想起来了”；进行中仍是“让我想一想”。
         "success"->if(tool in RECALL_TOOLS)"想起来了" else title
         else->title
+        }
     }
     /** Only a committed write that points at a real stored row may be opened; a staged/failed receipt never is. */
-    val canOpenMemory:Boolean get()=state=="success"&&memoryId!=null
+    val canOpenMemory:Boolean get()=state=="success"&&memoryId!=null&&(tool!="agent_memory_update"||memoryId.isNotBlank())
     companion object {
         const val READ="read"
         const val WRITE="write"
@@ -160,7 +168,7 @@ internal object ChatToolJournal {
             "running"->item.copy(state="unknown",detail="本轮已结束，操作结果未确认")
             "staged"->{
                 // A memory receipt only counts as saved when this commit really linked it to a stored row.
-                val linked=item.memoryId!=null
+                val linked=!item.memoryId.isNullOrBlank()
                 val saved=committed&&when(item.tool){
                     CompanionRecord.NAME->recordSaved
                     "agent_memory_update"->memorySaved&&linked
@@ -193,7 +201,7 @@ internal object ChatToolJournal {
         val (title,kind)=when(call.name){
             ImmediateContact.NAME->"安排联系" to ChatToolActivity.OTHER
             JointControl.NAME->when(action){"forget"->"遗忘" to ChatToolActivity.OTHER;"correct"->"更正" to ChatToolActivity.OTHER;"stop_reminding"->"停止提醒" to ChatToolActivity.OTHER;else->"记忆操作" to ChatToolActivity.OTHER}
-            "agent_memory_update"->"嗯…我记住了" to ChatToolActivity.WRITE
+            "agent_memory_update"->"正在记住" to ChatToolActivity.WRITE
             CompanionRecord.NAME->"嗯…我记住了" to ChatToolActivity.WRITE
             RelationshipRecall.NAME->"让我想想以前" to ChatToolActivity.READ
             "agent_history_search","agent_history_read"->"让我查一下聊天记录" to ChatToolActivity.READ

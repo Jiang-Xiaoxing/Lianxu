@@ -90,7 +90,7 @@ class RealProviderChatReceiptRecordingTest {
         assertTrue("回执位置必须在思考文本范围内", receipts.all { it.reasoningAt in 0..s.reasoning.length })
         Log.e("REALRECEIPT", "turn=${s.turn.id} attempt=${s.turn.attempt} reasoning_chars=${s.reasoning.length} real_calls=${s.calls} model_requests=${s.requests} receipts=${receipts.size} offsets=${receipts.map { it.reasoningAt }} reply=${s.reply}")
         val id = requireNotNull(s.turn.assistantMessageId)
-        val capsules = ui.onAllNodesWithText("嗯…我记住了").fetchSemanticsNodes()
+        val capsules = ui.onAllNodesWithText("我记住了").fetchSemanticsNodes()
         assertTrue("每颗记忆回执都必须显示在界面里", receipts.all { ui.onAllNodesWithTag("tool-result-${it.id}").fetchSemanticsNodes().isNotEmpty() })
         assertEquals("本次验收只应有记忆写入回执", receipts.size, s.turn.toolActivities.size)
         assertEquals("界面胶囊数量必须等于真实写入数", receipts.size, capsules.size)

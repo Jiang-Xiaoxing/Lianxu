@@ -60,9 +60,10 @@ class ToolReceiptCardBreakUiTest {
         // DB commit precedes AppState reload/Compose publication. Await that actual UI boundary;
         // the following bounds assertions still verify every card and capsule's placement.
         waitFor("thinking-card-message-$id-2")
-        assertEquals("界面必须显示两颗真实回执", 2, ui.onAllNodesWithText("嗯…我记住了").fetchSemanticsNodes().size)
+        ui.waitUntil(5000) { ui.onAllNodesWithText("我记住了").fetchSemanticsNodes().size == 2 }
+        assertEquals("界面必须显示两颗真实回执", 2, ui.onAllNodesWithText("我记住了").fetchSemanticsNodes().size)
         val cards = (0..2).map { ui.onNodeWithTag("thinking-card-message-$id-$it").getUnclippedBoundsInRoot() }
-        val capsules = (0..1).map { ui.onAllNodesWithText("嗯…我记住了")[it].getUnclippedBoundsInRoot() }
+        val capsules = (0..1).map { ui.onAllNodesWithText("我记住了")[it].getUnclippedBoundsInRoot() }
         val body = ui.onNodeWithTag("message-$id").getUnclippedBoundsInRoot()
         assertTrue("第一颗胶囊必须在第一张卡下面：${cards[0].bottom} / ${capsules[0].top}", capsules[0].top >= cards[0].bottom)
         assertTrue("第一颗胶囊必须在第二张卡上面：${capsules[0].bottom} / ${cards[1].top}", capsules[0].bottom <= cards[1].top)
