@@ -23,7 +23,13 @@ class ChatPaymentRetryAndroidTest {
         listOf(ModelPurpose.CHAT,ModelPurpose.MEMORY).forEach{p->val c=ModelConfig(p.key,p.title,"custom","https://example.invalid/v1",p.key,contextTokens=if(p==ModelPurpose.MEMORY)128000 else 32000,outputTokens=2048);vault.save(c,"synthetic-key-only");vault.setPurpose(p,c.id)}
         repo.saveMemoryRules(MemoryRules(1,1,15))
     }
-    @After fun close(){scope.cancel();vault.list().forEach{vault.delete(it.id)};store.close();context.deleteDatabase(name)}
+    @After fun close(){
+        println("PAYMENT_CLEANUP join_begin thread=${Thread.currentThread().name} db=$name")
+        runBlocking{withTimeout(10000){scope.coroutineContext.job.cancelAndJoin()}}
+        println("PAYMENT_CLEANUP join_end db=$name")
+        vault.list().forEach{vault.delete(it.id)};store.close();context.deleteDatabase(name)
+        println("PAYMENT_CLEANUP resources_closed db=$name")
+    }
 
     /**
      * 现在聊天只在按 token 真塞不下、且有可总结的轮数时才等总结（轮数超过近期轮数不再拦）。

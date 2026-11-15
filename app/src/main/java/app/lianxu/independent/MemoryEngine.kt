@@ -158,9 +158,24 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
                 if(forceOne)return ProcessingRun(true,changed=true)
             }
             @Suppress("UNREACHABLE_CODE") ProcessingRun(false,"CAPACITY",didChange)
-        }catch(e:CancellationException){if(e is TimeoutCancellationException)guard.timeout(running.ticket);Diagnostics.event("memory.batch.cancelled",mapOf("character" to friendId,"batch" to running.work?.id));withContext(NonCancellable){attempts.void(running.attempt);running.work?.let{batches.fail(it,if(running.ticket.timedOut)"SUMMARY_TIMEOUT" else "CANCELLED")};if(running.ticket.timedOut){running.work?.let{batches.recordFailure(it,"SUMMARY_TIMEOUT","",running.attempt?.number?:0)};running.configId?.let{modelStatus.recordCall(it,"总结",false,MemoryRepairFeedback.reason("SUMMARY_TIMEOUT"))}};changed()};if(running.ticket.timedOut)ProcessingRun(false,"SUMMARY_TIMEOUT",didChange)else throw e}
+        }catch(e:CancellationException){cancelledSummary(friendId,running,e,didChange)}
         catch(e:Exception){Diagnostics.failure("memory.batch.failed",e,mapOf("character" to friendId,"batch" to running.work?.id));val code=if(e is ProcessingRejected)e.code else "FORMAT";withContext(NonCancellable){running.work?.let{batches.fail(it,code)};changed()};ProcessingRun(false,code,didChange)}
         finally{watchdog.cancel();guard.finish(running.ticket);active.remove(friendId,running)}
+    }
+    private suspend fun cancelledSummary(friendId:String,running:Active,error:CancellationException,didChange:Boolean):ProcessingRun {
+        if(error is TimeoutCancellationException)guard.timeout(running.ticket)
+        Diagnostics.event("memory.batch.cancelled",mapOf("character" to friendId,"batch" to running.work?.id))
+        withContext(NonCancellable){
+            attempts.void(running.attempt)
+            running.work?.let{batches.fail(it,if(running.ticket.timedOut)"SUMMARY_TIMEOUT" else "CANCELLED")}
+            if(running.ticket.timedOut){
+                running.work?.let{batches.recordFailure(it,"SUMMARY_TIMEOUT","",running.attempt?.number?:0)}
+                running.configId?.let{modelStatus.recordCall(it,"总结",false,MemoryRepairFeedback.reason("SUMMARY_TIMEOUT"))}
+            }
+            changed()
+        }
+        if(running.ticket.timedOut)return ProcessingRun(false,"SUMMARY_TIMEOUT",didChange)
+        throw error
     }
     /**
      * Every response, NDJSON or one JSON document, is staged in memory, validated as a whole batch and
