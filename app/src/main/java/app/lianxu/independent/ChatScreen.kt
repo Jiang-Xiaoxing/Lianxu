@@ -47,11 +47,12 @@ private suspend fun LazyListState.showEndOf(index:Int){
 /** Centered history state for a committed memory batch; one line, wraps instead of clipping at large font scales. */
 @Composable internal fun MemorySummaryPill(pill:MemoryPill,onClick:(()->Unit)?=null){
     val shape=RoundedCornerShape(50)
+    val reveal=chatCapsuleReveal(memoryCapsuleKey(pill))
     Row(Modifier.fillMaxWidth().padding(vertical=2.dp).testTag("memory-pill-${pill.batchId}"),horizontalArrangement=Arrangement.Center){
-        Row(Modifier.widthIn(max=280.dp).then(chatCapsuleAnimation(memoryCapsuleKey(pill))).clip(shape).background(Paper).border(.5.dp,Line,shape).then(if(onClick==null)Modifier else Modifier.clickable(role=Role.Button,onClick=onClick)).padding(horizontal=12.dp,vertical=6.dp).testTag("memory-pill-box-${pill.batchId}"),
+        Row(Modifier.widthIn(max=280.dp).clip(shape).background(Paper).border(.5.dp,Line,shape).then(if(onClick==null)Modifier else Modifier.clickable(role=Role.Button,onClick=onClick)).padding(horizontal=12.dp,vertical=6.dp).testTag("memory-pill-box-${pill.batchId}"),
             verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){
-            ControlIcon("memory",GreenText,16.dp)
-            Text(pill.text,style=MaterialTheme.typography.labelMedium,color=GreenText,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
+            ControlIcon("memory",androidx.compose.ui.graphics.lerp(Muted,GreenText,reveal),16.dp)
+            ChatCapsuleLabel(pill.text,reveal,MaterialTheme.typography.labelMedium,GreenText,loading="正在整理…",textAlign=androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
 }

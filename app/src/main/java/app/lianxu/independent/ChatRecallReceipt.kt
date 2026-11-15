@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -37,13 +38,14 @@ import androidx.compose.ui.unit.dp
         group.succeeded->if(dark)Color(0xFF29382E)else Color(0xFFEAF1E9)
         else->Paper
     }
+    val reveal=chatCapsuleReveal(toolCapsuleKey(group.items.first(),LocalChatCapsuleOwner.current),group.items.none{it.state in setOf("running","staged")})
     Column(modifier.testTag("recall-group-${group.id}"),verticalArrangement=Arrangement.spacedBy(4.dp)){
-        Surface(shape=RoundedCornerShape(50),color=background,border=BorderStroke(.5.dp,Line),modifier=Modifier.widthIn(max=280.dp).then(chatCapsuleAnimation(toolCapsuleKey(group.items.first(),LocalChatCapsuleOwner.current))).testTag("tool-result-${group.id}")){
+        Surface(shape=RoundedCornerShape(50),color=lerp(Paper,background,reveal),border=BorderStroke(.5.dp,Line),modifier=Modifier.widthIn(max=280.dp).testTag("tool-result-${group.id}")){
             Row(Modifier.clickable(role=Role.Button){expanded=!expanded}.testTag("recall-toggle-${group.id}")
                 .semantics{contentDescription=if(expanded)"收起回想结果"else"查看回想结果";stateDescription=if(expanded)"已展开"else"已收起"}
                 .padding(start=14.dp,end=10.dp,top=8.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){
-                Text(group.label(),Modifier.weight(1f,fill=false),style=MaterialTheme.typography.labelLarge,color=foreground)
-                Box(Modifier.rotate(if(expanded)0f else 180f)){ControlIcon("up",foreground,16.dp)}
+                ChatCapsuleLabel(group.label(),reveal,MaterialTheme.typography.labelLarge,foreground,Modifier.weight(1f,fill=false),"让我想一想")
+                Box(Modifier.rotate(if(expanded)0f else 180f)){ControlIcon("up",lerp(Muted,foreground,reveal),16.dp)}
             }
         }
         if(expanded)Surface(Modifier.widthIn(max=280.dp).testTag("recall-results-${group.id}"),shape=RoundedCornerShape(14.dp),color=Paper,border=BorderStroke(.5.dp,Line)){

@@ -17,7 +17,7 @@ class ChatCapsuleMotionTest {
         val running=row();val runningKey=toolCapsuleKey(running)
         val first=tracker.advance(frames(running),10).getValue(runningKey)
         val result=tracker.advance(frames(running.copy(state="success")),20).getValue(runningKey)
-        assertTrue(result.serial>first.serial);assertEquals(20L,result.startedAt)
+        assertTrue(result.serial>first.serial);assertEquals(10L,result.startedAt);assertTrue(result.loading(1000))
         val fast=row("fast","failed",tool="other_read")
         assertEquals(30L,tracker.advance(frames(running.copy(state="success"),fast),30).getValue(toolCapsuleKey(fast)).startedAt)
     }
@@ -40,13 +40,13 @@ class ChatCapsuleMotionTest {
         assertFalse(events.containsKey(toolCapsuleKey(old)));assertTrue(events.containsKey(toolCapsuleKey(retried)))
         assertTrue(ChatCapsuleMotionTracker(frames(retried)).advance(frames(retried),20).isEmpty())
     }
-    @Test fun durationIs1500AndLateMountUsesOnlyTimeRemaining(){
+    @Test fun neutralHoldIs1500ThenRealResultFadesFor350AndRemountDoesNotRestart(){
         val event=ChatCapsuleMotionEvent(1,100)
-        assertEquals(1500,event.remaining(100));assertEquals(.5f,event.progress(850),.0001f)
-        assertEquals(250,event.remaining(1350));assertEquals(0,event.remaining(1600));assertEquals(1f,event.progress(99999),0f)
-        assertEquals(1500,event.remaining(0))
-        val tracker=ChatCapsuleMotionTracker(emptyMap());val now=frames(row())
-        tracker.advance(now,100);assertFalse(tracker.advance(now,1599).isEmpty());assertTrue(tracker.advance(now,1600).isEmpty())
+        assertEquals(1850,event.remaining(100));assertTrue(event.loading(1599));assertEquals(0f,event.progress(1599),0f)
+        assertFalse(event.loading(1600));assertEquals(.5f,event.progress(1775),.0001f)
+        assertEquals(175,event.remaining(1775));assertEquals(0,event.remaining(1950));assertEquals(1f,event.progress(99999),0f)
+        val tracker=ChatCapsuleMotionTracker(emptyMap());val now=frames(row(state="success"))
+        tracker.advance(now,100);assertFalse(tracker.advance(now,1949).isEmpty());assertTrue(tracker.advance(now,1950).isEmpty())
     }
     @Test fun mixedMissAndFailureRemainRealFromFirstFrame(){
         val hit=row("hit","success");val failed=row("fail","failed").copy(detail="合成失败")
@@ -61,7 +61,8 @@ class ChatCapsuleMotionTest {
             val r=row(tool=tool);val tracker=ChatCapsuleMotionTracker(emptyMap())
             listOf("running","staged","success","failed","unknown").forEachIndexed{index,state->
                 val actual=r.copy(state=state)
-                assertEquals(index.toLong(),tracker.advance(frames(actual),index.toLong()).getValue(toolCapsuleKey(actual)).startedAt)
+                val event=tracker.advance(frames(actual),index.toLong()).getValue(toolCapsuleKey(actual))
+                assertEquals(0L,event.startedAt);assertEquals(index.toLong(),event.resultAt);assertTrue(event.loading(100))
             }
         }
     }
@@ -76,7 +77,7 @@ class ChatCapsuleMotionTest {
         val r=row(tool="companion_record").copy(kind=ChatToolActivity.WRITE)
         val old=r.copy(id="failed",state="failed")
         val f=chatCapsuleFrames(listOf(old,r,r.copy(state="success")),emptyList())
-        assertEquals(1,f.size);assertTrue(f.getValue(toolCapsuleKey(r)).startsWith("success:"))
+        assertEquals(1,f.size);assertTrue(f.getValue(toolCapsuleKey(r)).startsWith("result|success:"))
         assertFalse(f.containsKey(toolCapsuleKey(old)))
     }
     @Test fun sameToolIdInDifferentTurnsNeverSharesMotion(){
@@ -101,15 +102,46 @@ class ChatCapsuleMotionTest {
         assertEquals(playing,tracker.prepare(frames(r.copy(state="failed")),130))
     }
     @Test fun scaledLifetimeMatchesRemountAndDisabledMotionNeverStarts(){
-        val r=frames(row());val tracker=ChatCapsuleMotionTracker(emptyMap())
+        val r=frames(row(state="success"));val tracker=ChatCapsuleMotionTracker(emptyMap())
         val fast=tracker.advance(r,0,.5f).values.single()
-        assertEquals(750,fast.remaining(0));assertEquals(.5f,fast.progress(375),.0001f)
-        assertTrue(tracker.advance(r,900,.5f).isEmpty())
+        assertEquals(925,fast.remaining(0));assertTrue(fast.loading(749));assertEquals(.4f,fast.progress(820),.0001f)
+        assertTrue(tracker.advance(r,925,.5f).isEmpty())
         assertTrue(ChatCapsuleMotionTracker(emptyMap()).advance(r,0,0f).isEmpty())
         assertEquals(1f,ChatCapsuleMotionEvent(1,0,0f).progress(0),0f)
         val live=ChatCapsuleMotionTracker(emptyMap());live.advance(r,0)
         assertTrue(live.advance(r,100,0f).isEmpty())
         val slow=ChatCapsuleMotionTracker(emptyMap()).advance(r,0,2f).values.single()
-        assertEquals(3000,slow.remaining(0));assertEquals(.5f,slow.progress(1500),.0001f)
+        assertEquals(3700,slow.remaining(0));assertTrue(slow.loading(2999));assertEquals(.5f,slow.progress(3350),.0001f)
+    }
+    @Test fun slowActualRequestRemainsLoadingUntilResultThenFadesWithoutAnotherHold(){
+        val tracker=ChatCapsuleMotionTracker(emptyMap());val r=row()
+        tracker.advance(frames(r),0)
+        val waiting=tracker.advance(frames(r),5000).values.single()
+        assertFalse(waiting.ready);assertTrue(waiting.loading(5000));assertEquals(0f,waiting.progress(5000),0f)
+        val actual=tracker.advance(frames(r.copy(state="failed",detail="合成错误")),5000).values.single()
+        assertEquals(0L,actual.startedAt);assertTrue(actual.ready);assertFalse(actual.loading(5000))
+        assertEquals(.5f,actual.progress(5175),.0001f);assertEquals(1f,actual.progress(5350),0f)
+    }
+    @Test fun fastIntermediateSuccessNeverBecomesVisibleBeforeMixedFailure(){
+        val tracker=ChatCapsuleMotionTracker(emptyMap());val r=row()
+        tracker.advance(frames(r),0)
+        val success=tracker.advance(frames(r.copy(state="success")),10).values.single()
+        assertEquals(0f,success.progress(10),0f)
+        val hit=r.copy(state="success");val failure=row("failed","failed").copy(detail="失败")
+        val mixed=tracker.advance(frames(hit,failure),20).values.single()
+        assertEquals(0L,mixed.startedAt);assertEquals(0f,mixed.progress(1499),0f)
+        assertEquals("想起来了 · 部分失败",recallReceiptGroups(listOf(hit,failure)).getValue(hit.id).label())
+        assertEquals(1f,mixed.progress(1850),0f)
+    }
+    @Test fun aNewResultAfterPriorRevealGetsNeutralLoadingRatherThanOldSuccess(){
+        val tracker=ChatCapsuleMotionTracker(emptyMap());val r=row(state="success")
+        tracker.advance(frames(r),0);tracker.advance(frames(r),2000)
+        val changed=tracker.advance(frames(r.copy(state="failed")),2100).values.single()
+        assertEquals(2100L,changed.startedAt);assertTrue(changed.loading(3599));assertEquals(0f,changed.progress(3599),0f)
+    }
+    @Test fun historicalPendingAndStagedLabelsAreNotReplacedByEndlessAnimationPlaceholders(){
+        assertEquals(1f,capsuleInitialReveal(null,false,0),0f)
+        assertEquals(1f,capsuleInitialReveal(null,true,0),0f)
+        assertEquals(0f,capsuleInitialReveal(ChatCapsuleMotionEvent(1,0,ready=false),false,9000),0f)
     }
 }
