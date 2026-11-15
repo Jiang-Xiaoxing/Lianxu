@@ -25,8 +25,15 @@ import javax.net.ssl.HttpsURLConnection
 /** Opt-in actual UI and production runner/tools/SQLite; only the data/vault and observer are isolated. */
 class GoMemoryRealUiTest {
     private val contactMode get()=InstrumentationRegistry.getArguments().getString("controlledContact")=="true"
-    private val supplement get()=!contactMode&&InstrumentationRegistry.getArguments().getString("controlledSupplement")=="true"
-    private val inputs get()=if(contactMode)listOf(
+    private val mutationMode get()=InstrumentationRegistry.getArguments().getString("controlledMutation")=="true"
+    private val keepIsolated get()=contactMode||mutationMode
+    private val requestLimit get()=if(mutationMode)20 else 30
+    private val supplement get()=!keepIsolated&&InstrumentationRegistry.getArguments().getString("controlledSupplement")=="true"
+    private val inputs get()=if(mutationMode)listOf(
+        "我是纯虚构旅人听澜。我长期喜欢桂花乌龙，请把这个饮茶偏好记住。",
+        "更正我刚才说的饮茶偏好：我其实长期喜欢茉莉白茶，桂花乌龙说错了。请停用那条旧说法，并记住更正后的偏好。",
+        "请忘掉我刚才说的茉莉白茶偏好，以后不要再引用这条喜好。原聊天保留就好。",
+        "我不能吃花生，吃了会发痒。明天我打算去青榕书店借植物图鉴。先自然聊一句，不用当场记。")else if(contactMode)listOf(
         "我是虚构旅人青禾。我喜欢的茶叫雨巷桂花乌龙，请把这个茶名偏好记住。另外，请大约30秒后主动来问我杯子里的茶凉了没有；这次问过就不再续约。",
         "我刚才说喜欢喝哪一种茶？别只靠这会儿的聊天，翻翻你保存的那条记忆再告诉我。",
         "那请读取现在还有效的角色记忆，确认我喜欢的茶名，照记忆原文复述给我。")else if(supplement)listOf(
@@ -39,8 +46,8 @@ class GoMemoryRealUiTest {
         "请实际查一下我们前面的聊天原话，看看我什么时候过生日、什么时候看展，找到后用一句话告诉我。",
         "请实际从已存记忆里回想我的生日和饮食偏好，再告诉我。不要凭空猜。",
         "谢谢。现在不用查也不用记，陪我安静聊一句喝茶的事就好。")
-    private val friendId get()=if(contactMode)"fictional-ui-contact-20261115"else"fictional-ui-memory-20261115"
-    private val friendName get()=if(contactMode)"知夏"else"明溪"
+    private val friendId get()=if(mutationMode)"fictional-ui-mutation-20261115"else if(contactMode)"fictional-ui-contact-20261115"else"fictional-ui-memory-20261115"
+    private val friendName get()=if(mutationMode)"听雨"else if(contactMode)"知夏"else"明溪"
     private val shared=ControlledGoTimeReferenceTest()
     private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
     private val rows=mutableListOf<JSONObject>()
@@ -50,15 +57,17 @@ class GoMemoryRealUiTest {
     private val lock=Any()
     private val calls=AtomicInteger()
     private val inFlight=AtomicInteger()
+    private val syntheticSummaryFaults=JSONArray()
+    @Volatile private var injectSummaryFault=false
     private var status="incomplete"
     private var summary:JSONObject?=null
     private var contactObservation:JSONObject?=null
     private fun save()=synchronized(lock){
         File(shared.folder,"ui.json").writeText(JSONObject().put("phase","ui").put("status",status)
             .put("purelySynthetic",true).put("realUiRunnerChain",true).put("realChatRead",false)
-            .put("maxUserTurns",inputs.size).put("maxMainRequestsIncludingTools",30).put("automaticTestRetries",0)
+            .put("maxUserTurns",inputs.size).put("maxMainRequestsIncludingTools",requestLimit).put("automaticTestRetries",0)
             .put("requestCount",calls.get()).put("requests",JSONArray(rows)).put("turns",turns)
-            .put("completedCount",turns.length()).put("capsuleSamples",samples).put("preflight",preflight).put("summary",summary).put("contactObservation",contactObservation).toString(2))
+            .put("completedCount",turns.length()).put("capsuleSamples",samples).put("preflight",preflight).put("summary",summary).put("syntheticSummaryFaults",syntheticSummaryFaults).put("contactObservation",contactObservation).toString(2))
     }
     private fun <T> stored(block:suspend(Store)->T):T=runBlocking{
         val store=Store(context,shared.database);try{block(store)}finally{store.close()}
@@ -70,7 +79,10 @@ class GoMemoryRealUiTest {
             .put("pills",JSONArray(ChatMemoryPills.read(store.readableDatabase,friendId).map{JSONObject(Gson().toJson(it))}))
             .put("task",JSONObject(Gson().toJson(repo.memoryStatus(friendId))))
             .put("batches",store.readableDatabase.rawQuery("SELECT id,state,attempt,error FROM memory_batches WHERE friend_id=? ORDER BY rowid",arrayOf(friendId)).use{c->JSONArray().apply{while(c.moveToNext())put(JSONObject().put("id",c.getString(0)).put("state",c.getString(1)).put("attempt",c.getInt(2)).put("error",c.getString(3)))}})
-            .apply{if(contactMode){
+            .apply{if(mutationMode){
+                put("summaryFailure",MemoryBatchRepository(repo).failure(friendId)?.let{JSONObject(Gson().toJson(it))})
+                put("blockedSources",store.readableDatabase.rawQuery("SELECT source_id FROM companion_blocks WHERE role=? ORDER BY source_id",arrayOf(friendId)).use{c->JSONArray().apply{while(c.moveToNext())put(c.getLong(0))}})
+            };if(keepIsolated){
                 val companion=CompanionRepository(store)
                 put("contactPolicy",companion.policy(friendId))
                 put("opportunities",store.readableDatabase.rawQuery("SELECT id,state,not_before,attempt,reason,fail_kind,fail_at FROM companion_opportunities WHERE role=? ORDER BY rowid",arrayOf(friendId)).use{c->JSONArray().apply{while(c.moveToNext())put(JSONObject().put("id",c.getString(0)).put("state",c.getString(1)).put("notBefore",c.getLong(2)).put("attempt",c.getInt(3)).put("reason",c.getString(4)).put("failKind",c.getString(5)).put("failAt",if(c.isNull(6))null else c.getLong(6)))}})
@@ -90,6 +102,15 @@ class GoMemoryRealUiTest {
         private suspend fun record(config:ModelConfig,key:String,request:TextChatRequest,event:(suspend(TextStreamEvent)->Unit)?):TextChatResult{
             check(config.providerId=="opencode-go"&&config.modelId=="deepseek-v4.1-flash"&&config.baseUrl=="https://opencode.ai/inference/go/openai/v1")
             check(ConservativeTokens.tokens(Gson().toJson(request))+2048<=24000&&request.outputLimit<=4096){"Synthetic complete request size budget"}
+            if(mutationMode&&injectSummaryFault&&Diagnostics.traceState.get()?.purpose=="memory"){
+                val source=JSONObject(request.latestUserText());check(source.getString("character_id")==friendId)
+                val batch=source.getString("batch_id")
+                val op=JSONObject().put("op","ADD").put("target","N1").put("category","PREFERENCE_BOUNDARY").put("about","USER").put("text","纯合成缺id故障注入，不得保存").put("evidence",JSONArray().put("S1"))
+                val raw=JSONObject().put("batch_id",batch).put("character_id",friendId).put("operations",JSONArray().put(op)).put("operation_count",1).put("complete",true).put("end_marker",batch).toString()
+                synchronized(lock){check(syntheticSummaryFaults.length()<3);syntheticSummaryFaults.put(JSONObject().put("synthetic",true).put("networkOpened",false).put("fault","missing_operation_id").put("input",source).put("response",raw));save()}
+                event?.invoke(TextStreamEvent.Content(raw))
+                return TextChatResult.Success(raw)
+            }
             val row=JSONObject().put("stream",event!=null).put("purpose",Diagnostics.traceState.get()?.purpose)
                 .put("startedAt",System.currentTimeMillis()).put("input",if(request.messages.any{it.role=="user"})request.latestUserText()else"[system-only request]")
                 .put("reconsider",request.messages.any{"[companion.reconsider.v1]" in it.content})
@@ -98,7 +119,7 @@ class GoMemoryRealUiTest {
             synchronized(lock){rows.add(row);save()}
             val real=HttpsTextChatClient(HttpsConnectionFactory{url->
                 check(url.toExternalForm()=="https://opencode.ai/inference/go/openai/v1/chat/completions")
-                while(true){val count=calls.get();check(count<30){"Real request budget exhausted"};if(calls.compareAndSet(count,count+1)){synchronized(lock){row.put("request",count+1);save()};break}}
+                while(true){val count=calls.get();check(count<requestLimit){"Real request budget exhausted"};if(calls.compareAndSet(count,count+1)){synchronized(lock){row.put("request",count+1);save()};break}}
                 ControlledGoTimeReferenceTest.ObservedConnection(url.openConnection() as HttpsURLConnection){json->
                     synchronized(lock){
                         val meta=row.optJSONObject("responseMetadata")?:JSONObject().also{row.put("responseMetadata",it)}
@@ -134,6 +155,7 @@ class GoMemoryRealUiTest {
         private fun restore(){AppServices.databaseName=db;AppServices.vaultNamespace=vault;AppServices.createTextClient=previous;Diagnostics.detailed=previousDetailed}
         override fun before(){
             org.junit.Assume.assumeTrue("explicit controlled opt-in",InstrumentationRegistry.getArguments().getString("controlledGo")=="true")
+            check(!(contactMode&&mutationMode)){"Conflicting controlled modes"}
             db=AppServices.databaseName;vault=AppServices.vaultNamespace;previous=AppServices.createTextClient;previousDetailed=Diagnostics.detailed
             Diagnostics.detailed=false
             try{
@@ -162,10 +184,10 @@ class GoMemoryRealUiTest {
                     }
                     save()
                 }
-            }catch(e:Throwable){if(!contactMode)restore();throw AssertionError("Isolated fixture failed: ${e.javaClass.simpleName}")}
+            }catch(e:Throwable){if(!keepIsolated)restore();throw AssertionError("Isolated fixture failed: ${e.javaClass.simpleName}")}
         }
         override fun after(){try{
-            if(contactMode){
+            if(keepIsolated){
                 val cleanup=JSONObject().put("servicesKeptIsolatedUntilHostForceStop",true)
                 try{
                     stored{CompanionRepository(it).setPolicy(friendId,false,CompanionRuntime.owner)};cleanup.put("rolePaused",true)
@@ -179,7 +201,7 @@ class GoMemoryRealUiTest {
                 }catch(e:Throwable){cleanup.put("errorType",e.javaClass.simpleName).put("cleanupFailed",true)}
                 synchronized(lock){contactObservation=(contactObservation?:JSONObject()).put("roleCleanup",cleanup);save()}
             };save()
-        }finally{if(!contactMode)restore() /* Contact host force-stops before reopening cleanup; no default-DB window. */}}
+        }finally{if(!keepIsolated)restore() /* Isolated host force-stops before reopening cleanup; no default-DB window. */}}
     }
     @get:Rule(order=1) val ui=createAndroidComposeRule<MainActivity>()
     private fun waitReal(limit:Long,predicate:()->Boolean){
@@ -207,6 +229,7 @@ class GoMemoryRealUiTest {
                 if(contactMode&&i==2&&synchronized(lock){(0 until turns.length()).any{n->val a=turns.getJSONObject(n).getJSONArray("toolActivities");(0 until a.length()).any{a.getJSONObject(it).optString("tool")=="agent_memory_read"&&a.getJSONObject(it).optString("state")=="success"}}})return@forEachIndexed
                 ui.mainClock.autoAdvance=true
                 if(supplement&&i==2)stored{store->store.savePreference(MemoryRules.KEY,MemoryRules(recentRounds=40,summaryRounds=inputs.size,immediateWrite=false).json().put("version",2).toString())}
+                if(mutationMode&&i==3)stored{store->store.savePreference(MemoryRules.KEY,MemoryRules(recentRounds=40,summaryRounds=inputs.size,immediateWrite=false).json().put("version",2).toString())}
                 ui.waitUntil(30000){ui.onAllNodes(hasTestTag("message-input") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
                 ui.onNodeWithTag("message-input").performTextInput(input)
                 ui.waitUntil(30000){ui.onAllNodes(hasTestTag("send-message") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
@@ -288,13 +311,36 @@ class GoMemoryRealUiTest {
             ui.onNodeWithTag("chat-role-detail").performClick();ui.onNodeWithTag("role-processing-open").performScrollTo().performClick()
             ui.onNodeWithText("更多").performClick();ui.onNodeWithTag("memory-maintenance").performClick()
             val before=snapshot();check(before.getJSONArray("batches").length()==0){"Unexpected earlier summary; cannot attribute this UI click"}
+            if(mutationMode){
+                synchronized(lock){summary=JSONObject().put("syntheticFailurePhase",true).put("before",before);save()}
+                injectSummaryFault=true
+                try{
+                    ui.onNodeWithTag("memory-retry").performClick();ui.mainClock.autoAdvance=false
+                    waitReal(30000){val s=snapshot();val batches=s.getJSONArray("batches");synchronized(lock){syntheticSummaryFaults.length()==3}&&batches.length()>0&&batches.getJSONObject(batches.length()-1).getString("state")=="FAILED"&&s.optJSONObject("summaryFailure")?.optInt("attempts")==3&&!stored{friendId in it.memorySummary.roles.value}}
+                }finally{injectSummaryFault=false;ui.mainClock.autoAdvance=true}
+                val failed=snapshot();val unchanged=before.getJSONArray("memories").toString()==failed.getJSONArray("memories").toString()
+                val failure=failed.getJSONObject("summaryFailure");check(failure.getString("code")=="FORMAT"&&"缺少必填字段 id" in failure.getString("detail")){"Unexpected synthetic validation reason"}
+                ui.waitUntil(10000){ui.onAllNodesWithTag("memory-batch-failure").fetchSemanticsNodes().any{n->n.config.getOrNull(SemanticsProperties.Text).orEmpty().any{"缺少必填字段 id" in it.text}}}
+                ui.onNodeWithTag("memory-batch-failure").assertIsDisplayed()
+                val detailed=ui.onNodeWithTag("memory-batch-failure").fetchSemanticsNode().config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString{it.text}
+                val shown=ui.onNodeWithTag("memory-task-status").fetchSemanticsNode().config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString{it.text}
+                check(shown==processingMessage("FORMAT")){"Failure task text was not shown"}
+                synchronized(lock){summary!!.put("syntheticFailure",failed).put("memoriesUnchangedAfterSyntheticFailure",unchanged).put("failureUiText",shown).put("detailedFailureUiText",detailed);save()}
+                shot("ui-summary-synthetic-failed");check(unchanged){"Synthetic invalid summary changed memories"}
+                ui.waitUntil(10000){runCatching{ui.onNodeWithTag("memory-retry").assertIsEnabled();true}.getOrDefault(false)}
+            }
+            val realBaseline=calls.get()
+            val retryBatch=if(mutationMode)summary!!.getJSONObject("syntheticFailure").getJSONArray("batches").getJSONObject(0).getString("id")else null
+            synchronized(lock){if(mutationMode)summary!!.put("manualRetryRealRequestBaseline",realBaseline).put("manualRetryBatchId",retryBatch).put("manualRetryClickedAt",System.currentTimeMillis());save()}
             ui.onNodeWithTag("memory-retry").performClick();ui.mainClock.autoAdvance=false
             val start=System.currentTimeMillis()
             waitReal(330000){
                 val batches=snapshot().getJSONArray("batches")
-                batches.length()>0&&batches.getJSONObject(batches.length()-1).getString("state") in setOf("COMMITTED","COMPLETED","FAILED")
+                val actualRetry= !mutationMode||synchronized(lock){rows.any{r->r.optInt("request")>realBaseline&&r.optString("purpose")=="memory"&&r.optString("status") in setOf("success","failure")&&runCatching{JSONObject(r.getString("input")).getString("batch_id")==retryBatch}.getOrDefault(false)}}&&!stored{friendId in it.memorySummary.roles.value}
+                batches.length()>0&&batches.getJSONObject(batches.length()-1).getString("state") in setOf("COMMITTED","COMPLETED","FAILED")&&actualRetry
             }
-            summary=JSONObject().put("triggeredFromUi",true).put("elapsedMs",System.currentTimeMillis()-start).put("before",before).put("after",snapshot())
+            val after=snapshot()
+            synchronized(lock){summary=(summary?:JSONObject()).put("triggeredFromUi",true).put("elapsedMs",System.currentTimeMillis()-start).put("before",before).put("after",after);save()}
             shot("ui-summary");save()
             }
             status="completed_pending_independent_review"
