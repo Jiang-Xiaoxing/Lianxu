@@ -48,7 +48,7 @@ internal class HttpsMemoryEmbeddingClient(private val factory:HttpsConnectionFac
             val indexed=(0 until rows.length()).map{rows.getJSONObject(it)}.associateBy{it.getInt("index")};require(indexed.keys==(texts.indices).toSet())
             texts.indices.map{i->val a=indexed.getValue(i).getJSONArray("embedding");DoubleArray(a.length()){a.getDouble(it)}.also{require(MemoryVectorIndex.valid(it))}}
                 .also{require(it.map{v->v.size}.distinct().size==1);Diagnostics.event("embedding.http.parsed",mapOf("vectors" to it.size,"dimensions" to it.firstOrNull()?.size))}
-        }catch(e:Exception){diagnosticRequest?.failure(when(failureStage){"parse"->"embedding.http.parse_failed";"status"->"embedding.http.status_rejected";"request_size"->"embedding.http.request_size_rejected";"response_size"->"embedding.http.response_size_rejected";else->"embedding.http.transport_failed"},e);throw e}finally{diagnosticRequest?.transferEnd(null);try{c.disconnect()}catch(e:Exception){diagnosticRequest?.failure("embedding.http.disconnect_failed",e);throw e}}
+        }catch(e:Exception){diagnosticRequest?.failure(when(failureStage){"parse"->"embedding.http.parse_failed";"status"->"embedding.http.status_rejected";"request_size"->"embedding.http.request_size_rejected";"response_size"->"embedding.http.response_size_rejected";else->"embedding.http.transport_failed"},e);throw e}finally{diagnosticRequest?.transferEnd(null);try{c.disconnect()}catch(e:Exception){diagnosticRequest?.failure("embedding.http.disconnect_failed",e)}}
        }
        if(diagnosticRequest?.finish("SUCCESS")!=false)Diagnostics.event("embedding.http.result",mapOf("status" to "success"))
        result

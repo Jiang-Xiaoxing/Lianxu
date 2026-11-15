@@ -144,13 +144,38 @@ class NetworkDiagnosticCorrelationTest {
         Diagnostics.onThread(captured){assertSame(state,Diagnostics.requestState())}
         assertEquals(old,Diagnostics.traceState.get())
     }}
-    @Test fun disconnectExceptionIsAssociatedWithoutInventingItsCause(){journal{j->
+    @Test fun disconnectExceptionIsLoggedWithoutReplacingSuccessfulReply(){journal{j->
         val fake=Fake(URL(config.baseUrl),ByteArrayInputStream(reply.toByteArray()),badDisconnect=true)
-        context{val result=LoggedTextChatClient(HttpsTextChatClient(HttpsConnectionFactory{fake},timeoutMillis=500)).complete(config,key,request) as TextChatResult.Failure;assertEquals(ChatFailure.TIMEOUT,result.reason)}
-        val all=rows(j);val terminal=terminals(all).single();val failed=named(all,"http.disconnect_failed").single()
-        assertEquals(data(terminal)["request_id"],data(failed)["request_id"])
-        assertEquals("IOException",data(failed)["error_type"].asString)
+        context{val result=LoggedTextChatClient(HttpsTextChatClient(HttpsConnectionFactory{fake},timeoutMillis=500)).complete(config,key,request) as TextChatResult.Success;assertEquals("ok",result.text)}
+        val all=rows(j);val terminal=terminals(all).single();val failures=named(all,"http.disconnect_failed")
+        assertEquals("success",data(terminal)["status"].asString)
+        assertTrue(failures.isNotEmpty());failures.forEach{failed->
+            assertEquals(data(terminal)["request_id"],data(failed)["request_id"])
+            assertEquals("IOException",data(failed)["error_type"].asString)
+        }
         assertFalse(all.joinToString().contains("private disconnect payload"))
+    }}
+    @Test fun disconnectExceptionDoesNotReplacePrimaryChatFailure(){journal{j->
+        val input=object:InputStream(){override fun read():Int=throw IOException(privateError)}
+        context{val result=LoggedTextChatClient(HttpsTextChatClient(HttpsConnectionFactory{Fake(it,input,badDisconnect=true)},timeoutMillis=500)).complete(config,key,request) as TextChatResult.Failure;assertEquals(ChatFailure.RESPONSE_BROKEN,result.reason)}
+        val all=rows(j);assertEquals("RESPONSE_BROKEN",data(terminals(all).single())["reason"].asString)
+        assertTrue(named(all,"http.disconnect_failed").isNotEmpty());assertTrue(named(all,"http.total_timeout").isEmpty())
+    }}
+    @Test fun directoryAndEmbeddingKeepTheirResultsWhenDisconnectThrows(){journal{j->
+        context{
+            val directory=LoggedModelDirectoryClient(HttpsModelClient(HttpsConnectionFactory{Fake(it,ByteArrayInputStream("{\"data\":[{\"id\":\"model\"}]}".toByteArray()),badDisconnect=true)}))
+            assertTrue(directory.request(config,key,true) is ConfigResult.Success)
+            val brokenDirectory=LoggedModelDirectoryClient(HttpsModelClient(HttpsConnectionFactory{Fake(it,ByteArrayInputStream("{".toByteArray()),badDisconnect=true)}))
+            assertEquals(ConfigError.FORMAT,(brokenDirectory.request(config,key,true) as ConfigResult.Failure).error)
+            val embedding=HttpsMemoryEmbeddingClient(HttpsConnectionFactory{Fake(it,ByteArrayInputStream("{\"data\":[{\"index\":0,\"embedding\":[0.5,0.25]}]}".toByteArray()),badDisconnect=true)})
+            assertEquals(1,embedding.embed(ModelCredential(config,key,"synthetic"),listOf("synthetic"),1000).size)
+            val brokenEmbedding=HttpsMemoryEmbeddingClient(HttpsConnectionFactory{Fake(it,ByteArrayInputStream("{\"data\":[]}".toByteArray()),badDisconnect=true)})
+            try{brokenEmbedding.embed(ModelCredential(config,key,"synthetic"),listOf("synthetic"),1000);fail()}catch(_:IllegalArgumentException){}
+        }
+        val all=rows(j);assertEquals(2,named(all,"model.directory.result").size)
+        assertTrue(named(all,"model.http.disconnect_failed").isNotEmpty());assertTrue(named(all,"embedding.http.disconnect_failed").isNotEmpty())
+        assertEquals(1,named(all,"embedding.http.result").size);assertEquals(1,named(all,"embedding.http.failed").size)
+        assertEquals("IllegalArgumentException",data(named(all,"embedding.http.failed").single())["error_type"].asString)
     }}
     @Test fun primarySocketTimeoutIsNotCalledAfterTimeoutCleanup(){journal{j->
         val input=object:InputStream(){override fun read():Int=throw java.net.SocketTimeoutException(privateError)}

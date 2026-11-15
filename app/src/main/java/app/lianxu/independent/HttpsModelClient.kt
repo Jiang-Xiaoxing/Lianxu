@@ -32,7 +32,7 @@ class HttpsModelClient(
             cancellationWatcher=launch(start=CoroutineStart.UNDISPATCHED){
                 try{awaitCancellation()}finally{
                     if(ownerJob?.isCancelled==true){requestDiagnostics?.stop("cancellation_unknown");requestDiagnostics?.stage("model.http.abort_requested")}
-                    try{opened.disconnect()}catch(e:Exception){requestDiagnostics?.failure("model.http.disconnect_failed",e);throw e}
+                    try{opened.disconnect()}catch(e:Exception){requestDiagnostics?.failure("model.http.disconnect_failed",e)}
                 }
             }
             connection.instanceFollowRedirects=false
@@ -69,7 +69,7 @@ class HttpsModelClient(
         catch(e:SSLException) {requestDiagnostics?.failure("model.http.tls_failed",e);ensureActive();ConfigResult.Failure(ConfigError.TLS)}
         catch(e:org.json.JSONException) {requestDiagnostics?.failure("model.http.format_failed",e);ensureActive();ConfigResult.Failure(ConfigError.FORMAT)}
         catch(e:Exception) {requestDiagnostics?.failure("model.http.failed",e);ensureActive();ConfigResult.Failure(ConfigError.NETWORK)}
-        finally {cancellationWatcher?.cancel();requestDiagnostics?.transferEnd(null);try{connection?.disconnect()}catch(e:Exception){requestDiagnostics?.failure("model.http.disconnect_failed",e);throw e}}
+        finally {cancellationWatcher?.cancel();requestDiagnostics?.transferEnd(null);try{connection?.disconnect()}catch(e:Exception){requestDiagnostics?.failure("model.http.disconnect_failed",e)}}
     }
 }
 

@@ -163,7 +163,6 @@ class HttpsTextChatClient(
     private fun diagnosticDisconnect(connection:HttpsURLConnection?){
         try{connection?.disconnect()}catch(e:Exception){
             Diagnostics.requestState()?.failure("http.disconnect_failed",e)?:Diagnostics.event("http.disconnect_failed",mapOf("error_type" to e.javaClass.simpleName))
-            throw e
         }
     }
     private class ErrorBody(val text:String,val complete:Boolean)
