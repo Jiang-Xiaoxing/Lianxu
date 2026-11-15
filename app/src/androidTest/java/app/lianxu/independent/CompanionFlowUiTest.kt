@@ -57,11 +57,14 @@ class CompanionFlowUiTest {
         AppServices.companionClock={clock}
         shell("cmd statusbar collapse")
         ModelVault(context,fixture.namespace).setPurpose(ModelPurpose.CHAT,"fixture")
-        shell("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS")
         ui.waitUntil(15000){vm().ready}
         runBlocking{vm().processing.saveMemoryRules(MemoryRules(reviewRounds=1))}
     }
     @After fun reset(){shell("cmd statusbar collapse");AppServices.companionClock=System::currentTimeMillis;WorkManager.getInstance(context).cancelAllWork();context.getSystemService(NotificationManager::class.java).cancelAll()}
+    private fun requireExistingNotificationPermission(){
+        Assume.assumeTrue("Only exercise permission-dependent flows when already granted; never change permission here",
+            android.os.Build.VERSION.SDK_INT<33||context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)==android.content.pm.PackageManager.PERMISSION_GRANTED)
+    }
     private fun shot(name:String){ui.waitForIdle();val automation=InstrumentationRegistry.getInstrumentation().uiAutomation;automation.waitForIdle(100,3000);Thread.sleep(350);val folder=File(context.getExternalFilesDir(null),"companion-phase1-evidence").apply{mkdirs()};automation.takeScreenshot().let{b->File(folder,"$name.png").outputStream().use{b.compress(Bitmap.CompressFormat.PNG,100,it)};b.recycle()}}
     private fun open(){ui.runOnIdle{vm().open("chat","seed-lin")}}
     /** 陪伴与消息从聊天顶栏「⋯」进角色资料，再点「陪伴与消息」那一行。 */
@@ -108,6 +111,7 @@ class CompanionFlowUiTest {
     }
     /** 回访真失败过：陪伴与消息页出「上次没发出去」卡（真连不上才说网络连不上），开关下面一行出「重新安排未完成的回访」，ⓘ 一句解释，点了重新排上。 */
     @Test fun aFailedContactShowsTheCardAndTheRetryRow(){
+        requireExistingNotificationPermission()
         openCompanionPage();waitForEnabledCompanionSwitch();ui.onNodeWithTag("companion-enabled").performClick()
         ui.waitUntil(10000){vm().companionPolicy=="enabled"}
         ui.onNodeWithTag("companion-background-close").performClick()
@@ -137,6 +141,7 @@ class CompanionFlowUiTest {
         store.close()
     }
     @Test fun changingRolesWhileUpdatingPermissionKeepsTheOriginalTarget(){
+        requireExistingNotificationPermission()
         ui.runOnIdle{vm().open("chat","seed-lin");vm().setCompanionEnabled(true);vm().open("chat","seed-an")}
         ui.waitUntil(10000){runBlocking{vm().companion.policy("seed-lin")=="enabled"}}
         assertEquals("disabled",runBlocking{vm().companion.policy("seed-an")})
@@ -169,6 +174,7 @@ class CompanionFlowUiTest {
         store.close()
     }
     @Test fun realChatWorkerNotificationTargetAndVisibleReceipt(){
+        requireExistingNotificationPermission()
         openCompanionPage()
         waitForEnabledCompanionSwitch()
         ui.onNodeWithTag("companion-enabled").performClick()

@@ -42,7 +42,9 @@ class ChatReplyStreamingUiTest {
                 if(toolReasoning)onEvent(TextStreamEvent.Reasoning("翻完了，没找到。"))
                 allowBody.await()
                 if(toolReasoning)finish.await()
-                onEvent(TextStreamEvent.Content(correction))
+                // Keep this response live after one complete paragraph has reached the page.
+                onEvent(TextStreamEvent.Content(correction+if(toolReasoning)""else"\n\n"))
+                if(!toolReasoning)finish.await()
                 return TextChatResult.Success(correction,displayReasoning=if(toolReasoning)"先去翻翻旧记录。翻完了，没找到。" else "")
             }
             if(emitReasoning)onEvent(TextStreamEvent.Reasoning(reasoning))
@@ -146,17 +148,26 @@ class ChatReplyStreamingUiTest {
     }
     @Test fun failedToolCapsuleSeparatesLivePreambleFromModelCorrection(){
         toolMode=true;start("忘记之前那件事")
+        val turn=vm.turns.single{it.friendId=="seed-lin"}
+        val owner="${turn.id}-${turn.attempt}"
         ui.waitUntil(10000){vm.chatPreview?.text=="删好了。"}
         assertTrue(vm.chatPreview!!.tools.isEmpty())
         allowBody.complete(Unit)
-        ui.waitUntil(10000){vm.chatPreview?.tools?.singleOrNull()?.state=="failed"&&vm.chatPreview?.text=="刚才没删掉，还没有找到那条消息。"}
-        ui.onNodeWithText("遗忘").performScrollTo().assertIsDisplayed()
+        ui.waitUntil(10000){vm.chatPreview?.tools?.singleOrNull()?.state=="failed"&&vm.chatPreview?.text=="刚才没删掉，还没有找到那条消息。\n\n"&&vm.chatPreview!!.visible>=1}
+        val liveLabel=hasText("遗忘") and hasAnyAncestor(hasTestTag("reply-preview-$owner"))
+        ui.waitUntil(5000){ui.onAllNodes(liveLabel).fetchSemanticsNodes().isNotEmpty()}
+        ui.onNode(liveLabel).performScrollTo().assertIsDisplayed()
+        assertEquals(TurnState.PENDING,vm.turns.single{it.id==turn.id}.state)
         ui.onNodeWithText("删好了。").assertExists()
         ui.onNodeWithText("刚才没删掉，还没有找到那条消息。").assertExists()
         screenshot("05-real-chat-tool-failure-continuation")
         finish.complete(Unit)
         ui.waitUntil(15000){vm.turns.single{it.friendId=="seed-lin"}.state==TurnState.COMPLETED}
-        ui.onNodeWithText("遗忘").performScrollTo().assertIsDisplayed()
+        ui.onNodeWithTag("reply-preview-$owner").assertDoesNotExist()
+        val receipt=vm.turns.single{it.id==turn.id}.toolActivities.single()
+        val savedLabel=hasText("遗忘") and hasAnyAncestor(hasTestTag("tool-result-${receipt.id}"))
+        ui.waitUntil(5000){ui.onAllNodes(savedLabel).fetchSemanticsNodes().isNotEmpty()}
+        ui.onNode(savedLabel).performScrollTo().assertIsDisplayed()
         assertEquals(2,calls.get());assertTrue(vm.messages.none{it.text=="删好了。"})
         screenshot("06-real-chat-persisted-tool-result")
     }
@@ -179,7 +190,10 @@ class ChatReplyStreamingUiTest {
         assertEquals(preview.tools.single().id,preview.thinkingBreaks.single().toolId)
         ui.onNodeWithText("先去翻翻旧记录。").assertExists()
         ui.onNodeWithText("翻完了，没找到。").assertExists()
-        ui.onNodeWithText("遗忘").assertExists()
+        val liveLabel=hasText("遗忘") and hasAnyAncestor(hasTestTag("reply-preview-$owner"))
+        ui.waitUntil(5000){ui.onAllNodes(liveLabel).fetchSemanticsNodes().isNotEmpty()}
+        ui.onNode(liveLabel).assertExists()
+        assertEquals(TurnState.PENDING,vm.turns.single{it.id==turn.id}.state)
         screenshot("07-thinking-continues-after-tool")
         finish.complete(Unit)
         ui.waitUntil(15000){vm.turns.single{it.id==turn.id}.state==TurnState.COMPLETED}

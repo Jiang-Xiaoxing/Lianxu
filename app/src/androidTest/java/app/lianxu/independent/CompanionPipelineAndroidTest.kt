@@ -52,7 +52,8 @@ class CompanionPipelineAndroidTest {
             val day=relationshipDayStart(now);var calls=0
             val before=RelationStorage.read(store.readableDatabase,"a").programInputs
             AppServices.createTextClient={object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
-                calls++;val prompt=request.messages.single().content
+                calls++;assertEquals(listOf("system","user"),request.messages.map{it.role})
+                val prompt=request.messages.single{it.role=="system"}.content
                 assertTrue(prompt.contains("没有每天或未回复次数上限"))
                 if(calls>1)assertTrue(prompt.contains("连续联系${calls-1}"))
                 return TextChatResult.Success("""{"action":"send","reason":"想继续聊共同话题","text":"连续联系$calls","nextWhen":"1秒后"}""")
@@ -203,8 +204,10 @@ class CompanionPipelineAndroidTest {
         assertNull(core.claim(o.id,CompanionRuntime.owner))
         val s=core.snapshot("a")
         val model=CompanionModel(object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
-            assertEquals("synthetic-only",key);val prompt=request.messages.single().content
-            assertFalse(prompt.contains("不催促"));assertFalse(prompt.contains("主动交流语气"));assertFalse(prompt.contains("当前关系小结"))
+            assertEquals("synthetic-only",key);assertEquals(listOf("system","user"),request.messages.map{it.role})
+            val prompt=request.messages.single{it.role=="system"}.content
+            val wholeRequest=request.messages.joinToString("\n"){it.content}
+            assertFalse(wholeRequest.contains("不催促"));assertFalse(wholeRequest.contains("主动交流语气"));assertFalse(wholeRequest.contains("当前关系小结"))
             assertTrue(prompt.contains("[你答应过的回访]"));assertTrue(prompt.contains("你当时留下的原话：合成事件结束后关心"))
             return TextChatResult.Success("""{"action":"send","reason":"合成面试后的有效关心","text":"合成面试结束了，想说说吗？"}""")
         }})

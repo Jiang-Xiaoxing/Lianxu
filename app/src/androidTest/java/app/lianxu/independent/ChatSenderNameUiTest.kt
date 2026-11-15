@@ -35,7 +35,24 @@ class ChatSenderNameUiTest {
             val store = Store(instrument.targetContext, mock.database)
             try { ChatLedger(store).all().singleOrNull()?.takeIf { it.state == TurnState.COMPLETED } } finally { store.close() }
         }
-        ui.waitUntil(30000) { completed() != null }
+        try{ui.waitUntil(30000) { completed() != null }}catch(error:Throwable){
+            println("NAME_UI_FAILURE original=${error.javaClass.simpleName} database=${mock.database}")
+            runCatching{
+                val dir=File(instrument.targetContext.getExternalFilesDir(null),"failure-chat-name/${System.currentTimeMillis()}-${System.nanoTime()}").apply{mkdirs()}
+                val state=linkedMapOf<String,Any?>("database" to mock.database,"originalFailure" to error.toString())
+                File(dir,"state.json").writeText(com.google.gson.Gson().toJson(state))
+                runCatching{
+                    val vm=androidx.lifecycle.ViewModelProvider(ui.activity)[AppState::class.java]
+                    state["preview"]=vm.chatPreview;state["chatSending"]=vm.chatSending
+                }.onFailure{state["viewModelError"]=it.toString()}
+                runCatching{val store=Store(instrument.targetContext,mock.database);try{state["turns"]=runBlocking{ChatLedger(store).all()}}finally{store.close()}}
+                    .onFailure{state["ledgerError"]=it.toString()}
+                File(dir,"state.json").writeText(com.google.gson.Gson().toJson(state))
+                runCatching{val bitmap=instrument.uiAutomation.takeScreenshot();try{File(dir,"screen.png").outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}}finally{bitmap.recycle()}}
+                    .onFailure{File(dir,"screenshot-error.txt").writeText(it.toString())}
+            }.onFailure{println("NAME_UI_CAPTURE_ERROR ${it.javaClass.simpleName}")}
+            throw error
+        }
         val turn = requireNotNull(completed())
         val id = requireNotNull(turn.assistantMessageId)
         ui.waitUntil(15000) { ui.onAllNodesWithTag("message-$id").fetchSemanticsNodes().isNotEmpty() }
