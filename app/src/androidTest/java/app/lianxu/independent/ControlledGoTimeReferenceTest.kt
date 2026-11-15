@@ -86,7 +86,7 @@ class ControlledGoTimeReferenceTest {
                 }.generateKeyPair()
                 File(folder,"public.der").writeBytes(pair.public.encoded)
                 report.put("publicSha256",digest(pair.public.encoded)).put("model","deepseek-v4.1-flash").put("status","prepared");save()
-            }catch(e:Exception){clean();error("Preparation failed: ${e.javaClass.simpleName}")}
+            }catch(e:Exception){if(args.getString("controlledNormalSample")!="true")clean();error("Preparation failed: ${e.javaClass.simpleName}")}
             return@runBlocking
         }
         if(phase=="import") {
@@ -107,7 +107,12 @@ class ControlledGoTimeReferenceTest {
                     ModelVault(context,namespace,db).apply{save(config,key);setPurpose(ModelPurpose.CHAT,configId)}
                 }finally{db.close()}
                 report.put("status","imported");save()
-            }catch(e:Exception){report.put("status","failed").put("errorType",e.javaClass.simpleName).put("cleaned",runCatching{clean()}.getOrDefault(false));save();throw AssertionError("Temporary import failed: ${e.javaClass.simpleName}")}
+            }catch(e:Exception){
+                report.put("status","failed").put("errorType",e.javaClass.simpleName)
+                if(args.getString("controlledNormalSample")=="true")report.put("cleanupDeferredUntilHostForceStop",true)
+                else report.put("cleaned",runCatching{clean()}.getOrDefault(false))
+                save();throw AssertionError("Temporary import failed: ${e.javaClass.simpleName}")
+            }
             return@runBlocking
         }
         check(!File(folder,"run.json").exists()){ "One-shot request budget cannot be restarted" }
@@ -221,7 +226,7 @@ class ControlledGoTimeReferenceTest {
     }
 
     /** Observe only a bounded response copy; TLS, auth, serialization and parsing remain production. */
-    internal class ObservedConnection(private val delegate:HttpsURLConnection,private val observed:(JSONObject)->Unit):HttpsURLConnection(delegate.url) {
+    internal class ObservedConnection(private val delegate:HttpsURLConnection,private val observeRequest:((JSONObject)->Unit)?=null,private val observed:(JSONObject)->Unit):HttpsURLConnection(delegate.url) {
         init{delegate.instanceFollowRedirects=false;check(!delegate.instanceFollowRedirects)}
         override fun connect()=delegate.connect()
         override fun disconnect()=delegate.disconnect()
@@ -243,7 +248,16 @@ class ControlledGoTimeReferenceTest {
         override fun setFixedLengthStreamingMode(value:Long)=delegate.setFixedLengthStreamingMode(value)
         override fun setSSLSocketFactory(value:javax.net.ssl.SSLSocketFactory){delegate.sslSocketFactory=value}
         override fun setHostnameVerifier(value:javax.net.ssl.HostnameVerifier){delegate.hostnameVerifier=value}
-        override fun getOutputStream()=delegate.outputStream
+        override fun getOutputStream():java.io.OutputStream {
+            val target=delegate.outputStream
+            if(observeRequest==null)return target
+            val buffer=ByteArrayOutputStream();var closed=false
+            return object:java.io.FilterOutputStream(target){
+                override fun write(value:Int){out.write(value);if(buffer.size()<2*1024*1024)buffer.write(value)}
+                override fun write(bytes:ByteArray,offset:Int,length:Int){out.write(bytes,offset,length);if(buffer.size()+length<=2*1024*1024)buffer.write(bytes,offset,length)}
+                override fun close(){try{super.close()}finally{if(!closed){closed=true;runCatching{observeRequest.invoke(JSONObject(buffer.toString("UTF-8")))};buffer.reset()}}}
+            }
+        }
         override fun getResponseCode()=delegate.responseCode
         override fun getResponseMessage()=delegate.responseMessage
         override fun getContentType()=delegate.contentType

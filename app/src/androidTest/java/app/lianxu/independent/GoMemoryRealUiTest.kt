@@ -24,14 +24,21 @@ import javax.net.ssl.HttpsURLConnection
 
 /** Opt-in actual UI and production runner/tools/SQLite; only the data/vault and observer are isolated. */
 class GoMemoryRealUiTest {
+    private val normalSample get()=InstrumentationRegistry.getArguments().getString("controlledNormalSample")=="true"
+    private val sampleNumber get()=InstrumentationRegistry.getArguments().getString("sampleNumber")?.toIntOrNull()?.also{check(it>0)}?:1
+    private val sampleFacts get()=listOf("茉莉白茶|木刻|青榕书店","桂花乌龙|陶艺|雨巷画廊","陈皮普洱|摄影|白鹭湖","蜜桃红茶|刺绣|松风公园","柠檬绿茶|篆刻|南桥工坊","玫瑰花茶|编织|云杉图书馆","薄荷清茶|观鸟|枫林步道","山楂果茶|折纸|青石展馆","金桂红茶|素描|春岚茶室","洛神花茶|园艺|溪岸花圃")[(sampleNumber-1)%10].split("|").let{listOf(it[0],it[1],"${it[2]}第${sampleNumber}展区")}
     private val contactMode get()=InstrumentationRegistry.getArguments().getString("controlledContact")=="true"
     private val contactOnly get()=contactMode&&InstrumentationRegistry.getArguments().getString("controlledContactOnly")=="true"
     private val mutationMode get()=InstrumentationRegistry.getArguments().getString("controlledMutation")=="true"
     private val correctionMode get()=InstrumentationRegistry.getArguments().getString("controlledCorrection")=="true"
-    private val keepIsolated get()=contactMode||mutationMode||correctionMode
-    private val requestLimit get()=if(correctionMode||contactOnly)12 else if(mutationMode)20 else 30
+    private val keepIsolated get()=contactMode||mutationMode||correctionMode||normalSample
+    private val requestLimit get()=if(normalSample)Int.MAX_VALUE else if(correctionMode||contactOnly)12 else if(mutationMode)20 else 30
     private val supplement get()=!keepIsolated&&InstrumentationRegistry.getArguments().getString("controlledSupplement")=="true"
-    private val inputs get()=if(correctionMode)listOf(
+    private val inputs get()=if(normalSample){
+        val f=sampleFacts
+        if(contactMode)listOf("我是纯虚构旅人青禾${sampleNumber}号。现在在喝${f[0]}。请大约30秒后主动来问我杯子里的茶凉了没有；这次问过就不再续约。")
+        else listOf("我是纯虚构旅人叶舟${sampleNumber}号。我长期喜欢喝${f[0]}，周末的固定爱好是${f[1]}。先自然接一句就好。","我平时最常去的地方是${f[2]}。我长期不吃香菜，点餐时都要去掉。这些都是这个故事里的固定偏好，陪我聊一句就好。")
+    }else if(correctionMode)listOf(
         "我是纯虚构旅人听澜。我长期喜欢桂花乌龙，请把这个饮茶偏好记住。",
         "更正我刚才说的饮茶偏好：我其实长期喜欢茉莉白茶，桂花乌龙说错了。请停用那条旧说法，并记住更正后的偏好。")else if(mutationMode)listOf(
         "我是纯虚构旅人听澜。我长期喜欢桂花乌龙，请把这个饮茶偏好记住。",
@@ -50,8 +57,8 @@ class GoMemoryRealUiTest {
         "请实际查一下我们前面的聊天原话，看看我什么时候过生日、什么时候看展，找到后用一句话告诉我。",
         "请实际从已存记忆里回想我的生日和饮食偏好，再告诉我。不要凭空猜。",
         "谢谢。现在不用查也不用记，陪我安静聊一句喝茶的事就好。")
-    private val friendId get()=if(correctionMode)"fictional-ui-correction-fix-20261115"else if(mutationMode)"fictional-ui-mutation-20261115"else if(contactMode)"fictional-ui-contact-20261115"else"fictional-ui-memory-20261115"
-    private val friendName get()=if(correctionMode)"时雨"else if(mutationMode)"听雨"else if(contactMode)"知夏"else"明溪"
+    private val friendId get()=if(normalSample)"fictional-normal-${if(contactMode)"contact"else"summary"}-$sampleNumber"else if(correctionMode)"fictional-ui-correction-fix-20261115"else if(mutationMode)"fictional-ui-mutation-20261115"else if(contactMode)"fictional-ui-contact-20261115"else"fictional-ui-memory-20261115"
+    private val friendName get()=if(normalSample)"知夏${sampleNumber}号"else if(correctionMode)"时雨"else if(mutationMode)"听雨"else if(contactMode)"知夏"else"明溪"
     private val shared=ControlledGoTimeReferenceTest()
     private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
     private val rows=mutableListOf<JSONObject>()
@@ -66,10 +73,17 @@ class GoMemoryRealUiTest {
     private var status="incomplete"
     private var summary:JSONObject?=null
     private var contactObservation:JSONObject?=null
+    private fun safeResponse(value:Any,key:String):Any=when(value){
+        is JSONObject->JSONObject().apply{value.keys().forEach{k->put(k,safeResponse(value.get(k),key))}}
+        is JSONArray->JSONArray().apply{for(i in 0 until value.length())put(safeResponse(value.get(i),key))}
+        is String->Diagnostics.redact(value,listOf(key))
+        else->value
+    }
     private fun save()=synchronized(lock){
         File(shared.folder,"ui.json").writeText(JSONObject().put("phase","ui").put("status",status)
             .put("purelySynthetic",true).put("realUiRunnerChain",true).put("realChatRead",false)
-            .put("maxUserTurns",inputs.size).put("maxMainRequestsIncludingTools",requestLimit).put("automaticTestRetries",0)
+            .put("normalProductDefaults",normalSample).put("sampleNumber",sampleNumber).put("sampleKind",if(contactMode)"contact"else"summary")
+            .put("maxUserTurns",inputs.size).put("maxMainRequestsIncludingTools",if(normalSample)JSONObject.NULL else requestLimit).put("automaticTestRetries",0).put("manualReruns",0)
             .put("requestCount",calls.get()).put("requests",JSONArray(rows)).put("turns",turns)
             .put("completedCount",turns.length()).put("capsuleSamples",samples).put("preflight",preflight).put("summary",summary).put("syntheticSummaryFaults",syntheticSummaryFaults).put("contactObservation",contactObservation).toString(2))
     }
@@ -83,7 +97,7 @@ class GoMemoryRealUiTest {
             .put("pills",JSONArray(ChatMemoryPills.read(store.readableDatabase,friendId).map{JSONObject(Gson().toJson(it))}))
             .put("task",JSONObject(Gson().toJson(repo.memoryStatus(friendId))))
             .put("batches",store.readableDatabase.rawQuery("SELECT id,state,attempt,error FROM memory_batches WHERE friend_id=? ORDER BY rowid",arrayOf(friendId)).use{c->JSONArray().apply{while(c.moveToNext())put(JSONObject().put("id",c.getString(0)).put("state",c.getString(1)).put("attempt",c.getInt(2)).put("error",c.getString(3)))}})
-            .apply{if(mutationMode||correctionMode){
+            .apply{if(mutationMode||correctionMode||normalSample){
                 put("summaryFailure",MemoryBatchRepository(repo).failure(friendId)?.let{JSONObject(Gson().toJson(it))})
                 put("blockedSources",store.readableDatabase.rawQuery("SELECT source_id FROM companion_blocks WHERE role=? ORDER BY source_id",arrayOf(friendId)).use{c->JSONArray().apply{while(c.moveToNext())put(c.getLong(0))}})
             };if(keepIsolated){
@@ -105,7 +119,11 @@ class GoMemoryRealUiTest {
         override suspend fun streamEvents(config:ModelConfig,key:String,request:TextChatRequest,onEvent:suspend(TextStreamEvent)->Unit)=record(config,key,request,onEvent)
         private suspend fun record(config:ModelConfig,key:String,request:TextChatRequest,event:(suspend(TextStreamEvent)->Unit)?):TextChatResult{
             check(config.providerId=="opencode-go"&&config.modelId=="deepseek-v4.1-flash"&&config.baseUrl=="https://opencode.ai/inference/go/openai/v1")
-            check(ConservativeTokens.tokens(Gson().toJson(request))+2048<=24000&&request.outputLimit<=4096){"Synthetic complete request size budget"}
+            if(normalSample){
+                val d=ModelTokenPolicy.defaults(config.providerId,config.baseUrl,config.modelId)
+                check(config.contextTokens==d.context&&config.outputTokens==d.chat&&config.memoryOutputTokens==d.memory)
+                check(request.outputLimit==if(Diagnostics.traceState.get()?.purpose=="memory")d.memory else d.chat){"Normal purpose budget changed"}
+            }else check(ConservativeTokens.tokens(Gson().toJson(request))+2048<=24000&&request.outputLimit<=4096){"Synthetic complete request size budget"}
             if(mutationMode&&injectSummaryFault&&Diagnostics.traceState.get()?.purpose=="memory"){
                 val source=JSONObject(request.latestUserText());check(source.getString("character_id")==friendId)
                 val batch=source.getString("batch_id")
@@ -119,13 +137,27 @@ class GoMemoryRealUiTest {
                 .put("startedAt",System.currentTimeMillis()).put("input",if(request.messages.any{it.role=="user"})request.latestUserText()else"[system-only request]")
                 .put("reconsider",request.messages.any{"[companion.reconsider.v1]" in it.content})
                 .put("toolResults",JSONArray(request.messages.filter{it.role=="tool"}.map{JSONObject().put("name",it.name).put("callId",it.toolCallId).put("output",Diagnostics.redact(it.content,listOf(key)))}))
+            if(normalSample)row.put("outputLimit",request.outputLimit).put("configContext",config.contextTokens).put("configChatOutput",config.outputTokens).put("configMemoryOutput",config.memoryOutputLimit()).put("traceLinks",JSONObject(Diagnostics.traceState.get()?.links.orEmpty()))
+                .put("inputMessages",JSONArray(request.messages.map{m->JSONObject().put("role",m.role).put("content",Diagnostics.redact(m.content,listOf(key))).put("name",m.name).put("toolCallId",m.toolCallId).put("toolCalls",JSONArray(m.toolCalls.map{JSONObject().put("id",it.id).put("name",it.name).put("arguments",Diagnostics.redact(it.arguments,listOf(key)))}))}))
             if(contactMode&&request.messages.any{it.role=="tool"&&it.name==ImmediateContact.NAME})row.put("contactStateBeforeCall",snapshot())
+            if(normalSample&&row.optBoolean("reconsider"))row.put("contactStateAtReconsiderCall",snapshot())
             synchronized(lock){rows.add(row);save()}
             val real=HttpsTextChatClient(HttpsConnectionFactory{url->
                 check(url.toExternalForm()=="https://opencode.ai/inference/go/openai/v1/chat/completions")
                 while(true){val count=calls.get();check(count<requestLimit){"Real request budget exhausted"};if(calls.compareAndSet(count,count+1)){synchronized(lock){row.put("request",count+1);save()};break}}
-                ControlledGoTimeReferenceTest.ObservedConnection(url.openConnection() as HttpsURLConnection){json->
+                ControlledGoTimeReferenceTest.ObservedConnection(url.openConnection() as HttpsURLConnection,observeRequest=if(normalSample)({body:JSONObject->synchronized(lock){
+                    row.put("wireRequest",JSONObject().apply{for(k in listOf("model","max_tokens","max_completion_tokens","response_format","stream"))if(body.has(k))put(k,body.get(k))});save()
+                }})else null){json->
                     synchronized(lock){
+                        if(normalSample){
+                            val chunks=row.optJSONArray("wireResponseChunks")?:JSONArray().also{row.put("wireResponseChunks",it)}
+                            val safe=JSONObject();for(k in listOf("model","usage"))if(json.has(k))safe.put(k,json.get(k))
+                            json.optJSONArray("choices")?.let{choices->safe.put("choices",JSONArray().apply{for(i in 0 until choices.length()){
+                                val source=choices.getJSONObject(i);val choice=JSONObject();for(k in listOf("index","finish_reason"))if(source.has(k))choice.put(k,source.get(k))
+                                for(kind in listOf("message","delta"))source.optJSONObject(kind)?.let{m->choice.put(kind,JSONObject().apply{for(k in listOf("role","content","reasoning_content","tool_calls"))if(m.has(k))put(k,m.get(k))})}
+                                put(choice)
+                            }})};chunks.put(safeResponse(safe,key))
+                        }
                         val meta=row.optJSONObject("responseMetadata")?:JSONObject().also{row.put("responseMetadata",it)}
                         json.optString("model").takeIf{it.matches(Regex("[A-Za-z0-9._:/-]{1,160}"))&&!it.contains(key)}?.let{meta.put("model",it)}
                         json.optJSONObject("usage")?.let{u->
@@ -160,6 +192,7 @@ class GoMemoryRealUiTest {
         override fun before(){
             org.junit.Assume.assumeTrue("explicit controlled opt-in",InstrumentationRegistry.getArguments().getString("controlledGo")=="true")
             check(listOf(contactMode,mutationMode,correctionMode).count{it}<=1){"Conflicting controlled modes"}
+            check(!normalSample||!mutationMode&&!correctionMode&&!supplement){"Normal samples cannot inject or reuse old cases"}
             db=AppServices.databaseName;vault=AppServices.vaultNamespace;previous=AppServices.createTextClient;previousDetailed=Diagnostics.detailed
             Diagnostics.detailed=false
             try{
@@ -168,9 +201,11 @@ class GoMemoryRealUiTest {
                     val v=ModelVault(context,shared.namespace,store)
                     val c=checkNotNull(SelectedModelTestAccess.credential(v,ModelPurpose.CHAT))
                     check(c.config.id=="synthetic-go-model")
-                    v.save(c.config.copy(outputTokens=4096),c.key);v.setPurpose(ModelPurpose.MEMORY,c.config.id)
+                    val configured=if(normalSample){val d=ModelBudgetDraft().forModel(c.config.providerId,c.config.baseUrl,c.config.modelId);c.config.copy(contextTokens=d.context.toInt(),outputTokens=d.chat.toInt(),memoryOutputTokens=d.memory.toInt())}else c.config.copy(outputTokens=4096)
+                    v.save(configured,c.key);v.setPurpose(ModelPurpose.MEMORY,c.config.id)
+                    if(normalSample)preflight.put(JSONObject().put("step","newProductDefaultConfig").put("context",configured.contextTokens).put("chatOutput",configured.outputTokens).put("memoryOutput",configured.memoryOutputLimit()).put("basis","ModelBudgetDraft new UI defaults, not user custom config"))
                     store.add(listOf(Friend(friendId,friendName,"温和自然的虚构茶室角色，只用简短中文回应。本次对话和用户资料全是验收用虚构内容。")),true)
-                    val rules=MemoryRules(recentRounds=40,summaryRounds=inputs.size,immediateWrite=true)
+                    val rules=if(normalSample)MemoryRules()else MemoryRules(recentRounds=40,summaryRounds=inputs.size,immediateWrite=true)
                     store.writableDatabase.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",MemoryRules.KEY);put("value",rules.json().put("version",1).toString())},SQLiteDatabase.CONFLICT_REPLACE)
                     val code=InstalledBuild.read(context).versionCode
                     if(LocalReleaseNotes.forVersion(code)!=null)LocalUpdateRepository(store).acknowledge(code)
@@ -338,7 +373,7 @@ class GoMemoryRealUiTest {
                 synchronized(lock){contactObservation=(contactObservation?:JSONObject()).put("beforeWait",before).put("waitStartedAt",System.currentTimeMillis()).put("expectedIdFromRealSource",expectedId).put("successToolEvidence",evidence).put("originalOpportunity",original);save()}
                 if(original!=null){
                     val initialDue=mapOf(expectedId to original.getLong("notBefore"))
-                    val until=System.nanoTime()+TimeUnit.SECONDS.toNanos(170)
+                    val until=System.nanoTime()+TimeUnit.SECONDS.toNanos(if(normalSample)420 else 170)
                     var ended=false
                     while(!ended&&System.nanoTime()<until){
                         Thread.sleep(250)
@@ -349,7 +384,10 @@ class GoMemoryRealUiTest {
                         val delivered=(0 until links.length()).map{links.getJSONObject(it)}.firstNotNullOfOrNull{link->if(link.getString("opportunityId") !in initialDue)null else (0 until messages.length()).map{messages.getJSONObject(it)}.firstOrNull{message->message.getLong("id")==link.getLong("messageId")&&!message.getBoolean("mine")&&message.getString("text").isNotBlank()}}
                         if(delivered!=null){confirmedProactiveId=delivered.getLong("id");confirmedProactiveText=delivered.getString("text");synchronized(lock){contactObservation!!.put("confirmedProactiveMessageId",confirmedProactiveId).put("confirmedProactiveText",confirmedProactiveText);save()}}
                         val terminal=if(contactOnly)setOf("silent","cancel","cancelled","failed")else setOf("send","silent","cancel","cancelled","failed")
-                        ended=delivered!=null||(0 until opportunities.length()).any{n->val o=opportunities.getJSONObject(n);o.getString("id") in initialDue&&(o.getString("state") in terminal||!contactOnly&&o.getString("state")=="queued"&&o.getLong("notBefore")!=initialDue[o.getString("id")])}
+                        val deferCandidate=synchronized(lock){rows.lastOrNull{it.optBoolean("reconsider")&&it.optString("status")=="success"}?.optString("returnedStructuredText")?.let{runCatching{JSONObject(it).optString("action")=="defer"}.getOrDefault(false)}==true}
+                        val dueDecision=normalSample&&deferCandidate&&(0 until opportunities.length()).any{n->val o=opportunities.getJSONObject(n);o.getString("id")==expectedId&&o.optInt("attempt")>0&&o.optString("failKind").isBlank()&&o.getString("state")=="queued"&&o.getLong("notBefore")!=initialDue[expectedId]}
+                        if(dueDecision)synchronized(lock){contactObservation!!.put("deferredAfterDue",true);save()}
+                        ended=dueDecision||delivered!=null||(0 until opportunities.length()).any{n->val o=opportunities.getJSONObject(n);o.getString("id") in initialDue&&(o.getString("state") in terminal||!contactOnly&&o.getString("state")=="queued"&&o.getLong("notBefore")!=initialDue[o.getString("id")])}
                     }
                     synchronized(lock){contactObservation!!.put("observedStateChange",ended);save()}
                 }else synchronized(lock){contactObservation!!.put("firstArrangementNotConfirmed",true);save()}
@@ -391,22 +429,29 @@ class GoMemoryRealUiTest {
             val realBaseline=calls.get()
             val retryBatch=if(mutationMode)summary!!.getJSONObject("syntheticFailure").getJSONArray("batches").getJSONObject(0).getString("id")else null
             synchronized(lock){if(mutationMode)summary!!.put("manualRetryRealRequestBaseline",realBaseline).put("manualRetryBatchId",retryBatch).put("manualRetryClickedAt",System.currentTimeMillis());save()}
+            if(normalSample)synchronized(lock){summary=JSONObject().put("firstTriggerNewBatch",true).put("manualReruns",0).put("before",before).put("triggerRequestBaseline",realBaseline).put("configuredRules",MemoryRules().json());save()}
             ui.onNodeWithTag("memory-retry").performClick();ui.mainClock.autoAdvance=false
             val start=System.currentTimeMillis()
             waitReal(330000){
                 val batches=snapshot().getJSONArray("batches")
                 val actualRetry= !mutationMode||synchronized(lock){rows.any{r->r.optInt("request")>realBaseline&&r.optString("purpose")=="memory"&&r.optString("status") in setOf("success","failure")&&runCatching{JSONObject(r.getString("input")).getString("batch_id")==retryBatch}.getOrDefault(false)}}&&!stored{friendId in it.memorySummary.roles.value}
-                batches.length()>0&&batches.getJSONObject(batches.length()-1).getString("state") in setOf("COMMITTED","COMPLETED","FAILED")&&actualRetry
+                batches.length()>0&&batches.getJSONObject(batches.length()-1).getString("state") in setOf("COMMITTED","COMPLETED","FAILED")&&actualRetry&&(!normalSample||!stored{friendId in it.memorySummary.roles.value})
             }
             val after=snapshot()
             synchronized(lock){summary=(summary?:JSONObject()).put("triggeredFromUi",true).put("elapsedMs",System.currentTimeMillis()-start).put("before",before).put("after",after);save()}
+            if(normalSample){
+                ui.mainClock.autoAdvance=true;ui.waitForIdle()
+                waitReal(10000){ui.onAllNodesWithTag("memory-task-status").fetchSemanticsNodes().any{n->n.config.getOrNull(SemanticsProperties.Text).orEmpty().none{"正在" in it.text}}}
+                val shown=ui.onNodeWithTag("memory-task-status").fetchSemanticsNode().config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString{it.text}
+                synchronized(lock){summary!!.put("finalTaskUiText",shown);save()}
+            }
             shot("ui-summary");save()
             }
             status="completed_pending_independent_review"
         }catch(e:Throwable){status="failed";shot("ui-failed");throw AssertionError("Actual UI validation failed: ${e.javaClass.simpleName}")}
         finally{
             ui.mainClock.autoAdvance=true
-            if(diagnosticOwned)runBlocking{File(shared.folder,"diagnostics.jsonl").writeBytes(Diagnostics.export(false))};save()
+            if(diagnosticOwned)runBlocking{File(shared.folder,"diagnostics.jsonl").writeBytes(Diagnostics.export(normalSample))};save()
         }
     }
 }
