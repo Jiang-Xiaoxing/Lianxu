@@ -282,7 +282,9 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
         if(attempts.markLate(attempt)){lateDiscards.incrementAndGet();Diagnostics.event("memory.batch.late_discarded",mapOf("character" to attempt.friendId,"batch" to attempt.batchId,"attempt" to attempt.id,"note" to "晚到已丢弃"))}
     }
     private fun batchId(friendId:String,rows:List<SourceDialogue>)="batch-"+stableDigest(friendId+rows.joinToString{"${it.source.turnId}@${it.source.version}"}).take(40)
-    private fun inputCost(request:TextChatRequest)=request.messages.sumOf{ConservativeTokens.tokens(it.content)}
+    // Summary requests contain role/content only; include JSON escaping just like chat capacity checks.
+    private fun inputCost(request:TextChatRequest)=estimateLocalMessagesTokens(request.messages.map{mapOf("role" to it.role,"content" to it.content)})+
+        ConservativeTokens.tokens(com.google.gson.Gson().toJson(request.tools))
     private fun makeRequest(friendId:String,id:String,targets:List<SourceDialogue>,existing:List<StoredMemory>,applied:List<JSONObject>,output:Int,core:CoreBudgetState,auxiliary:List<SourceDialogue>,jsonDocument:Boolean,attempt:Int=1,feedback:List<MemoryRepairFeedback.Issue> = emptyList()):TextChatRequest {
         val framing=if(jsonDocument)"只输出一个完整JSON对象，operations数组保存本次所有操作，完整结束回执与数组位于同一对象；可以换行缩进。禁止逐行NDJSON、多个顶层对象、思考、Markdown或工具调用。"else"只输出逐行JSON（NDJSON），每行完整独立，不输出思考、Markdown或工具调用。"
         val ending=if(jsonDocument)"""唯一完整格式：{"batch_id":"指定批次","character_id":"指定角色","operations":[{上述操作字段}],"operation_count":本批已保存加本次新操作去重后的总数,"complete":true,"end_marker":"同一个指定批次"}。operations直接装操作字段，不能嵌套type/operation包装；没有新事实时operations=[]。"""else"""每个操作一行：{"type":"operation","batch_id":"指定批次","character_id":"指定角色","operation":{上述操作字段}}。
