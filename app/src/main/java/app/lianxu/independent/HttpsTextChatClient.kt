@@ -49,11 +49,16 @@ class HttpsTextChatClient(
     }
     private suspend fun awaitReply(config:ModelConfig,key:String,request:TextChatRequest,budget:Int,legacyContentResult:Boolean=false,onEvent:((TextStreamEvent)->Unit)?=null):TextChatResult = suspendCancellableCoroutine {continuation->
         Diagnostics.registerSecret(key);val diagnosticTrace=Diagnostics.traceId()
+        val capturedTrace=Diagnostics.traceState.get();val requestDiagnostics=Diagnostics.requestState()
+        fun transportFailure(name:String,error:Throwable,timeout:NetworkTimeoutDiagnostic?=null){
+            if(requestDiagnostics!=null)requestDiagnostics.failure(name,error,timeout)else Diagnostics.event(name,mapOf("error_type" to error.javaClass.simpleName),trace=diagnosticTrace)
+        }
         if(ConfigRules.validate(config,key)!=null||!ModelTokenPolicy.acceptsRequest(config,request.outputLimit)){continuation.resume(TextChatResult.Failure(ChatFailure.INVALID_CONFIG));return@suspendCancellableCoroutine}
         if(ProviderRequestMetadata.blockedGoPreset(config)){continuation.resume(TextChatResult.Failure(ChatFailure.GO_ENDPOINT_UNVERIFIED));return@suspendCancellableCoroutine}
         val connection=AtomicReference<HttpsURLConnection?>(null)
         val deadline=System.nanoTime()+budget*1_000_000L
         val task=workers.submit {
+          Diagnostics.onThread(capturedTrace){
             var c:HttpsURLConnection?=null
             val guard=SseStreamGuard()
             // Whether the provider answered at all: only "no answer" is reported as 网络连不上.
@@ -83,6 +88,7 @@ class HttpsTextChatClient(
                 Diagnostics.event("http.request.body",mapOf("method" to "POST","endpoint" to config.baseUrl.trimEnd('/')+"/chat/completions","body" to Diagnostics.raw(diagnosticBody.toString())),trace=diagnosticTrace,secrets=listOf(key))
                 require(bytes.size<=2*1024*1024);active.setFixedLengthStreamingMode(bytes.size)
                 active.outputStream.use{it.write(bytes)};bytes.fill(0)
+                requestDiagnostics?.stage("http.request_sent",mapOf("request_bytes" to bytes.size,"stream" to (onEvent!=null)))
                 val status=active.responseCode;responded=status
                 Diagnostics.event("http.response",mapOf("status" to status,"content_type" to active.contentType,"content_encoding" to active.contentEncoding,"content_length" to active.contentLengthLong,"stream" to (onEvent!=null)),trace=diagnosticTrace,secrets=listOf(key))
                 val error=if(status !in 200..299)diagnosticErrorBody(active,deadline,diagnosticTrace,key) else ErrorBody("",true)
@@ -90,7 +96,7 @@ class HttpsTextChatClient(
                 if(status !in 200..299)TextChatResult.Failure(if(request.tools.isNotEmpty()&&status in setOf(400,422)&&explicitToolsUnsupported(errorBody))ChatFailure.UNSUPPORTED_TOOLS else when(status){401->ChatFailure.UNAUTHORIZED;402->ChatFailure.PAYMENT;403->ChatFailure.FORBIDDEN;429->ChatFailure.RATE_LIMIT;in 300..399->ChatFailure.REDIRECT;in 500..599->ChatFailure.SERVER;else->ChatFailure.REJECTED},status,
                     shown(providerError(status,active.responseMessage,errorBody,error.complete)))
                 else if(onEvent!=null&&active.contentType.orEmpty().substringBefore(';').trim().equals("text/event-stream",true)){
-                    active.inputStream.use{input->
+                    (requestDiagnostics?.count(active.inputStream)?:active.inputStream).use{input->
                         val limited=object:FilterInputStream(input){
                             private val one=ByteArray(1)
                             override fun read():Int{val n=`in`.read(one,0,1);if(n>0){guard.read(one,0,1)?.let{throw StreamRejected(it)};return one[0].toInt() and 0xff};return -1}
@@ -107,7 +113,7 @@ class HttpsTextChatClient(
                         streamed
                     }
                 }else {
-                    val response=active.inputStream.use {input->val output=ByteArrayOutputStream();val buffer=ByteArray(8192)
+                    val response=(requestDiagnostics?.count(active.inputStream)?:active.inputStream).use {input->val output=ByteArrayOutputStream();val buffer=ByteArray(8192)
                         while(output.size()<=2*1024*1024){
                             val remaining=((deadline-System.nanoTime())/1_000_000L).toInt();if(remaining<=0)throw SocketTimeoutException()
                             active.readTimeout=minOf(budget,remaining)
@@ -128,35 +134,50 @@ class HttpsTextChatClient(
                         }
                     }
                 }
-            }catch(e:SocketTimeoutException){Diagnostics.failure("http.timeout",e,trace=diagnosticTrace,secrets=listOf(key))
+            }catch(e:SocketTimeoutException){
+                val diagnostic=requestDiagnostics?.timeout(System.nanoTime()>=deadline)
+                transportFailure("http.timeout",e,diagnostic)
                 val status=responded
                 if(status==null)TextChatResult.Failure(ChatFailure.TIMEOUT,detail=shown("等服务商响应超时，没有收到任何回应。\n${e.javaClass.simpleName}: ${e.message.orEmpty()}"))
                 else TextChatResult.Failure(ChatFailure.TIMEOUT,status,shown("HTTP $status\n已经收到响应，但读取回复时超时。"))}
             catch(e:StreamRejected){Diagnostics.event("http.stream_rejected",mapOf("reason" to e.reason.name,"check" to e.check,"detail" to e.detail)+guard.snapshot(),trace=diagnosticTrace,secrets=listOf(key))
                 TextChatResult.Failure(e.reason,responded,shown((responded?.let{"HTTP $it\n"}?:"")+"回复流没有通过检查：${e.check}"+(if(e.detail.isNotBlank())"\n${e.detail}" else "")))}
-            catch(e:SSLException){Diagnostics.failure("http.tls_failed",e,trace=diagnosticTrace,secrets=listOf(key));TextChatResult.Failure(ChatFailure.TLS,detail=shown("${e.javaClass.simpleName}: ${e.message.orEmpty()}"))}
+            catch(e:SSLException){transportFailure("http.tls_failed",e);TextChatResult.Failure(ChatFailure.TLS,detail=shown("${e.javaClass.simpleName}: ${e.message.orEmpty()}"))}
             // A parser exception can quote the raw payload, including native reasoning: its message is never shown.
             catch(e:org.json.JSONException){Diagnostics.event("http.format_failed",mapOf("error_type" to e.javaClass.name),trace=diagnosticTrace);TextChatResult.Failure(ChatFailure.FORMAT,responded,shown((responded?.let{"HTTP $it\n"}?:"")+"服务返回的内容不是有效的 JSON。"))}
-            catch(e:Exception){Diagnostics.failure("http.network_failed",e,trace=diagnosticTrace,secrets=listOf(key))
+            catch(e:Exception){transportFailure("http.network_failed",e)
                 val status=responded
                 val raw="${e.javaClass.simpleName}: ${e.message.orEmpty()}"
                 // Only a real "cannot reach the service" is 网络连不上; anything else shows its own error as is.
                 if(status==null)TextChatResult.Failure(if(unreachable(e))ChatFailure.NETWORK else ChatFailure.UNKNOWN,detail=shown(if(unreachable(e))"没有收到服务商的任何回应。\n$raw" else raw))
                 else TextChatResult.Failure(ChatFailure.RESPONSE_BROKEN,status,shown("HTTP $status\n$raw"))}
-            finally{connection.getAndSet(null)?.disconnect();c?.disconnect()}
+            finally{requestDiagnostics?.transferEnd(responded);diagnosticDisconnect(connection.getAndSet(null));diagnosticDisconnect(c)}
             if(continuation.isActive)continuation.resume(result)
+          }
         }
-        continuation.invokeOnCancellation{task.cancel(true);connection.getAndSet(null)?.let{open->Thread({open.disconnect()},"lianxu-text-close").apply{isDaemon=true}.start()}}
+        continuation.invokeOnCancellation{cause->Diagnostics.onThread(capturedTrace){
+            requestDiagnostics?.cancel(cause);requestDiagnostics?.stage("http.abort_requested")
+            task.cancel(true);connection.getAndSet(null)?.let{open->Thread({Diagnostics.onThread(capturedTrace){diagnosticDisconnect(open)}},"lianxu-text-close").apply{isDaemon=true}.start()}
+        }}
+    }
+    private fun diagnosticDisconnect(connection:HttpsURLConnection?){
+        try{connection?.disconnect()}catch(e:Exception){
+            Diagnostics.requestState()?.failure("http.disconnect_failed",e)?:Diagnostics.event("http.disconnect_failed",mapOf("error_type" to e.javaClass.simpleName))
+            throw e
+        }
     }
     private class ErrorBody(val text:String,val complete:Boolean)
-    private fun overallTimeout(budget:Int)=TextChatResult.Failure(ChatFailure.TIMEOUT,detail="等了 ${budget/1000} 秒仍没有完成回复，已停止等待。")
+    private fun overallTimeout(budget:Int):TextChatResult.Failure {
+        Diagnostics.requestState()?.let{it.stop("total_timeout");it.stage("http.total_timeout",mapOf("timeout_ms" to budget))}
+        return TextChatResult.Failure(ChatFailure.TIMEOUT,detail="等了 ${budget/1000} 秒仍没有完成回复，已停止等待。")
+    }
     private fun diagnosticErrorBody(connection:HttpsURLConnection,deadline:Long,trace:String,key:String):ErrorBody {
         var complete=false
-        val bytes=runCatching{connection.errorStream?.use{input->
+        val bytes=runCatching{connection.errorStream?.let{Diagnostics.requestState()?.count(it)?:it}?.use{input->
             val out=ByteArrayOutputStream();val buffer=ByteArray(2048)
             while(out.size()<16384){val remaining=((deadline-System.nanoTime())/1_000_000L).toInt();if(remaining<=0)break;connection.readTimeout=minOf(2000,remaining);val n=input.read(buffer,0,minOf(buffer.size,16384-out.size()));if(n<0){complete=true;break};out.write(buffer,0,n)}
             out.toByteArray()
-        }?:ByteArray(0)}.getOrElse{Diagnostics.failure("http.error_body.unavailable",it,trace=trace,secrets=listOf(key));ByteArray(0)}
+        }?:ByteArray(0)}.getOrElse{Diagnostics.requestState()?.failure("http.error_body.unavailable",it)?:Diagnostics.event("http.error_body.unavailable",mapOf("error_type" to it.javaClass.simpleName),trace=trace);ByteArray(0)}
         return ErrorBody(String(bytes,Charsets.UTF_8).also{Diagnostics.event("http.error_body",mapOf("body" to if(!complete)"[错误响应未完整读取或达到限额，正文已省略]" else Diagnostics.raw(it),"limited" to !complete),trace=trace,secrets=listOf(key))},complete)
     }
     private class StreamRejected(val check:String,val detail:String="",val reason:ChatFailure=streamCheckFailure(check)):Exception()

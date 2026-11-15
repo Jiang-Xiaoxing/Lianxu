@@ -42,6 +42,7 @@ internal class DiagnosticJournal(private val directory:File,private val version:
     private companion object {
         /** Small fields that tie an event to its turn, attempt and request; never truncated away. */
         val CORRELATION_KEYS=setOf("request_id","span","parent_span","purpose","turn","attempt","step","status",
+            "batch","attempt_id","model_attempt","stage","cancel_source","terminal_status","cause_relation","after_terminal_decision","response_bytes","first_byte_ms","last_byte_ms","commit_state",
             "reasoning_status","reasoning_chars","reasoning_truncated","chunks","stream_chars","reasoning_chunks","saved","outcome",
             "call_id","name","failure","reason","error_type",
             "final_reasoning_status","final_reasoning_chars","final_reasoning_truncated")

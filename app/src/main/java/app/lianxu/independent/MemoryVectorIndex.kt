@@ -18,27 +18,42 @@ import kotlin.math.sqrt
 internal interface MemoryEmbeddingClient {suspend fun embed(credential:ModelCredential,texts:List<String>,timeout:Int):List<DoubleArray>}
 /** Independent adapter using the project's HTTPS validation/auth rules; no upstream network client copied. */
 internal class HttpsMemoryEmbeddingClient(private val factory:HttpsConnectionFactory=HttpsConnectionFactory{it.openConnection() as HttpsURLConnection}):MemoryEmbeddingClient {
-    override suspend fun embed(credential:ModelCredential,texts:List<String>,timeout:Int):List<DoubleArray> = withContext(Dispatchers.IO+Diagnostics.context("embedding")){
+    override suspend fun embed(credential:ModelCredential,texts:List<String>,timeout:Int):List<DoubleArray> = withContext(Diagnostics.networkContext("embedding")){
+      val diagnosticRequest=Diagnostics.requestState()
+      try{
+       val result=withContext(Dispatchers.IO){
         Diagnostics.registerSecret(credential.key);val start=System.nanoTime()
         Diagnostics.event("embedding.http.request",mapOf("endpoint" to credential.config.baseUrl,"provider" to credential.config.providerId,"model" to credential.config.modelId,"input_count" to texts.size,"input_chars" to texts.map{it.length},"timeout_ms" to timeout),secrets=listOf(credential.key))
         require(ProviderCatalog.modelKind(credential.config)!=ProviderModelKind.OTHER_PROTOCOL){"embedding_protocol_not_adapted"}
         require(ConfigRules.validate(credential.config,credential.key)==null&&texts.size in 1..2048)
-        val c=try{factory.open(URL(credential.config.baseUrl.trimEnd('/')+"/embeddings"))}catch(e:Exception){Diagnostics.failure("embedding.http.open_failed",e,secrets=listOf(credential.key));throw e}
+        val c=try{factory.open(URL(credential.config.baseUrl.trimEnd('/')+"/embeddings"))}catch(e:Exception){diagnosticRequest?.failure("embedding.http.open_failed",e);throw e}
+        var failureStage="request"
         try{
             c.instanceFollowRedirects=false;c.connectTimeout=timeout;c.readTimeout=timeout;c.requestMethod="POST";c.doOutput=true
             val p=ProviderPresets.get(credential.config.providerId);c.setRequestProperty(p.authHeader,if(p.authHeader=="Authorization")"Bearer ${credential.key}" else credential.key)
             c.setRequestProperty("Content-Type","application/json; charset=utf-8")
             val bytes=JSONObject().put("model",credential.config.modelId).put("input",JSONArray(texts)).toString().toByteArray(Charsets.UTF_8)
-            require(bytes.size<=256*1024);c.setFixedLengthStreamingMode(bytes.size);c.outputStream.use{it.write(bytes)};bytes.fill(0)
+            failureStage="request_size"
+            require(bytes.size<=256*1024);failureStage="request";c.setFixedLengthStreamingMode(bytes.size);c.outputStream.use{it.write(bytes)};bytes.fill(0)
+            diagnosticRequest?.stage("embedding.http.request_sent",mapOf("request_bytes" to bytes.size))
             val status=c.responseCode;Diagnostics.event("embedding.http.status",mapOf("status" to status),secrets=listOf(credential.key))
+            failureStage="status"
             require(status in 200..299){"embedding_response"}
-            val raw=c.inputStream.use{input->val out=java.io.ByteArrayOutputStream();val buffer=ByteArray(8192);while(out.size()<=16*1024*1024){val n=input.read(buffer,0,minOf(buffer.size,16*1024*1024+1-out.size()));if(n<0)break;out.write(buffer,0,n)};out.toByteArray()};require(raw.size<=16*1024*1024)
+            failureStage="read"
+            val raw=(diagnosticRequest?.count(c.inputStream)?:c.inputStream).use{input->val out=java.io.ByteArrayOutputStream();val buffer=ByteArray(8192);while(out.size()<=16*1024*1024){val n=input.read(buffer,0,minOf(buffer.size,16*1024*1024+1-out.size()));if(n<0)break;out.write(buffer,0,n)};out.toByteArray()}
+            failureStage="response_size";require(raw.size<=16*1024*1024)
             Diagnostics.event("embedding.http.response",mapOf("response_bytes" to raw.size),elapsed=(System.nanoTime()-start)/1_000_000,secrets=listOf(credential.key))
+            failureStage="parse"
             val rows=JSONObject(String(raw,Charsets.UTF_8)).getJSONArray("data");require(rows.length()==texts.size)
             val indexed=(0 until rows.length()).map{rows.getJSONObject(it)}.associateBy{it.getInt("index")};require(indexed.keys==(texts.indices).toSet())
             texts.indices.map{i->val a=indexed.getValue(i).getJSONArray("embedding");DoubleArray(a.length()){a.getDouble(it)}.also{require(MemoryVectorIndex.valid(it))}}
                 .also{require(it.map{v->v.size}.distinct().size==1);Diagnostics.event("embedding.http.parsed",mapOf("vectors" to it.size,"dimensions" to it.firstOrNull()?.size))}
-        }catch(e:Exception){Diagnostics.failure("embedding.http.failed",e,secrets=listOf(credential.key));throw e}finally{c.disconnect()}
+        }catch(e:Exception){diagnosticRequest?.failure(when(failureStage){"parse"->"embedding.http.parse_failed";"status"->"embedding.http.status_rejected";"request_size"->"embedding.http.request_size_rejected";"response_size"->"embedding.http.response_size_rejected";else->"embedding.http.transport_failed"},e);throw e}finally{diagnosticRequest?.transferEnd(null);try{c.disconnect()}catch(e:Exception){diagnosticRequest?.failure("embedding.http.disconnect_failed",e);throw e}}
+       }
+       if(diagnosticRequest?.finish("SUCCESS")!=false)Diagnostics.event("embedding.http.result",mapOf("status" to "success"))
+       result
+      }catch(e:CancellationException){diagnosticRequest?.cancel(e);if(diagnosticRequest?.finish("CANCELLED")!=false)Diagnostics.event("embedding.http.cancelled");throw e}
+      catch(e:Exception){if(diagnosticRequest?.finish("EXCEPTION")!=false)Diagnostics.event("embedding.http.failed",mapOf("error_type" to e.javaClass.simpleName));throw e}
     }
 }
 

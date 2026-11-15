@@ -120,7 +120,7 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
                         val req=makeRequest(friendId,work.id,work.targets,current,accepted,output,core,auxiliary,jsonDocument,attempt,feedback)
                         if(inputCost(req)+output>credentials.config.contextTokens)throw ProcessingRejected("CAPACITY")
                         running.configId=credentials.config.id
-                        consume(work,credentials,req,lease,accepted,token){taskCurrent()}
+                        withContext(Diagnostics.linkedContext(mapOf("batch" to work.id,"attempt" to attempt,"attempt_id" to token.id))){consume(work,credentials,req,lease,accepted,token){taskCurrent()}}
                         modelStatus.recordCall(credentials.config.id,"总结",true,"")
                         batches.clearFailure(friendId)
                         finished=true;didChange=true;changed();background.launch(friendId){vectors.index(friendId)};break
@@ -258,14 +258,18 @@ class MemoryEngine(private val scope:CoroutineScope,private val repo:ProcessingR
         val publish:(android.database.sqlite.SQLiteDatabase)->Boolean={db->rejectUnless(repo.sourcesMatch(db,work.targets),"SOURCE_CHANGED");attempts.committable(attempt,attempt.sources,repo.cursor(db,work.friendId))}
         val filledWork=work.copy(gistFill=end.optJSONArray("gist_fill")?.let{a->(0 until minOf(a.length(),MemoryForgetting.GIST_BATCH)).mapNotNull{i->runCatching{MemoryNumberedReferences(work.targets,work.existingVersions.keys).normalize(a.getJSONObject(i))}.getOrNull()}}.orEmpty())
         if(embedding==null){
-            saveAfterReply(work){batches.applyDocument(filledWork,staged,count,marker,{current()},lease,publish)}
+            saveAfterReply(work){batches.applyDocument(filledWork,staged,count,marker,{current()},lease,publish)}.also{
+                Diagnostics.event("memory.batch.committed",mapOf("batch" to work.id,"attempt_id" to attempt.id,"commit_state" to "committed"))
+            }
             changed()
         }else {
             val snapshot=batches.previewSemantic(work,staged){current()}
             val index=semanticEmbeddingClient?.let{MemoryVectorIndex(repo,access,it)}?:vectors
             val result=MemorySemanticDeduplicator(index,client).resolve(work,staged,snapshot,credentials,requireNotNull(embedding)){current()}
             if(!attempts.live(attempt))late()
-            val committed=saveAfterReply(work){batches.applySemantic(filledWork,staged,result.operations,snapshot,count,marker,{current()},lease,publish)}
+            val committed=saveAfterReply(work){batches.applySemantic(filledWork,staged,result.operations,snapshot,count,marker,{current()},lease,publish)}.also{
+                Diagnostics.event("memory.batch.committed",mapOf("batch" to work.id,"attempt_id" to attempt.id,"commit_state" to "committed"))
+            }
             if(result.byText.isNotEmpty())try{index.rememberSemantic(work.friendId,committed,result.byText,embedding){current()}}catch(e:CancellationException){throw e}catch(e:Exception){Diagnostics.failure("memory.semantic.cache_skipped",e,mapOf("character" to work.friendId))}
             changed()
         }

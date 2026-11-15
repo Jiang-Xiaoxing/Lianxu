@@ -6,7 +6,7 @@ import java.util.UUID
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
-internal data class DiagnosticTraceState(val trace:String,val span:String,val parent:String?,val purpose:String?)
+internal data class DiagnosticTraceState(val trace:String,val span:String,val parent:String?,val purpose:String?,val request:NetworkDiagnosticState?=null,val links:Map<String,Any?> = emptyMap())
 internal class DiagnosticTrace(private val value:DiagnosticTraceState):ThreadContextElement<DiagnosticTraceState?>,AbstractCoroutineContextElement(Key){
     companion object Key:CoroutineContext.Key<DiagnosticTrace>
     override fun updateThreadContext(context:CoroutineContext):DiagnosticTraceState?=Diagnostics.traceState.get().also{Diagnostics.traceState.set(value)}
@@ -57,16 +57,27 @@ internal object Diagnostics {
     fun traceId():String=traceState.get()?.trace?:UUID.randomUUID().toString()
     fun event(name:String,data:Map<String,Any?> = emptyMap(),trace:String?=null,elapsed:Long?=null,secrets:List<String> = emptyList()){
         val state=traceState.get()
-        runCatching{journal?.record(name,trace?:state?.trace?:UUID.randomUUID().toString(),data+mapOf("span" to state?.span,"parent_span" to state?.parent,"purpose" to state?.purpose),elapsed,secrets)}
+        runCatching{journal?.record(name,trace?:state?.trace?:UUID.randomUUID().toString(),state?.links.orEmpty()+state?.request?.fields().orEmpty()+data+mapOf("span" to state?.span,"parent_span" to state?.parent,"purpose" to state?.purpose),elapsed,secrets)}
     }
     fun failure(name:String,error:Throwable,data:Map<String,Any?> = emptyMap(),trace:String?=null,secrets:List<String> = emptyList()){
         event(name,data+mapOf("error_type" to error.javaClass.name,"error" to error.message,"stack" to error.stackTraceToString()),trace,secrets=secrets)
     }
-    fun context(purpose:String,trace:String=UUID.randomUUID().toString()):DiagnosticTrace {
-        val old=traceState.get();return DiagnosticTrace(DiagnosticTraceState(old?.trace?:trace,UUID.randomUUID().toString(),old?.span,purpose))
+    fun context(purpose:String,trace:String=UUID.randomUUID().toString(),request:NetworkDiagnosticState?=traceState.get()?.request):DiagnosticTrace {
+        val old=traceState.get();return DiagnosticTrace(DiagnosticTraceState(old?.trace?:trace,UUID.randomUUID().toString(),old?.span,purpose,request,old?.links.orEmpty()))
+    }
+    fun networkContext(purpose:String)=context(purpose,request=NetworkDiagnosticState(UUID.randomUUID().toString()))
+    fun requestState()=traceState.get()?.request
+    fun linkedContext(links:Map<String,Any?>):DiagnosticTrace {
+        val old=traceState.get()?:DiagnosticTraceState(UUID.randomUUID().toString(),UUID.randomUUID().toString(),null,null)
+        val safe=links.filter{(key,value)->key in setOf("batch","attempt","attempt_id","stage","model_attempt")&&(value is Number||value is String&&value.matches(Regex("[A-Za-z0-9_.:-]{1,100}")))}
+        return DiagnosticTrace(old.copy(links=old.links+safe))
+    }
+    inline fun <T> onThread(state:DiagnosticTraceState?,block:()->T):T {
+        val previous=traceState.get();traceState.set(state)
+        try{return block()}finally{traceState.set(previous)}
     }
     suspend fun <T> span(name:String,data:Map<String,Any?> = emptyMap(),block:suspend()->T):T {
-        val old=traceState.get();val state=DiagnosticTraceState(old?.trace?:UUID.randomUUID().toString(),UUID.randomUUID().toString(),old?.span,old?.purpose?:name.substringBefore('.'))
+        val old=traceState.get();val state=DiagnosticTraceState(old?.trace?:UUID.randomUUID().toString(),UUID.randomUUID().toString(),old?.span,old?.purpose?:name.substringBefore('.'),old?.request,old?.links.orEmpty())
         return withContext(DiagnosticTrace(state)){
             val start=System.nanoTime();event("$name.start",data)
             try{block().also{event("$name.complete",data,elapsed=(System.nanoTime()-start)/1_000_000)}}
@@ -88,29 +99,39 @@ internal class LoggedTextChatClient(private val delegate:TextChatClient):TextCha
         Diagnostics.event("network.request",mapOf("request_id" to id,"stream" to stream,"model" to config.modelId,"provider" to config.providerId,"endpoint" to config.baseUrl,"context_limit" to config.contextTokens,"output_limit" to value.outputLimit,"timeout_ms" to value.timeoutMillis,"messages" to value.messages.map{mapOf("role" to it.role,"content" to Diagnostics.raw(it.content),"tool_calls" to it.toolCalls.map{c->mapOf("id" to c.id,"name" to c.name,"arguments" to Diagnostics.raw(c.arguments))})},"tools" to value.tools),secrets=listOf(key))
     }
     private fun response(id:String,result:TextChatResult,start:Long,key:String,extra:Map<String,Any?> = emptyMap(),reasoning:Map<String,Any?>?=null){
+        if(Diagnostics.requestState()?.finish(if(result is TextChatResult.Success)"SUCCESS"else(result as TextChatResult.Failure).reason.name)==false)return
         val value=when(result){
             is TextChatResult.Success->mapOf("status" to "success","text" to Diagnostics.raw(result.text),"tool_calls" to result.toolCalls.map{mapOf("id" to it.id,"name" to it.name,"arguments" to Diagnostics.raw(it.arguments))})
             is TextChatResult.Failure->mapOf("status" to "failure","reason" to result.reason.name,"http_status" to result.httpStatus)
         }
         Diagnostics.event("network.response",value+extra+(reasoning?:Diagnostics.reasoning((result as? TextChatResult.Success)?.displayReasoning.orEmpty()))+mapOf("request_id" to id),elapsed=(System.nanoTime()-start)/1_000_000,secrets=listOf(key))
     }
-    override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult=withContext(Diagnostics.context(Diagnostics.traceState.get()?.purpose?:"network")){
-        val id=UUID.randomUUID().toString();val start=System.nanoTime();request(config,key,request,id,false)
-        return@withContext try{delegate.complete(config,key,request).also{response(id,it,start,key)}}
-        catch(e:CancellationException){Diagnostics.event("network.cancelled",mapOf("request_id" to id));throw e}
-        catch(e:Exception){Diagnostics.failure("network.failed",e,mapOf("request_id" to id),secrets=listOf(key));throw e}
+    private fun cancelled(error:CancellationException,id:String,data:Map<String,Any?> = emptyMap()){
+        val state=Diagnostics.requestState();state?.cancel(error)
+        if(state?.finish("CANCELLED")==false)return
+        if(state!=null)state.stage("network.cancelled",data+mapOf("request_id" to id))else Diagnostics.event("network.cancelled",data+mapOf("request_id" to id))
     }
-    override suspend fun stream(config:ModelConfig,key:String,request:TextChatRequest,onChunk:suspend(String)->Unit):TextChatResult=withContext(Diagnostics.context(Diagnostics.traceState.get()?.purpose?:"network")){
-        val id=UUID.randomUUID().toString();val start=System.nanoTime();request(config,key,request,id,true)
+    private fun failed(error:Exception,id:String,data:Map<String,Any?> = emptyMap()){
+        if(Diagnostics.requestState()?.finish("EXCEPTION")==false)return
+        Diagnostics.event("network.failed",data+mapOf("request_id" to id,"error_type" to error.javaClass.name))
+    }
+    override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult=withContext(Diagnostics.networkContext(Diagnostics.traceState.get()?.purpose?:"network")){
+        val id=requireNotNull(Diagnostics.requestState()).id;val start=System.nanoTime();request(config,key,request,id,false)
+        return@withContext try{delegate.complete(config,key,request).also{response(id,it,start,key)}}
+        catch(e:CancellationException){cancelled(e,id);throw e}
+        catch(e:Exception){failed(e,id);throw e}
+    }
+    override suspend fun stream(config:ModelConfig,key:String,request:TextChatRequest,onChunk:suspend(String)->Unit):TextChatResult=withContext(Diagnostics.networkContext(Diagnostics.traceState.get()?.purpose?:"network")){
+        val id=requireNotNull(Diagnostics.requestState()).id;val start=System.nanoTime();request(config,key,request,id,true)
         var chunks=0;var chars=0;var omitted=false;val text=StringBuilder()
         return@withContext try{
             delegate.stream(config,key,request){chunk->chunks++;chars+=chunk.length;if(!omitted){if(text.length+chunk.length<=32768)text.append(chunk)else{omitted=true;text.clear()}};onChunk(chunk)}
                 .also{result->response(id,result,start,key,mapOf("chunks" to chunks,"stream_chars" to chars,"stream_text" to if(result is TextChatResult.Success&&!omitted)Diagnostics.raw(text.toString()) else "[流式正文已省略]","stream_text_omitted" to (omitted||result !is TextChatResult.Success),"stream_omitted_reason" to if(omitted)"超过正文限额" else if(result !is TextChatResult.Success)"响应未完整成功" else ""))}
-        }catch(e:CancellationException){Diagnostics.event("network.cancelled",mapOf("request_id" to id,"chunks" to chunks,"stream_chars" to chars));throw e}
-        catch(e:Exception){Diagnostics.failure("network.failed",e,mapOf("request_id" to id,"chunks" to chunks,"stream_chars" to chars),secrets=listOf(key));throw e}
+        }catch(e:CancellationException){cancelled(e,id,mapOf("chunks" to chunks,"stream_chars" to chars));throw e}
+        catch(e:Exception){failed(e,id,mapOf("chunks" to chunks,"stream_chars" to chars));throw e}
     }
-    override suspend fun streamEvents(config:ModelConfig,key:String,request:TextChatRequest,onEvent:suspend(TextStreamEvent)->Unit):TextChatResult=withContext(Diagnostics.context(Diagnostics.traceState.get()?.purpose?:"network")){
-        val id=UUID.randomUUID().toString();val start=System.nanoTime();request(config,key,request,id,true)
+    override suspend fun streamEvents(config:ModelConfig,key:String,request:TextChatRequest,onEvent:suspend(TextStreamEvent)->Unit):TextChatResult=withContext(Diagnostics.networkContext(Diagnostics.traceState.get()?.purpose?:"network")){
+        val id=requireNotNull(Diagnostics.requestState()).id;val start=System.nanoTime();request(config,key,request,id,true)
         var chunks=0;var chars=0;var reasoningChunks=0;var reasoningChars=0;var omitted=false;val text=StringBuilder()
         // Thinking that already streamed in is a fact even when the request later fails or is cancelled.
         val streamedReasoning=StringBuilder();var reasoningOmitted=false
@@ -132,18 +153,18 @@ internal class LoggedTextChatClient(private val delegate:TextChatClient):TextCha
                 onEvent(event)
             }.also{result->response(id,result,start,key,counts()+mapOf("stream_text" to if(result is TextChatResult.Success&&!omitted)Diagnostics.raw(text.toString()) else "[流式正文已省略]","stream_text_omitted" to (omitted||result !is TextChatResult.Success)),
                 reasoning=if(result is TextChatResult.Success)Diagnostics.reasoning(result.displayReasoning) else reasoningMap())}
-        }catch(e:CancellationException){Diagnostics.event("network.cancelled",counts()+reasoningMap());throw e}
+        }catch(e:CancellationException){cancelled(e,id,counts()+reasoningMap());throw e}
         // An observer exception may echo the supplied reasoning; retain type/counts, never its message.
-        catch(e:Exception){Diagnostics.event("network.failed",counts()+reasoningMap()+mapOf("error_type" to e.javaClass.name));throw e}
+        catch(e:Exception){failed(e,id,counts()+reasoningMap());throw e}
     }
 }
 
 internal class LoggedModelDirectoryClient(private val delegate:ModelDirectoryClient):ModelDirectoryClient {
-    override suspend fun request(config:ModelConfig,key:String,fetchModels:Boolean):ConfigResult=withContext(Diagnostics.context("model")){
+    override suspend fun request(config:ModelConfig,key:String,fetchModels:Boolean):ConfigResult=withContext(Diagnostics.networkContext("model")){
         Diagnostics.registerSecret(key)
         Diagnostics.event("model.directory.start",mapOf("provider" to config.providerId,"endpoint" to config.baseUrl,"model" to config.modelId,"fetch_models" to fetchModels),secrets=listOf(key))
-        try{delegate.request(config,key,fetchModels).also{result->Diagnostics.event("model.directory.result",when(result){is ConfigResult.Success->mapOf("status" to "success","models" to result.modelIds);is ConfigResult.Failure->mapOf("status" to "failure","reason" to result.error.name,"http_status" to result.httpStatus)},secrets=listOf(key))}}
-        catch(e:CancellationException){Diagnostics.event("model.directory.cancelled");throw e}
-        catch(e:Exception){Diagnostics.failure("model.directory.failed",e,secrets=listOf(key));throw e}
+        try{delegate.request(config,key,fetchModels).also{result->if(Diagnostics.requestState()?.finish(if(result is ConfigResult.Success)"SUCCESS"else(result as ConfigResult.Failure).error.name)!=false)Diagnostics.event("model.directory.result",when(result){is ConfigResult.Success->mapOf("status" to "success","models" to result.modelIds);is ConfigResult.Failure->mapOf("status" to "failure","reason" to result.error.name,"http_status" to result.httpStatus)},secrets=listOf(key))}}
+        catch(e:CancellationException){Diagnostics.requestState()?.cancel(e);if(Diagnostics.requestState()?.finish("CANCELLED")!=false)Diagnostics.event("model.directory.cancelled");throw e}
+        catch(e:Exception){if(Diagnostics.requestState()?.finish("EXCEPTION")!=false)Diagnostics.event("model.directory.failed",mapOf("error_type" to e.javaClass.simpleName));throw e}
     }
 }
