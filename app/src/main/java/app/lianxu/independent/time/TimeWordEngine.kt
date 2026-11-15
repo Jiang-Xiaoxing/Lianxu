@@ -6,6 +6,26 @@ import java.util.Locale
 
 /** 只解释完整的单日时间词。范围、模糊词和复合日期交给调用方处理。 */
 internal object TimeWordEngine {
+    /** Recognition only, for preventing a dated memory from silently dropping its date field. */
+    fun hasExpression(value:String):Boolean {
+        val text=normalize(value)
+        return (ZhRules.rules+JaRules.rules+EnRules.rules+KoRules.rules).any{it.pattern.containsMatchIn(text)}
+    }
+    fun isWholeExpression(expression:String,source:String):Boolean {
+        val text=normalize(source)
+        val matches=(ZhRules.rules+JaRules.rules+EnRules.rules+KoRules.rules).flatMap{it.pattern.findAll(text).toList()}
+        val whole=matches.filter{m->matches.none{other->other.range!=m.range&&other.range.first<=m.range.first&&other.range.last>=m.range.last}}
+        if(expression.isEmpty())return false
+        var at=source.indexOf(expression)
+        while(at>=0){
+            // Sentinel preserves whitespace at this exact original occurrence during normalization.
+            val start=normalize(source.substring(0,at)+"\u0001").length-1
+            val end=normalize(source.substring(0,at+expression.length)+"\u0001").length-1
+            if(whole.any{it.range.first==start&&it.range.last==end-1&&it.value==normalize(expression)})return true
+            at=source.indexOf(expression,at+1)
+        }
+        return false
+    }
     sealed interface Result {
         data class Day(val date: LocalDate) : Result
         data object Unresolved : Result

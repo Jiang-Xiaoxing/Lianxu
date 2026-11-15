@@ -65,20 +65,21 @@ internal object ToolArgumentDiagnosis {
         // RoleUnderstandingContract lenient parts and both relation contracts swallow issues: do not report them.
         return out
     }
-    fun writeFailure(name:String,raw:String,input:String,knownTargets:Set<String>,base:Map<String,Any>,error:Exception):Map<String,Any> {
+    fun writeFailure(name:String,raw:String,input:String,knownTargets:Set<String>,base:Map<String,Any>,error:Exception,memoryEvidence:Map<String,MemoryEvidence>?=null):Map<String,Any> {
         if(name !in setOf("agent_memory_update",JointControl.NAME,CompanionRecord.NAME))return base
         // MemoryTools.stage state guards are not argument errors; never diagnose them as fields.
         if(base["error"] in setOf("SOURCE_CHANGED","TOOL_LIMIT","TOOLS_DISABLED","STALE"))return base+mapOf("detail" to "当前状态不允许这次操作，无需修改参数重试。")
-        if(base["error"] !in setOf("invalid_arguments","FORMAT","EVIDENCE","DATE_EVIDENCE","UNKNOWN_TARGET"))return base
-        return failure(base,error){when(name){JointControl.NAME->diagnoseControl(org.json.JSONObject(raw),input);CompanionRecord.NAME->diagnoseRecord(raw,input,false);else->diagnoseMemoryUpdate(org.json.JSONObject(raw),input,knownTargets)}}
+        if(error is ProcessingRejected&&error.code=="DATE_EVIDENCE"&&error.detail.isNotBlank())return base+mapOf("detail" to "这次调用没有通过检查。${error.detail}")
+        if(base["error"] !in setOf("invalid_arguments","FORMAT","EVIDENCE","USER_EVIDENCE","DATE_EVIDENCE","UNKNOWN_TARGET"))return base
+        return failure(base,error){when(name){JointControl.NAME->diagnoseControl(org.json.JSONObject(raw),input);CompanionRecord.NAME->diagnoseRecord(raw,input,false);else->diagnoseMemoryUpdate(org.json.JSONObject(raw),input,knownTargets,memoryEvidence)}}
     }
-    fun diagnoseMemoryUpdate(args:org.json.JSONObject,input:String,knownTargets:Set<String>):List<Problem> {
+    fun diagnoseMemoryUpdate(args:org.json.JSONObject,input:String,knownTargets:Set<String>,memoryEvidence:Map<String,MemoryEvidence>?=null):List<Problem> {
         val out=mutableListOf<Problem>()
         val json=JsonParser.parseString(args.toString()).asJsonObject
         fun check(key:String,expected:String,ok:Boolean){if(!ok)out+=Problem(key,expected,actual(json[key]))}
-        // MemoryTools.stage EVIDENCE: optJSONArray, one entry and getString(0)==S1.
-        val e=args.optJSONArray("evidence")
-        check("evidence","为只包含字符串 S1 的数组",e?.length()==1&&runCatching{e.getString(0)=="S1"}.getOrDefault(false))
+        val available=memoryEvidence?:mapOf("S1" to MemoryEvidence(SourceRef("diagnosis",1,1),"user",input,input,0,"UTC"))
+        val proof=runCatching{ImmediateMemoryEvidence.select(args,available)}.getOrNull()
+        check("evidence","为只包含一个本次已提供用户来源编号的数组（${available.keys.joinToString()}）",proof!=null)
         // MemoryTools.stage op getString and FORMAT enum; org.json string coercion stays authoritative.
         val op=runCatching{args.getString("op")}.getOrNull()
         check("op","为 add、update、cancel、complete 或 retract",op in setOf("add","update","cancel","complete","retract"))
@@ -89,13 +90,14 @@ internal object ToolArgumentDiagnosis {
         // Missing update fields are not provable errors without that base; only check supplied values.
         val content=args.optString("content")
         if(op=="add"||content.isNotBlank())check("content","为非空内容，最多 4000 字",content.isNotBlank()&&content.length<=4000)
+        val fact=proof?.let{runCatching{ImmediateMemoryEvidence.fact(it,args,content,args.optJSONArray("evidence")?.optString(0)!="S1")}.getOrNull()}
+        if(proof!=null&&fact==null)check("content","逐字保留所选整条用户原话，不切句、不改写、不删日期或混入助手话语",false)
         val category=args.optString("category")
         if(op=="add"||category.isNotBlank())check("category","为有效现代分类："+MemoryCategory.entries.filter{it.modern}.joinToString{it.name},runCatching{MemoryCategory.valueOf(category).modern}.getOrDefault(false))
         val about=args.optString("about")
         if(op=="add"||about.isNotBlank())check("about","为 USER、CHARACTER 或 BOTH",runCatching{MemoryAbout.valueOf(about)}.isSuccess)
-        // MemoryTools.stage DATE_EVIDENCE and date_type FORMAT checks.
-        val date=args.optString("time_text")
-        check("time_text","为空或逐字引用当前原话",date.isEmpty()||date in input)
+        // Diagnose the same selected source/date policy as staging, never recommend dropping dates.
+        fact?.let{ImmediateMemoryEvidence.dateProblem(args,it,content)?.let{(field,expected)->check(field,expected,false)}}
         check("date_type","为 day、habit 或 birthday",args.optString("date_type","day") in setOf("day","habit","birthday"))
         return out
     }
