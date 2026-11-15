@@ -28,6 +28,7 @@ class UpdatesPageUiTest {
     @get:Rule(order=0) val fixture=MockChatFixture()
     @get:Rule(order=1) val ui=createAndroidComposeRule<MainActivity>()
     private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
+    private val currentPrefix get()=if(UpdatesPresentation.experienceFor(InstalledBuild.read(context).versionCode)!=null)"experience" else "current"
     private lateinit var app:AppState
     private var dark by mutableStateOf(false)
     private var width by mutableIntStateOf(411)
@@ -47,7 +48,7 @@ class UpdatesPageUiTest {
         ui.onNodeWithTag("updates-current-content").assertIsDisplayed()
         ui.onNodeWithText("本地体验改动 · 尚未正式发布").assertDoesNotExist()
         ui.onNodeWithText("以下体验改动不属于已发布的1.0.1记录。").assertDoesNotExist()
-        for(i in 1..3)ui.onNodeWithTag("updates-item-experience-$i").assertTextContains("$i、")
+        for(i in 1..3)ui.onNodeWithTag("updates-item-$currentPrefix-$i").assertTextContains("$i、")
         ui.onNodeWithTag("updates-published-content").assertDoesNotExist()
         LocalReleaseNotes.forVersion(60)!!.limits.forEach{ui.onNodeWithText(it).assertDoesNotExist()}
         ui.onNodeWithText("后台联系可能延迟；真实模型、真机及长期后台尚未验收。").assertDoesNotExist()
@@ -77,11 +78,12 @@ class UpdatesPageUiTest {
         ui.onNodeWithTag("updates-current-content").assertIsDisplayed()
     }
     @Test fun publishedAndLegacyRecordsRemainAccessibleAndSeparate(){
-        ui.onNodeWithTag("updates-published-toggle").performScrollTo().performClick()
-        ui.onNodeWithTag("updates-item-published-1").assertTextContains("主动联系",substring=true)
-        ui.onNodeWithTag("updates-details-published").performScrollTo().performClick()
+        val prefix=if(currentPrefix=="experience")"published" else "history-60"
+        ui.onNodeWithTag(if(prefix=="published")"updates-published-toggle" else "updates-history-60").performScrollTo().performClick()
+        ui.onNodeWithTag("updates-item-$prefix-1").assertTextContains("主动联系",substring=true)
+        ui.onNodeWithTag("updates-details-$prefix").performScrollTo().performClick()
         LocalReleaseNotes.forVersion(60)!!.changes.forEachIndexed{i,text->
-            ui.onNodeWithTag("updates-item-original-published-${i+1}").performScrollTo().assertTextContains(text)
+            ui.onNodeWithTag("updates-item-original-$prefix-${i+1}").performScrollTo().assertTextContains(text)
         }
         LocalReleaseNotes.forVersion(60)!!.limits.forEach{ui.onNodeWithText(it).performScrollTo().assertIsDisplayed()}
         ui.onNodeWithTag("updates-history-58").performScrollTo().performClick()
@@ -105,7 +107,7 @@ class UpdatesPageUiTest {
             ui.runOnIdle{dark=night;width=dp;scale=if(dp==320)1.3f else 1f}
             ui.onNodeWithTag("updates-viewport").assertWidthIsEqualTo(dp.dp)
             ui.onNodeWithTag("updates-current-toggle").performScrollTo().assertHeightIsAtLeast(48.dp)
-            ui.onNodeWithTag("updates-item-experience-1").assertIsDisplayed();shot("current")
+            ui.onNodeWithTag("updates-item-$currentPrefix-1").assertIsDisplayed();shot("current")
             ui.onNodeWithTag("updates-history-59").performScrollTo().assertHeightIsAtLeast(48.dp).performClick()
             ui.onNodeWithTag("updates-details-history-59").performScrollTo().assertIsDisplayed();shot("history")
             ui.onNodeWithTag("updates-history-59").performScrollTo().performClick()

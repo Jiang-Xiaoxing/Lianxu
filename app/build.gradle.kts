@@ -6,8 +6,8 @@ android {
         applicationId = "app.lianxu.independent"
         minSdk = 26
         targetSdk = 37
-        versionCode = 60
-        versionName = "1.0.1"
+        versionCode = 61
+        versionName = "1.0.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }

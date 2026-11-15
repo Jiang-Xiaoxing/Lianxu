@@ -9,6 +9,11 @@ internal object UpdatesPresentation {
     )
     fun experienceFor(installedCode:Long)=experienceChanges.takeIf{installedCode==60L}
     fun summary(note:LocalReleaseNote):List<String> = when(note.code){
+        61L->listOf(
+            "回想与整理结果能展开查看，保留当时内容和来源；修复更正后新记忆没有提交。",
+            "模型、备份与诊断分为分页，可设置本人头像；聊天输入区更紧凑，保留原绿并加深停止红。",
+            "完善时间、记忆与主动联系的提示和诊断；遗忘选错目标、口头答应却漏安排以及真机后台限制仍如实保留。"
+        )
         60L->listOf(
             "主动联系根据对话安排，收到新消息后取消旧计划。",
             "移除旧的次数配额和失效频率卡片，保留历史原话。",

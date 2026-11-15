@@ -8,6 +8,8 @@
 
 当前正式版 **1.0.1（版本号 60）**。安装包和校验值见 [GitHub Releases](https://github.com/Jiang-Xiaoxing/Lianxu/releases/latest)；这一版改了什么、验证到哪一步、还有哪些没验，都写在 [1.0.1 更新说明](RELEASE-NOTES-1.0.1.md)里。旧版 [1.0.0](https://github.com/Jiang-Xiaoxing/Lianxu/releases/tag/v1.0.0) 仍保留。
 
+本地正在准备 **1.0.2（版本号 61）**，尚未公开发布；整个期间的变化和已知限制见 [1.0.2 候选更新说明](RELEASE-NOTES-1.0.2.md)。完成验证并通过独立审查前，线上下载仍以已发布的 1.0.1 为准。
+
 ## 界面
 
 <p>
