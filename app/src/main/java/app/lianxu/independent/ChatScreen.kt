@@ -249,7 +249,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
                     }else send()}
                     .testTag(if(stopping)"cancel-turn-${openTurn?.id.orEmpty()}"else"send-message")
                     .semantics{contentDescription=if(stopping)"停止回复"else"发送"},contentAlignment=Alignment.Center){
-                    Box(Modifier.fillMaxWidth().height(36.dp).clip(RoundedCornerShape(8.dp)).background(actionColor.copy(alpha=if(enabled).18f else .07f)),contentAlignment=Alignment.Center){
+                    Box(Modifier.fillMaxWidth().height(36.dp).clip(RoundedCornerShape(8.dp)).background(if(enabled&&!stopping){if(dark)Color(0xFF35513F)else Color(0xFFD9F1DB)}else actionColor.copy(alpha=if(enabled).18f else .07f)),contentAlignment=Alignment.Center){
                         Text(if(stopping)"停止"else"发送",style=MaterialTheme.typography.labelLarge,color=actionColor.copy(alpha=if(enabled)1f else .38f))
                     }
                 }
