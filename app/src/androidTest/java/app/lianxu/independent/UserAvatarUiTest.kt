@@ -51,7 +51,7 @@ class UserAvatarUiTest {
         val b=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);b.eraseColor(color)
         return try{ByteArrayOutputStream().also{b.compress(Bitmap.CompressFormat.JPEG,95,it)}.toByteArray()}finally{b.recycle()}
     }
-    private fun source(bytes:ByteArray):Uri=Uri.parse("content://app.lianxu.independent.test.archivefixture/saved/capture-${System.nanoTime()}").also{uri->instrument.context.contentResolver.openOutputStream(uri)!!.use{it.write(bytes)}}
+    private fun source(bytes:ByteArray):Uri=Uri.parse("content://${archiveFixtureAuthority()}/saved/capture-${System.nanoTime()}").also{uri->instrument.context.contentResolver.openOutputStream(uri)!!.use{it.write(bytes)}}
     private fun select(bytes:ByteArray){val expected=UserAvatarData.decode(UserAvatarData.prepare(bytes));nextUri=source(bytes);ui.onNodeWithTag("profile-avatar").performClick();ui.waitUntil(15000){!vm.busy&&vm.userAvatar?.contentEquals(expected)==true}}
     private fun shot(name:String){ui.waitForIdle();val b=instrument.uiAutomation.takeScreenshot();val dir=File(instrument.targetContext.getExternalFilesDir(null),"evidence-self-avatar").apply{mkdirs()};File(dir,"$name.png").outputStream().use{b.compress(Bitmap.CompressFormat.PNG,100,it)};b.recycle()}
     private fun pack(export:BackupRepository.Export):BackupArchive.Package{

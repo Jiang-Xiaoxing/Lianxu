@@ -35,7 +35,7 @@ class RoleArchiveUiTest {
         val owner=object:ActivityResultRegistryOwner{
             override val activityResultRegistry=object:ActivityResultRegistry(){
                 override fun <I,O> onLaunch(requestCode:Int,contract:ActivityResultContract<I,O>,input:I,options:ActivityOptionsCompat?){
-                    Handler(Looper.getMainLooper()).post{dispatchResult(requestCode,Activity.RESULT_OK,Intent().setData(Uri.parse("content://app.lianxu.independent.test.archivefixture/"+if(invalid)"invalid" else "linche")))}
+                    Handler(Looper.getMainLooper()).post{dispatchResult(requestCode,Activity.RESULT_OK,Intent().setData(Uri.parse("content://${archiveFixtureAuthority()}/"+if(invalid)"invalid" else "linche")))}
                 }
             }
         }

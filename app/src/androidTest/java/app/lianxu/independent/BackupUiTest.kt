@@ -46,7 +46,7 @@ class BackupUiTest {
         ui.waitUntil(30000){vm.ready};vault=ModelVault(instrument.targetContext,name,vm.processing.store);vault.save(config(),"synthetic-ui-key-only");vault.setPurpose(ModelPurpose.CHAT,"service")
         runBlocking{vm.processing.store.setPreference("nickname","原昵称");RoleAssets(vm.processing).put("seed-lin",RoleAssets.Asset("avatar.png","avatar","image/png",byteArrayOf(1,2,3)))}
         val owner=object:ActivityResultRegistryOwner{override val activityResultRegistry=object:ActivityResultRegistry(){override fun <I,O> onLaunch(requestCode:Int,contract:ActivityResultContract<I,O>,input:I,options:ActivityOptionsCompat?){
-            val uri=if(input is String)Uri.parse("content://app.lianxu.independent.test.archivefixture/saved/capture-${System.nanoTime()}").also{saves+=it}else openUri
+            val uri=if(input is String)Uri.parse("content://${archiveFixtureAuthority()}/saved/capture-${System.nanoTime()}").also{saves+=it}else openUri
             // A real user returns from the system picker after the export coroutine has finished.
             // Keep the synthetic result pending until the test reaches that same boundary.
             pickerResults.add{dispatchResult(requestCode,if(uri==null)Activity.RESULT_CANCELED else Activity.RESULT_OK,Intent().setData(uri))}
@@ -119,7 +119,7 @@ class BackupUiTest {
         show();val before=vm.friends.map{it.id}
         openUri=null;ui.onNodeWithTag("archive-open").performClick();returnFromPicker();ui.waitForIdle()
         assertEquals(before,vm.friends.map{it.id})
-        openUri=Uri.parse("content://app.lianxu.independent.test.archivefixture/invalid")
+        openUri=Uri.parse("content://${archiveFixtureAuthority()}/invalid")
         ui.onNodeWithTag("archive-open").performClick()
         returnFromPicker()
         ui.waitUntil(15000){ui.onAllNodesWithText("处理未完成，请检查文件格式、文件权限与可用空间后重试。").fetchSemanticsNodes().isNotEmpty()}

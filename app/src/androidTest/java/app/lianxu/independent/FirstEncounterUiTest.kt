@@ -154,7 +154,7 @@ class FirstEncounterUiTest {
         ui.onNodeWithTag("first-encounter-create").assertIsDisplayed();assertTrue(app.friends.isEmpty());shot("restore-cancelled")
     }
     @Test fun restoreUsesTheExistingPreviewAndCommitBeforeBypassingTheDoor(){
-        val uri=Uri.parse("content://app.lianxu.independent.test.archivefixture/saved/capture-${System.nanoTime()}")
+        val uri=Uri.parse("content://${archiveFixtureAuthority()}/saved/capture-${System.nanoTime()}")
         val bytes=runBlocking{Store(context,"$namespace-source.db").use{source->
             source.add(listOf(Friend("door-restored","恢复的合成角色","只用于引导测试")),false)
             val exported=BackupRepository(source,ModelVault(context,"$namespace-source",source)).export(null,false)
