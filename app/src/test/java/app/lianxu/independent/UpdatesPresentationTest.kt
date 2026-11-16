@@ -4,6 +4,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class UpdatesPresentationTest {
+    @Test fun startupHighlightsAreBriefAndDoNotReplaceFullVersionFacts(){
+        val note=LocalReleaseNotes.forVersion(61)!!
+        val highlights=UpdatesPresentation.noticeSummary(note)
+        assertEquals(3,highlights.size)
+        assertTrue(highlights.all{it.length<=32})
+        assertTrue(highlights.joinToString("").length<UpdatesPresentation.summary(note).joinToString("").length)
+        assertEquals(7,note.changes.size)
+        assertEquals(3,note.limits.size)
+        assertTrue(note.limits.any{"没有修复" in it})
+        assertTrue(highlights.none{"主动联系" in it||"准点" in it})
+    }
+    @Test fun startupHighlightsStayMatchedToEachOtherKnownVersion(){
+        LocalReleaseNotes.history(60).forEach{note->
+            assertEquals(UpdatesPresentation.summary(note),UpdatesPresentation.noticeSummary(note))
+        }
+    }
     @Test fun localExperienceIsNotAddedToPublishedVersionFacts(){
         val published=LocalReleaseNotes.forVersion(60)!!
         assertEquals("1.0.1",published.version)

@@ -92,7 +92,7 @@ import androidx.compose.ui.unit.dp
     }
 }
 
-@Composable private fun NumberedUpdates(items:List<String>,prefix:String){
+@Composable internal fun NumberedUpdates(items:List<String>,prefix:String){
     Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
         items.forEachIndexed{index,text->
             Row(Modifier.fillMaxWidth().testTag("updates-item-$prefix-${index+1}").semantics(mergeDescendants=true){},verticalAlignment=Alignment.Top){
