@@ -2,13 +2,13 @@
 
 **和自己设定的角色聊天，聊过的东西会留下能翻看、也能改掉的记忆。**
 
-恋叙是一款原生 Android 角色对话应用。角色、聊天、记忆和相处记录**全部存在手机本地**，调用哪家模型由你决定——只有发消息时，这段对话需要的上下文才会发给你自己配置的服务商。它不自带免费模型，也不把你绑在任何一家服务上。
+恋叙是一款原生 Android 角色对话应用。角色、聊天、记忆和相处记录**全部存在手机本地**，调用哪家模型由你决定——聊天、角色润色和后台回顾需要模型处理时，才按对应功能发送所需资料给你自己配置的服务商。它不自带免费模型，也不把你绑在任何一家服务上。
 
 **Android 8.0+ · Kotlin / Jetpack Compose / Material3 · 自备模型 API · GPL-3.0-only**
 
-当前正式版 **1.0.2（版本号 61）**。安装包和校验值见 [GitHub Releases](https://github.com/Jiang-Xiaoxing/Lianxu/releases/latest)；这一版改了什么、验证到哪一步、还有哪些没验，都写在 [1.0.2 更新说明](RELEASE-NOTES-1.0.2.md)和[验证记录](VALIDATION-1.0.2.md)里。旧版 [1.0.1](https://github.com/Jiang-Xiaoxing/Lianxu/releases/tag/v1.0.1) 与 [1.0.0](https://github.com/Jiang-Xiaoxing/Lianxu/releases/tag/v1.0.0) 仍保留。
+当前正式版 **1.0.3（版本号 62）**。安装包和校验值见 [GitHub Releases](https://github.com/Jiang-Xiaoxing/Lianxu/releases/tag/v1.0.3)；这一版新增无角色时的暖光开门、分步创建和可选模型润色，更新提示也更简洁。完整变化见 [1.0.3 更新公告](RELEASE-NOTES-1.0.3.md)，测试范围和限制见 [验证记录](VALIDATION-1.0.3.md)。旧版 [1.0.2](https://github.com/Jiang-Xiaoxing/Lianxu/releases/tag/v1.0.2)、[1.0.1](https://github.com/Jiang-Xiaoxing/Lianxu/releases/tag/v1.0.1) 和 [1.0.0](https://github.com/Jiang-Xiaoxing/Lianxu/releases/tag/v1.0.0) 仍保留。
 
-本版保留原完整设备运行的失败与跳过记录，后续定向补测逐项对应，未宣称最新整套全绿。真实模型、模拟器和未验证的真机行为分开说明。
+主机检查、定向模拟器回归与合成覆盖升级分开记录；真实手机和真实模型润色本次未实测，未宣称整套设备测试全绿。
 
 ## 界面
 
@@ -52,7 +52,7 @@
 
 1. **下载安装。** 从 [Releases](https://github.com/Jiang-Xiaoxing/Lianxu/releases/latest) 下载 APK 并先读该版说明。升级前请先备份，**不要为了安装而卸载存有资料的旧应用**。
 2. **添加模型。** 打开「设置 → 大模型配置」，填服务地址、模型名和你自己的 API 密钥，再为需要的用途选定模型。保存配置只是存好设置，不代表已经连上。
-3. **创建角色。** 从添加入口创建角色，填好设定，发第一条消息。先确认文字聊天通了，再调整记忆和主动联系选项。
+3. **创建角色。** 没有角色时，轻触首页开门，按步骤填写，可先润色并检查预览，也能直接使用原文。已有角色时仍可从首页加号打开原表单。先确认文字聊天通了，再调整记忆和主动联系选项。
 
 正式包名为 `app.lianxu.independent`，沿用公开 v0.19 的签名。包名或签名不同的安装包不能直接覆盖；自行编译的调试包（带 `.companionstage1` 后缀）与正式版分开保存数据。
 
@@ -86,6 +86,9 @@
 当前版本只支持文字。
 
 ## 了解更多
+
+- [1.0.3 更新公告](RELEASE-NOTES-1.0.3.md) · [验证记录](VALIDATION-1.0.3.md)
+- [1.0.2 更新说明](RELEASE-NOTES-1.0.2.md)
 
 - [1.0.1 更新说明](RELEASE-NOTES-1.0.1.md) — 这一版改了什么、验证了哪些、哪些还没验
 - [架构说明](docs/ARCHITECTURE.md) · [界面设计](docs/UI-DESIGN.md) · [开发与测试](docs/DEVELOPMENT.md)
