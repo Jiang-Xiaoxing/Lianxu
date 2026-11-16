@@ -10,6 +10,11 @@ internal object UpdatesPresentation {
     fun experienceFor(installedCode:Long)=experienceChanges.takeIf{installedCode==60L}
     /** Startup highlights only; the updates page keeps the complete facts and limitations. */
     fun noticeSummary(note:LocalReleaseNote):List<String> = when(note.code){
+        62L->listOf(
+            "没有角色时可开门相遇，新增暖色分步创建。",
+            "从开门引导分步创建时，可先润色再确认。",
+            "更新提示更简洁，模型设置和旧响应处理更稳妥。"
+        )
         61L->listOf(
             "回想和整理结果可展开查看，修复更正后新记忆未保存的问题。",
             "模型设置、备份与诊断改为分页，新增本人头像。",
@@ -18,6 +23,11 @@ internal object UpdatesPresentation {
         else->summary(note)
     }
     fun summary(note:LocalReleaseNote):List<String> = when(note.code){
+        62L->listOf(
+            "没有角色时新增开门引导与暖色分步创建，关系留空点下一步；已有角色保留原入口。",
+            "从开门引导分步创建时，可用全局聊天模型润色并编辑预览，保留原文和最终确认，以及记忆与识图的已有用途选择。",
+            "创建卡片和标签统一暖色，启动提示更简洁，配置编辑与迟到响应有版本保护。"
+        )
         61L->listOf(
             "回想与整理结果能展开查看，保留当时内容和来源；修复更正后新记忆没有提交。",
             "模型、备份与诊断分为分页，可设置本人头像；聊天输入区更紧凑，保留原绿并加深停止红。",
