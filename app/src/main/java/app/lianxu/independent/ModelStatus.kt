@@ -38,13 +38,18 @@ internal class ModelStatusStore(private val store:Store,private val namespace:St
     private fun callKey(id:String)="$PREFIX$namespace:calls:$id"
     private fun get(db:SQLiteDatabase,key:String)=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(key)).use{if(it.moveToFirst())it.getString(0) else null}
     private fun put(db:SQLiteDatabase,key:String,value:String){db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",key);put("value",value)},SQLiteDatabase.CONFLICT_REPLACE)}
-    suspend fun test(id:String):ModelTestRecord?=withContext(Dispatchers.IO){runCatching{get(store.readableDatabase,testKey(id))?.let{v->JSONObject(v).let{ModelTestRecord(it.getLong("at"),it.getString("base"),it.getString("model"),it.getBoolean("ok"),it.optString("reason"))}}}.getOrNull()}
-    suspend fun saveTest(id:String,record:ModelTestRecord)=withContext(Dispatchers.IO){put(store.writableDatabase,testKey(id),JSONObject().put("at",record.at).put("base",record.baseUrl).put("model",record.model).put("ok",record.ok).put("reason",record.reason.take(160)).toString())}
-    suspend fun clearTest(id:String)=withContext(Dispatchers.IO){store.writableDatabase.delete("preferences","key=?",arrayOf(testKey(id)));Unit}
+    suspend fun test(id:String):ModelTestRecord?=withContext(Dispatchers.IO){testNow(id)}
+    internal fun testNow(id:String):ModelTestRecord?=runCatching{get(store.readableDatabase,testKey(id))?.let{v->JSONObject(v).let{ModelTestRecord(it.getLong("at"),it.getString("base"),it.getString("model"),it.getBoolean("ok"),it.optString("reason"))}}}.getOrNull()
+    suspend fun saveTest(id:String,record:ModelTestRecord)=withContext(Dispatchers.IO){saveTestNow(id,record)}
+    /** Called on IO while the caller holds the configuration mutation gate. */
+    internal fun saveTestNow(id:String,record:ModelTestRecord){put(store.writableDatabase,testKey(id),JSONObject().put("at",record.at).put("base",record.baseUrl).put("model",record.model).put("ok",record.ok).put("reason",record.reason.take(160)).toString())}
+    suspend fun clearTest(id:String)=withContext(Dispatchers.IO){clearTestNow(id)}
+    internal fun clearTestNow(id:String){store.writableDatabase.delete("preferences","key=?",arrayOf(testKey(id)))}
     suspend fun clearAll(id:String)=withContext(Dispatchers.IO){store.writableDatabase.delete("preferences","key IN (?,?)",arrayOf(testKey(id),callKey(id)));Unit}
     private fun entry(j:JSONObject)=ModelCallRecord(j.getLong("at"),j.getString("kind"),j.getBoolean("ok"),j.optString("reason"),j.optInt("failures"))
     private fun json(r:ModelCallRecord)=JSONObject().put("at",r.at).put("kind",r.kind).put("ok",r.ok).put("reason",r.reason.take(160)).put("failures",r.failures)
-    suspend fun lastCall(id:String):ModelCallRecord?=withContext(Dispatchers.IO){runCatching{get(store.readableDatabase,callKey(id))?.let{v->val j=JSONObject(v);entry(j.getJSONObject("entries").getJSONObject(j.getString("last")))}}.getOrNull()}
+    suspend fun lastCall(id:String):ModelCallRecord?=withContext(Dispatchers.IO){lastCallNow(id)}
+    internal fun lastCallNow(id:String):ModelCallRecord?=runCatching{get(store.readableDatabase,callKey(id))?.let{v->val j=JSONObject(v);entry(j.getJSONObject("entries").getJSONObject(j.getString("last")))}}.getOrNull()
     /** Best effort: a status line must never change a chat or memory result. */
     suspend fun recordCall(id:String,kind:String,ok:Boolean,reason:String,at:Long=System.currentTimeMillis()){
         try{withContext(Dispatchers.IO){synchronized(lock){

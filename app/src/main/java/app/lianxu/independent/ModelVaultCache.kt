@@ -1,5 +1,7 @@
 package app.lianxu.independent
 
+import androidx.compose.runtime.mutableStateMapOf
+
 /** Process-wide decrypted model configs and keys; wiped when settings change or the process dies. */
 internal object ModelVaultCache {
     data class Snapshot(val directoryPath:String,val configs:List<ModelConfig>,val secrets:Map<String,String>) {
@@ -7,6 +9,8 @@ internal object ModelVaultCache {
     }
     private val snapshots=mutableMapOf<String,Snapshot>()
     private val loads=mutableMapOf<String,Int>()
+    private val versions=mutableStateMapOf<String,Long>()
+    fun version(namespace:String):Long=versions[namespace]?:0L
 
     fun peek(namespace:String,directoryPath:String):Snapshot?=snapshots[namespace]?.takeIf{it.directoryPath==directoryPath}
 
@@ -20,8 +24,8 @@ internal object ModelVaultCache {
         return snapshot
     }
 
-    fun invalidate(namespace:String){snapshots.remove(namespace)}
+    fun invalidate(namespace:String){snapshots.remove(namespace);versions[namespace]=(versions[namespace]?:0L)+1L}
 
     internal fun loadCount(namespace:String):Int=loads[namespace]?:0
-    internal fun resetForTest(){snapshots.clear();loads.clear()}
+    internal fun resetForTest(){snapshots.clear();loads.clear();versions.clear()}
 }

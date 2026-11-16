@@ -47,7 +47,7 @@ class UserAvatarRestartTest {
         val original=try{ByteArrayOutputStream().also{bitmap.compress(Bitmap.CompressFormat.JPEG,95,it)}.toByteArray()}finally{bitmap.recycle()}
         val expected=UserAvatarData.prepare(original)
         if(phase=="1"){
-            val uri=Uri.parse("content://app.lianxu.independent.test.archivefixture/saved/capture-${System.nanoTime()}")
+            val uri=Uri.parse("content://${archiveFixtureAuthority()}/saved/capture-${System.nanoTime()}")
             instrument.context.contentResolver.openOutputStream(uri)!!.use{it.write(original)}
             ui.runOnIdle{vm.setUserAvatar(uri)}
             ui.waitUntil(15000){!vm.busy&&vm.userAvatar?.contentEquals(UserAvatarData.decode(expected))==true}

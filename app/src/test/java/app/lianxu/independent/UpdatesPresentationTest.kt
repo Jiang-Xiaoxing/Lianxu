@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class UpdatesPresentationTest {
+    @Test fun creationReleaseSummaryKeepsFullChangesAndLimits(){
+        val note=LocalReleaseNotes.forVersion(62)!!
+        assertEquals("1.0.3",note.version);assertEquals(6,note.changes.size)
+        assertEquals(3,UpdatesPresentation.noticeSummary(note).size)
+        assertTrue(UpdatesPresentation.noticeSummary(note).all{it.length<=32})
+        assertTrue(note.changes.any{"记忆整理和识图" in it});assertTrue(note.limits.any{"不能自动保证" in it})
+        assertTrue(note.limits.any{"不要卸载" in it})
+    }
     @Test fun startupHighlightsAreBriefAndDoNotReplaceFullVersionFacts(){
         val note=LocalReleaseNotes.forVersion(61)!!
         val highlights=UpdatesPresentation.noticeSummary(note)

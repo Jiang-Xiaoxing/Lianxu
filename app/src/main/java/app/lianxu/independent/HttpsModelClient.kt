@@ -75,9 +75,14 @@ class HttpsModelClient(
 
 /** Absolute catalog URL for presets whose model directory lives on a different path than the chat base. */
 internal object ModelDirectoryRules {
-    fun url(config:ModelConfig,preset:ProviderPreset,fetchModels:Boolean):String? =
-        (if(fetchModels) preset.modelsUrl else null)
-            ?: (if(fetchModels) preset.modelsPath else preset.testPath)?.let{config.baseUrl.trimEnd('/')+"/"+it}
+    fun url(config:ModelConfig,preset:ProviderPreset,fetchModels:Boolean):String? {
+        if(fetchModels&&preset.modelsUrl!=null){
+            // An edited chat base may use credentials scoped to a different service or tenant.
+            if(config.baseUrl.trimEnd('/')!=preset.base.trimEnd('/'))return null
+            return preset.modelsUrl
+        }
+        return (if(fetchModels)preset.modelsPath else preset.testPath)?.let{config.baseUrl.trimEnd('/')+"/"+it}
+    }
 }
 internal data class ModelDirectoryEntry(val id:String,val openAiChat:Boolean)
 internal object ModelDirectoryParser {

@@ -49,7 +49,21 @@ class MainActivity:ComponentActivity(){
     override fun onNewIntent(intent:android.content.Intent){super.onNewIntent(intent);notificationIntent=consumeNotification(intent)}
 }
 @Composable fun Lianxu(vm:AppState=viewModel()){
-    LocalUpdateNotice(vm)
+    var encounter by rememberSaveable(stateSaver=FirstEncounterSaver){mutableStateOf(FirstEncounterState())}
+    var creationDraft by rememberSaveable(stateSaver=RoleCreationDraftSaver){mutableStateOf(RoleCreationDraft())}
+    var creationConfigOpen by rememberSaveable{mutableStateOf(false)}
+    fun updateCreation(value:RoleCreationDraft){
+        val changed=value.creationId!=creationDraft.creationId||value.text!=creationDraft.text
+        if(changed)vm.creationPolisher.cancel()
+        creationDraft=if(changed)value.copy(polished=null,usePolished=false)else value
+    }
+    val encounterHome=encounter.shouldShow(vm.ready,vm.friends.isNotEmpty(),vm.page)
+    val guidedCreate=vm.page=="create"&&encounter.destination==FirstEncounterDestination.CREATE
+    LaunchedEffect(vm.page){if(vm.page=="home"){encounter=encounter.returned();creationConfigOpen=false}}
+    LaunchedEffect(vm.page,vm.friends.isNotEmpty()){
+        if(vm.page=="chat"&&vm.friends.isNotEmpty()&&encounter.destination==FirstEncounterDestination.CREATE){creationDraft=RoleCreationDraft();encounter=encounter.returned()}
+    }
+    if(vm.ready&&vm.friends.isNotEmpty())LocalUpdateNotice(vm)
     val lifecycle=LocalLifecycleOwner.current.lifecycle
     val chatState=rememberSaveableStateHolder()
     var rememberedChatIds by rememberSaveable(stateSaver=listSaver<List<String>,String>(save={it},restore={it.toList()})){mutableStateOf(emptyList<String>())}
@@ -61,10 +75,14 @@ class MainActivity:ComponentActivity(){
     }}
     // Role generation belongs to the ViewModel; backgrounding only pauses its animation.
     DisposableEffect(lifecycle){val observer=LifecycleEventObserver{_,event->if(event==Lifecycle.Event.ON_START)vm.foreground()};lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}}
-    BackHandler(vm.page!="home"){vm.back()}
-    CompositionLocalProvider(LocalRoleAvatars provides vm.roleAvatars){Surface(Modifier.fillMaxSize(),color=Chrome){Column(Modifier.safeDrawingPadding().imePadding()){
+    BackHandler(vm.page!="home"&&!guidedCreate){vm.back()}
+    CompositionLocalProvider(LocalRoleAvatars provides vm.roleAvatars){Surface(Modifier.fillMaxSize(),color=if(encounterHome||guidedCreate)FirstEncounterPaper else Chrome){Column(Modifier.safeDrawingPadding().imePadding()){
         if(vm.error.isNotEmpty())Text(vm.error,Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer).padding(12.dp),style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onErrorContainer)
         if(!vm.ready)Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()}
+        else if(encounterHome)FirstEncounterDoor(encounter,{encounter=it},onChoose={target->
+            val choice=encounter.choose(target);encounter=choice.state
+            choice.navigateTo?.let{vm.open(it.page)}
+        })
         else when(vm.page){
             "home"->Home(vm)
             "chat"->chatState.SaveableStateProvider("chat-${vm.activeId}"){Chat(vm)}
@@ -73,11 +91,13 @@ class MainActivity:ComponentActivity(){
             "role-learning"->LearningRecordsScreen(vm)
             "role-relationship"->RelationshipScreen(vm)
             "role-companion"->CompanionSettingsScreen(vm)
-            "create"->Create(vm)
+            "create"->if(guidedCreate)RoleCreationGuide(creationDraft,{updateCreation(it)},vm.busy,saved=vm.savedCreationId==creationDraft.creationId,
+                polisher=vm.creationPolisher,onConfigure={vm.creationPolisher.cancel();creationConfigOpen=true;vm.open("models")},
+                onExit={vm.back()},onCreate={draft->vm.createCompanion(draft.name,draft.definition,draft.expression,draft.opening,draft.extra,draft.relationship,draft.creationId)})else Create(vm)
             "role-archive"->RoleArchiveScreen(vm)
             "search"->RoleSearch(vm)
             "search-detail"->GeneratedRoleDetail(vm)
-            "models"->ModelConfigScreen({vm.back()})
+            "models"->ModelConfigScreen({if(creationConfigOpen){creationConfigOpen=false;vm.open("create")}else vm.back()},saveForPurpose=if(creationConfigOpen)ModelPurpose.CHAT else null)
             "processing"->ProcessingDirectory(vm)
             "processing-role"->ProcessingRole(vm)
             "settings-memory"->MemoryRulesScreen(vm)
@@ -199,18 +219,22 @@ class MainActivity:ComponentActivity(){
 }
 @Composable private fun Create(vm:AppState){
     var name by rememberSaveable{mutableStateOf("")};var bio by rememberSaveable{mutableStateOf("")};var prompt by rememberSaveable{mutableStateOf("")};var expression by rememberSaveable{mutableStateOf("")};var opening by rememberSaveable{mutableStateOf("")}
+    val creationId=rememberSaveable{java.util.UUID.randomUUID().toString()}
+    val saved=vm.savedCreationId==creationId
+    fun leave(){if(!vm.busy&&vm.savedCreationId!=creationId)vm.back()}
+    BackHandler{leave()}
     Column(Modifier.fillMaxSize().background(Chrome)){
-        Header("创建角色",{vm.back()})
+        AppTopBar("创建角色",{leave()},enabled=!vm.busy&&!saved)
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(UiSpace.group)){
             Text("从一个名字开始",style=MaterialTheme.typography.titleLarge)
             Text("手动创建 AI 角色，只保存在本机。",style=MaterialTheme.typography.bodySmall,color=Muted)
-            AppField(name,{name=it.take(30)},"名字（必填）","friend-name",singleLine=true)
-            AppField(bio,{bio=it.take(8000)},"角色设定（必填）","friend-bio",minLines=3)
-            AppField(expression,{expression=it.take(8000)},"说话方式（可选）","friend-expression",minLines=2)
-            AppField(opening,{opening=it.take(8000)},"开场白（可选）","friend-opening",minLines=2)
-            AppField(prompt,{prompt=it.take(4000)},"自定义提示词（可选）","friend-prompt",minLines=3)
+            AppField(name,{name=creationText(it,30)},"名字（必填）","friend-name",singleLine=true,enabled=!vm.busy&&!saved)
+            AppField(bio,{bio=creationText(it,8000)},"角色设定（必填）","friend-bio",minLines=3,enabled=!vm.busy&&!saved)
+            AppField(expression,{expression=creationText(it,8000)},"说话方式（可选）","friend-expression",minLines=2,enabled=!vm.busy&&!saved)
+            AppField(opening,{opening=creationText(it,8000)},"开场白（可选）","friend-opening",minLines=2,enabled=!vm.busy&&!saved)
+            AppField(prompt,{prompt=creationText(it,4000)},"自定义提示词（可选）","friend-prompt",minLines=3,enabled=!vm.busy&&!saved)
             Text("自定义内容用于本角色提示段，模型统一在设置中选择。未配置聊天模型时不会生成演示回复。",style=MaterialTheme.typography.bodySmall,color=Muted)
-            PrimaryAction("创建角色",enabled=!vm.busy,modifier=Modifier.align(Alignment.End).testTag("create-friend")){vm.createCompanion(name,bio,expression,opening,prompt)}
+            PrimaryAction(if(saved)"打开已创建的角色"else"创建角色",enabled=!vm.busy,modifier=Modifier.align(Alignment.End).testTag("create-friend")){vm.createCompanion(name,bio,expression,opening,prompt,creationId=creationId)}
         }
     }
 }
