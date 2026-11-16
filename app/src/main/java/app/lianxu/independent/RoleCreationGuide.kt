@@ -166,7 +166,7 @@ import kotlinx.coroutines.flow.first
                                     CreationField(draft.definition,{onDraft(draft.copy(definition=creationText(it,8000)));problem=null},"角色设定（必填）","friend-bio",minLines=3,enabled=enabled&&!saved)
                                 }
                                 RoleCreationStep.RELATIONSHIP->{
-                                    Text("这是你设定的相处起点，可以留空或跳过。",style=MaterialTheme.typography.bodyMedium,color=Muted)
+                                    Text("这是你设定的相处起点，留空后点下一步即可继续。",style=MaterialTheme.typography.bodyMedium,color=Muted)
                                     CreationField(draft.relationship,{onDraft(draft.copy(relationship=creationText(it,4000)))},"初始关系背景（可选）","friend-relationship",minLines=2,enabled=enabled&&!saved)
                                 }
                                 RoleCreationStep.MORE->{
@@ -220,7 +220,6 @@ import kotlinx.coroutines.flow.first
                                 }
                             }
                             problem?.let{Text(it,Modifier.testTag("create-validation"),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodyMedium)}
-                            if(draft.step==RoleCreationStep.RELATIONSHIP)TextButton(onClick={if(canNavigate()){onDraft(draft.copy(relationship=""));moveTo(RoleCreationStep.MORE)}},enabled=enabled,modifier=Modifier.testTag("create-skip-relationship")){Text("跳过")}
                             if(draft.step!=RoleCreationStep.MODEL)PrimaryAction(if(draft.step==RoleCreationStep.CONFIRM)if(busy)"正在创建…"else if(saved)"打开已创建的角色"else"确认创建"else"下一步",
                                 enabled=enabled,modifier=Modifier.fillMaxWidth().testTag(if(draft.step==RoleCreationStep.CONFIRM)"create-friend"else"create-next")){
                                 if(!entering&&targetStep==null&&!busy&&!submitting&&!exitDialog){

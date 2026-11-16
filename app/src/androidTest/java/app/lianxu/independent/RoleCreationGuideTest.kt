@@ -63,7 +63,7 @@ class RoleCreationGuideTest {
     private fun next(){editable();ui.onNodeWithTag("create-next").performScrollTo().assertIsEnabled().performClick();ui.waitForIdle();editable()}
     private fun original(){ui.onNodeWithTag("create-use-original").performScrollTo().performClick();ui.waitForIdle()}
     private fun base(){enter();ui.onNodeWithTag("friend-name").performTextInput("合成·小树");next();ui.onNodeWithTag("friend-bio").performTextInput("喜欢分享日常的虚构角色。");next()}
-    private fun confirm(){base();ui.onNodeWithTag("create-skip-relationship").performScrollTo().performClick();next();original();ui.onNodeWithTag("create-step-confirm").assertExists()}
+    private fun confirm(){base();next();next();original();ui.onNodeWithTag("create-step-confirm").assertExists()}
     private fun shot(label:String){
         ui.waitForIdle();instrument.waitForIdleSync();SystemClock.sleep(150)
         val dir=File(context.getExternalFilesDir(null),"evidence-creation-guide").apply{mkdirs()}
@@ -72,9 +72,9 @@ class RoleCreationGuideTest {
     }
 
     @Test fun requiredQuestionsDoNotCreateEarlyAndAllFieldsPersist(){
-        enter();next();ui.onNodeWithTag("create-validation").assertIsDisplayed();assertTrue(app.friends.isEmpty())
+        enter();next();ui.onNodeWithTag("create-validation").assertIsDisplayed();ui.onNodeWithTag("create-step-name").assertExists();assertTrue(app.friends.isEmpty())
         ui.onNodeWithTag("friend-name").performTextInput("合成·无性别设定");shot("name");next()
-        next();ui.onNodeWithTag("create-validation").assertIsDisplayed()
+        next();ui.onNodeWithTag("create-validation").assertIsDisplayed();ui.onNodeWithTag("create-step-definition").assertExists()
         ui.onNodeWithTag("friend-bio").performTextInput("只写性格与经历，不要求性别。");shot("definition");next()
         ui.onNodeWithTag("friend-relationship").performTextInput("相识多年的朋友");shot("relationship");next()
         ui.onNodeWithTag("friend-expression").performTextInput("简短、自然")
@@ -88,12 +88,25 @@ class RoleCreationGuideTest {
         assertEquals("简短、自然",p.expression);assertEquals("今天过得怎么样？",p.opening);assertEquals("尊重彼此的节奏。",p.extra)
         assertEquals("今天过得怎么样？",app.messages.single().text)
     }
-    @Test fun skipRelationshipDoesNotSaveAnEarlierAnswer(){
-        base();ui.onNodeWithTag("friend-relationship").performTextInput("这段选择跳过")
-        ui.onNodeWithTag("create-skip-relationship").performScrollTo().performClick();next();original()
+    @Test fun emptyRelationshipContinuesWithoutASeparateSkipAction(){
+        base();ui.onNodeWithTag("create-skip-relationship").assertDoesNotExist();ui.onNodeWithText("跳过").assertDoesNotExist();shot("relationship-empty-next")
+        next();ui.onNodeWithTag("create-step-more").assertExists();next();original()
         ui.onNodeWithTag("create-friend").performScrollTo().performClick();ui.waitUntil(15000){app.page=="chat"}
         assertEquals("",runBlocking{app.rolePrompts(app.friends.single().id)}.initialRelationship)
         assertTrue(app.messages.isEmpty())
+    }
+    @Test fun filledRelationshipSurvivesNextBackAndEditing(){
+        base();ui.onNodeWithTag("friend-relationship").performTextInput("旧识");next()
+        ui.onNodeWithTag("create-back").performClick();editable();ui.onNodeWithTag("friend-relationship").assertTextContains("旧识")
+        ui.onNodeWithTag("friend-relationship").performTextReplacement("相识多年的朋友");shot("relationship-edited-next");next();next();original()
+        ui.onNodeWithTag("create-friend").performScrollTo().performClick();ui.waitUntil(15000){app.page=="chat"}
+        assertEquals("相识多年的朋友",runBlocking{app.rolePrompts(app.friends.single().id)}.initialRelationship)
+    }
+    @Test fun clearingARelationshipUsesNextAsTheSkip(){
+        base();ui.onNodeWithTag("friend-relationship").performTextInput("随后清空的旧内容");next()
+        ui.onNodeWithTag("create-back").performClick();editable();ui.onNodeWithTag("friend-relationship").performTextClearance();next();next();original()
+        ui.onNodeWithTag("create-friend").performScrollTo().performClick();ui.waitUntil(15000){app.page=="chat"}
+        assertEquals("",runBlocking{app.rolePrompts(app.friends.single().id)}.initialRelationship)
     }
     @Test fun previousKeepExitReentryAndRecreationPreserveDraft(){
         base();ui.onNodeWithTag("friend-relationship").performTextInput("旧识")

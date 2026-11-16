@@ -128,7 +128,7 @@ class FirstEncounterUiTest {
         ui.onNodeWithTag("create-next").performScrollTo().performClick()
         ui.onNodeWithTag("friend-bio").performTextInput("仅用于首次引导测试，不是真实用户资料。")
         ui.onNodeWithTag("create-next").performScrollTo().performClick()
-        ui.onNodeWithTag("create-skip-relationship").performScrollTo().performClick()
+        ui.onNodeWithTag("create-next").performScrollTo().performClick()
         ui.onNodeWithTag("create-next").performScrollTo().performClick()
         ui.onNodeWithTag("create-use-original").performScrollTo().performClick()
         ui.activityRule.scenario.onActivity{activity->
