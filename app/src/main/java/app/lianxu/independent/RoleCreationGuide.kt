@@ -52,6 +52,7 @@ import kotlinx.coroutines.flow.first
     polisher:RoleCreationPolish?=null,onConfigure:()->Unit={},
     onExit:()->Unit,onCreate:(RoleCreationDraft)->Unit
 ){
+    CreationColors {
     val scope=rememberCoroutineScope()
     val reduced=(scope.coroutineContext[MotionDurationScale]?.scaleFactor?:1f)<=0f
     val position=remember{Animatable(if(reduced)0f else -1f)}
@@ -238,6 +239,19 @@ import kotlinx.coroutines.flow.first
     }
 }
 
+}
+
+/** Share the warm card surface with floating-label cutouts in both system themes. */
+@Composable private fun CreationColors(content:@Composable ()->Unit){
+    val colors=MaterialTheme.colorScheme.copy(
+        surface=Color(0xFFF1DFC1).copy(alpha=.88f),onSurface=Color(0xFF57402E),
+        onSurfaceVariant=Color(0xFF795F48),primary=Color(0xFF79583D),
+        secondaryContainer=Color(0xFFE5CFAD),onSecondaryContainer=Color(0xFF57402E),
+        surfaceContainerHigh=Color(0xFFF1DFC1),error=Color(0xFF9A3D2A)
+    )
+    MaterialTheme(colorScheme=colors){CompositionLocalProvider(LocalContentColor provides colors.onSurface,content=content)}
+}
+
 @Composable private fun CreationField(value:String,onChange:(String)->Unit,label:String,tag:String,singleLine:Boolean=false,minLines:Int=1,enabled:Boolean=true){
     val fill=Color(0xFFEEE0CC).copy(alpha=.86f)
     val text=Color(0xFF57402E)
@@ -245,7 +259,7 @@ import kotlinx.coroutines.flow.first
         focusedContainerColor=fill,unfocusedContainerColor=fill,disabledContainerColor=fill.copy(alpha=.60f),
         focusedBorderColor=Color(0xFF916D4D),unfocusedBorderColor=Color(0xFFC2A78D),
         focusedTextColor=text,unfocusedTextColor=text,disabledTextColor=text.copy(alpha=.65f),
-        focusedLabelColor=Color(0xFF79583D),unfocusedLabelColor=Color(0xFF8F7155),cursorColor=Color(0xFF79583D)
+        focusedLabelColor=Color(0xFF79583D),unfocusedLabelColor=Color(0xFF79583D),cursorColor=Color(0xFF79583D)
     ))
 }
 
