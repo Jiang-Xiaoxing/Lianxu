@@ -58,10 +58,12 @@ class RoleCreationGuideTest {
     }
     @get:Rule(order=1)val ui=createAndroidComposeRule<MainActivity>(effectContext=object:MotionDurationScale{override val scaleFactor get()=scale})
     @Before fun ready(){ui.runOnIdle{app=ViewModelProvider(ui.activity)[AppState::class.java]};ui.waitUntil(15000){app.ready};ui.waitForIdle()}
-    private fun enter(){ui.onNodeWithTag("first-encounter").performClick();ui.onNodeWithTag("first-encounter-create").performClick();ui.onNodeWithTag("friend-name").assertIsDisplayed()}
-    private fun next(){ui.onNodeWithTag("create-next").performScrollTo().performClick();ui.waitForIdle()}
+    private fun editable(){ui.waitUntil(10000){ui.onAllNodes(hasTestTag("create-card") and hasStateDescription("可填写")).fetchSemanticsNodes().isNotEmpty()}}
+    private fun enter(){ui.onNodeWithTag("first-encounter").performClick();ui.onNodeWithTag("first-encounter-create").performClick();editable();ui.onNodeWithTag("friend-name").assertIsDisplayed()}
+    private fun next(){editable();ui.onNodeWithTag("create-next").performScrollTo().assertIsEnabled().performClick();ui.waitForIdle();editable()}
+    private fun original(){ui.onNodeWithTag("create-use-original").performScrollTo().performClick();ui.waitForIdle()}
     private fun base(){enter();ui.onNodeWithTag("friend-name").performTextInput("合成·小树");next();ui.onNodeWithTag("friend-bio").performTextInput("喜欢分享日常的虚构角色。");next()}
-    private fun confirm(){base();ui.onNodeWithTag("create-skip-relationship").performScrollTo().performClick();next();ui.onNodeWithTag("create-step-confirm").assertExists()}
+    private fun confirm(){base();ui.onNodeWithTag("create-skip-relationship").performScrollTo().performClick();next();original();ui.onNodeWithTag("create-step-confirm").assertExists()}
     private fun shot(label:String){
         ui.waitForIdle();instrument.waitForIdleSync();SystemClock.sleep(150)
         val dir=File(context.getExternalFilesDir(null),"evidence-creation-guide").apply{mkdirs()}
@@ -78,7 +80,7 @@ class RoleCreationGuideTest {
         ui.onNodeWithTag("friend-expression").performTextInput("简短、自然")
         ui.onNodeWithTag("friend-opening").performScrollTo().performTextInput("今天过得怎么样？")
         ui.onNodeWithTag("friend-prompt").performScrollTo().performTextInput("尊重彼此的节奏。")
-        shot("more");next();assertTrue(app.friends.isEmpty());shot("confirm")
+        shot("more");next();original();assertTrue(app.friends.isEmpty());shot("confirm")
         ui.onNodeWithTag("create-friend").performScrollTo().performClick();ui.waitUntil(15000){app.page=="chat"&&!app.busy}
         assertEquals(1,app.friends.size)
         val p=runBlocking{app.rolePrompts(app.friends.single().id)}
@@ -88,7 +90,7 @@ class RoleCreationGuideTest {
     }
     @Test fun skipRelationshipDoesNotSaveAnEarlierAnswer(){
         base();ui.onNodeWithTag("friend-relationship").performTextInput("这段选择跳过")
-        ui.onNodeWithTag("create-skip-relationship").performScrollTo().performClick();next()
+        ui.onNodeWithTag("create-skip-relationship").performScrollTo().performClick();next();original()
         ui.onNodeWithTag("create-friend").performScrollTo().performClick();ui.waitUntil(15000){app.page=="chat"}
         assertEquals("",runBlocking{app.rolePrompts(app.friends.single().id)}.initialRelationship)
         assertTrue(app.messages.isEmpty())

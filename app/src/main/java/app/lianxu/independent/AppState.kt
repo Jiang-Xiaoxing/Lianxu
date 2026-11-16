@@ -27,6 +27,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     private val diagnosticClient=LoggedTextChatClient(client)
     internal val backup=BackupRepository(store,modelVault)
     internal val modelAccess=ModelAccess(modelVault)
+    internal val creationPolisher=RoleCreationPolish(viewModelScope,diagnosticClient,{modelAccess.credential(ModelPurpose.CHAT)},{modelAccess.current(ModelPurpose.CHAT,it)})
     internal val processing=ProcessingRepository(store)
     private val roleAssets=RoleAssets(processing)
     internal var roleAvatars by mutableStateOf(emptyMap<String,ByteArray>());private set

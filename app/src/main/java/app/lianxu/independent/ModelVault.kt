@@ -6,6 +6,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
 import org.json.JSONObject
+import org.json.JSONTokener
 import java.io.File
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -29,10 +30,15 @@ class ModelVault(context:Context,private val namespace:String="model-configs",pr
         // Remove only the retired purpose selection; keep every model configuration/key.
         val locations=listOf(root)+File(root,"generations").listFiles().orEmpty().filter{it.isDirectory}
         for(location in locations){val file=File(location,"purpose-selections");if(!file.exists())continue
-            val atomic=AtomicFile(file);val value=JSONObject(String(atomic.readFully(),Charsets.UTF_8))
+            val atomic=AtomicFile(file)
+            // Broken selections must not prevent local role creation. Preserve them for recovery;
+            // explicit model reads still report the error rather than pretending to be unconfigured.
+            val value=runCatching{readSelections(atomic)}.getOrNull()?:continue
             if(!value.has("relationship"))continue
-            value.remove("relationship");val stream=atomic.startWrite()
-            try{stream.write(value.toString().toByteArray(Charsets.UTF_8));atomic.finishWrite(stream)}catch(e:Exception){atomic.failWrite(stream);throw e}
+            value.remove("relationship")
+            runCatching{val stream=atomic.startWrite()
+                try{stream.write(value.toString().toByteArray(Charsets.UTF_8));atomic.finishWrite(stream)}catch(e:Exception){atomic.failWrite(stream);throw e}
+            }
         }
     } }
     private fun file(id:String):File { require(id.matches(Regex("[a-zA-Z0-9-]{1,80}"))); return File(directory,"$id.enc") }
@@ -98,22 +104,31 @@ class ModelVault(context:Context,private val namespace:String="model-configs",pr
     }
     // Existing default-id is read as the chat purpose until first explicit purpose write.
     // Saving/selecting never contacts a provider. A deleted selection is cleared, not switched silently.
+    private fun readSelections(file:AtomicFile):JSONObject {
+        val raw=String(file.readFully(),Charsets.UTF_8);require('\u0000' !in raw)
+        val parser=JSONTokener(raw);val value=parser.nextValue()
+        require(value is JSONObject)
+        while(parser.more())require(parser.next() in charArrayOf(' ','\t','\r','\n'))
+        return value
+    }
     private fun purposeValues():JSONObject {
         val file=File(directory,"purpose-selections")
-        return if(file.exists())JSONObject(String(AtomicFile(file).readFully(),Charsets.UTF_8))
+        return if(file.exists())readSelections(AtomicFile(file))
         else JSONObject().put(ModelPurpose.CHAT.key,File(directory,"default-id").takeIf{it.exists()}?.readText().orEmpty())
     }
     fun purposeId(purpose:ModelPurpose):String = AppMutationGate.read {purposeValues().optString(purpose.key)}
     fun setPurpose(purpose:ModelPurpose,id:String) = AppMutationGate.write {
         require(id.isEmpty() || file(id).exists())
-        val value=purposeValues().put(purpose.key,id)
+        // A -> B -> A is still a changed selection: old in-flight work must not become current again.
+        val value=purposeValues().put(purpose.key,id).put(purpose.key+".revision",java.util.UUID.randomUUID().toString())
         val atomic=AtomicFile(File(directory,"purpose-selections"));val stream=atomic.startWrite()
         try{stream.write(value.toString().toByteArray(Charsets.UTF_8));atomic.finishWrite(stream)}catch(e:Exception){atomic.failWrite(stream);throw e}
     }
     fun defaultId():String = purposeId(ModelPurpose.CHAT)
     fun setDefault(id:String) {setPurpose(ModelPurpose.CHAT,id)}
     fun selectionStamp(purpose:ModelPurpose):String = AppMutationGate.read {
-        val id=purposeId(purpose);if(id.isEmpty()||!file(id).exists()) "" else stableDigest(id+":"+stableDigest(java.util.Base64.getEncoder().encodeToString(AtomicFile(file(id)).readFully())))
+        val selected=purposeValues();val id=selected.optString(purpose.key)
+        if(id.isEmpty()||!file(id).exists()) "" else stableDigest(id+":"+selected.optString(purpose.key+".revision")+":"+stableDigest(java.util.Base64.getEncoder().encodeToString(AtomicFile(file(id)).readFully())))
     }
     fun hasKey(id:String)=AppMutationGate.read {keyStore.containsAlias(alias(id))}
     internal fun backup(includeKeys:Boolean):Pair<List<BackupModel>,Map<ModelPurpose,String>> = AppMutationGate.read {

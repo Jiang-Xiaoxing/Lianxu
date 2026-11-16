@@ -51,9 +51,15 @@ class MainActivity:ComponentActivity(){
 @Composable fun Lianxu(vm:AppState=viewModel()){
     var encounter by rememberSaveable(stateSaver=FirstEncounterSaver){mutableStateOf(FirstEncounterState())}
     var creationDraft by rememberSaveable(stateSaver=RoleCreationDraftSaver){mutableStateOf(RoleCreationDraft())}
+    var creationConfigOpen by rememberSaveable{mutableStateOf(false)}
+    fun updateCreation(value:RoleCreationDraft){
+        val changed=value.creationId!=creationDraft.creationId||value.text!=creationDraft.text
+        if(changed)vm.creationPolisher.cancel()
+        creationDraft=if(changed)value.copy(polished=null,usePolished=false)else value
+    }
     val encounterHome=encounter.shouldShow(vm.ready,vm.friends.isNotEmpty(),vm.page)
     val guidedCreate=vm.page=="create"&&encounter.destination==FirstEncounterDestination.CREATE
-    LaunchedEffect(vm.page){if(vm.page=="home")encounter=encounter.returned()}
+    LaunchedEffect(vm.page){if(vm.page=="home"){encounter=encounter.returned();creationConfigOpen=false}}
     LaunchedEffect(vm.page,vm.friends.isNotEmpty()){
         if(vm.page=="chat"&&vm.friends.isNotEmpty()&&encounter.destination==FirstEncounterDestination.CREATE){creationDraft=RoleCreationDraft();encounter=encounter.returned()}
     }
@@ -85,11 +91,13 @@ class MainActivity:ComponentActivity(){
             "role-learning"->LearningRecordsScreen(vm)
             "role-relationship"->RelationshipScreen(vm)
             "role-companion"->CompanionSettingsScreen(vm)
-            "create"->if(guidedCreate)RoleCreationGuide(creationDraft,{creationDraft=it},vm.busy,saved=vm.savedCreationId==creationDraft.creationId,onExit={vm.back()},onCreate={draft->vm.createCompanion(draft.name,draft.definition,draft.expression,draft.opening,draft.extra,draft.relationship,draft.creationId)})else Create(vm)
+            "create"->if(guidedCreate)RoleCreationGuide(creationDraft,{updateCreation(it)},vm.busy,saved=vm.savedCreationId==creationDraft.creationId,
+                polisher=vm.creationPolisher,onConfigure={vm.creationPolisher.cancel();creationConfigOpen=true;vm.open("models")},
+                onExit={vm.back()},onCreate={draft->vm.createCompanion(draft.name,draft.definition,draft.expression,draft.opening,draft.extra,draft.relationship,draft.creationId)})else Create(vm)
             "role-archive"->RoleArchiveScreen(vm)
             "search"->RoleSearch(vm)
             "search-detail"->GeneratedRoleDetail(vm)
-            "models"->ModelConfigScreen({vm.back()})
+            "models"->ModelConfigScreen({if(creationConfigOpen){creationConfigOpen=false;vm.open("create")}else vm.back()},saveForPurpose=if(creationConfigOpen)ModelPurpose.CHAT else null)
             "processing"->ProcessingDirectory(vm)
             "processing-role"->ProcessingRole(vm)
             "settings-memory"->MemoryRulesScreen(vm)

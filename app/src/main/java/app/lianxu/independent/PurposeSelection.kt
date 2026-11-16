@@ -17,11 +17,12 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 
-@Composable internal fun PurposeSelection(state:ModelConfigState){
+@Composable internal fun PurposeSelection(state:ModelConfigState,only:ModelPurpose?=null){
     var help by remember {mutableStateOf<ModelPurpose?>(null)}
+    val purposes=ModelPurpose.entries.filter{only==null||it==only}
     Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
-            ModelPurpose.entries.forEachIndexed{index,purpose->
+            purposes.forEachIndexed{index,purpose->
                 var menu by remember(purpose){mutableStateOf(false)}
                 var includeUnknown by remember(purpose){mutableStateOf(false)}
                 val chosen=state.configs.firstOrNull{it.id==state.purposes[purpose]}
@@ -43,7 +44,7 @@ import androidx.compose.ui.unit.dp
                         if(options.hasAdditionalUnknown)DropdownMenuItem(text={Text("其他已保存配置（能力未核实）")},onClick={includeUnknown=true},modifier=Modifier.testTag("purpose-unknown-embedding"))
                     }
                 }
-                if(index<ModelPurpose.entries.lastIndex)HorizontalDivider(Modifier.padding(start=64.dp,end=16.dp),color=Line)
+                if(index<purposes.lastIndex)HorizontalDivider(Modifier.padding(start=64.dp,end=16.dp),color=Line)
             }
         }
     }
@@ -54,6 +55,6 @@ import androidx.compose.ui.unit.dp
             ModelPurpose.MEMORY->"主动总结记忆使用所选总结记忆模型；未选择时沿用聊天模型。"
             ModelPurpose.AUX_VISION->"视觉附件尚未接入。此处保留辅助视觉模型选择，不代表已经能够处理图片或附件。"
         })
-        Text("所有角色共用用途选择，不设角色单独覆盖。先在“服务商”页添加并保存配置，再选择对应模型。保存配置和选择用途只保存设置，不发出请求。",style=MaterialTheme.typography.bodyMedium,color=Muted)
+        Text(if(only==ModelPurpose.CHAT)"所有角色共用全局聊天选择，不设角色单独覆盖。从创建引导新建或编辑聊天配置并保存后，会直接用于聊天；也可在此选择已有配置，不改其他用途。保存配置和选择用途不发出请求。"else"所有角色共用用途选择，不设角色单独覆盖。先在“服务商”页添加并保存配置，再选择对应模型。保存配置和选择用途只保存设置，不发出请求。",style=MaterialTheme.typography.bodyMedium,color=Muted)
     }},confirmButton={TextButton(onClick={help=null},modifier=Modifier.testTag("purpose-help-close")){Text("知道了")}})}
 }

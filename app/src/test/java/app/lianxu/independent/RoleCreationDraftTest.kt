@@ -35,4 +35,13 @@ class RoleCreationDraftTest {
             assertEquals(prefix.dropLast(1)+"😀",creationText(prefix.dropLast(1)+"😀",limit))
         }
     }
+    @Test fun originalAndEditedPolishAreSavedIndependently(){
+        val original=RoleCreationDraft(step=RoleCreationStep.CONFIRM,name="原名",definition="原设定")
+        val edited=original.copy(polished=original.text.copy(definition="局部编辑的润色稿"),usePolished=true)
+        val scope=SaverScope{true};val saved=with(RoleCreationDraftSaver){with(scope){save(edited)}}
+        val restored=requireNotNull(RoleCreationDraftSaver.restore(requireNotNull(saved)))
+        assertEquals("原设定",restored.definition);assertEquals("局部编辑的润色稿",restored.selected.definition)
+        assertEquals("原设定",restored.copy(usePolished=false).selected.definition)
+        assertEquals(original.creationId,restored.selectedDraft().creationId)
+    }
 }

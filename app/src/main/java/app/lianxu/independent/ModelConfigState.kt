@@ -9,6 +9,8 @@ import java.security.MessageDigest
 
 enum class ProbePhase { UNTESTED, TESTING, REACHABLE, FAILED }
 data class ProbeDisplay(val phase:ProbePhase=ProbePhase.UNTESTED,val text:String="未测试")
+private class SharedCreationModel:Exception()
+private class StaleModelEditor:Exception()
 
 class ModelConfigState @JvmOverloads constructor(
     application:Application,
@@ -58,34 +60,61 @@ class ModelConfigState @JvmOverloads constructor(
     fun cancelFetch(){if(fetching){clearResult();message("已取消获取，当前模型未更改。")}}
     private suspend fun secret(config:ModelConfig,entered:String):String {
         if(entered.isNotEmpty())return entered
-        val old=configs.find{it.id==config.id}
-        return withContext(Dispatchers.IO){ModelKeyDraft.resolve(old,config,entered){vault.secret(config.id)}}
+        return withContext(Dispatchers.IO){AppMutationGate.read{
+            ModelKeyDraft.resolve(vault.list().find{it.id==config.id},config,entered){vault.secret(config.id)}
+        }}
     }
     suspend fun savedKey(config:ModelConfig):String = withContext(Dispatchers.IO) {
-        try { vault.secret(config.id) } catch(e:CancellationException) { throw e }
+        try { AppMutationGate.read{ModelKeyDraft.resolve(vault.list().find{it.id==config.id},config,""){vault.secret(config.id)}} } catch(e:CancellationException) { throw e }
         catch(_:Exception) { "" }
     }
     // Ephemeral fingerprint, never persisted or logged.
     private fun stamp(config:ModelConfig,key:String)=MessageDigest.getInstance("SHA-256").digest(listOf(config.id,config.name,config.providerId,config.baseUrl,config.modelId,key).joinToString("\u0000").toByteArray()).joinToString(""){"%02x".format(it)}
-    fun save(config:ModelConfig,key:String,purpose:ModelPurpose?=null,onSaved:()->Unit){
+    fun save(config:ModelConfig,key:String,purpose:ModelPurpose?=null,original:ModelConfig?=configs.find{it.id==config.id},onSaved:()->Unit){
+        saveConfig(config,key,purpose,false,original,onSaved)
+    }
+    internal fun saveChatFromCreation(config:ModelConfig,key:String,original:ModelConfig?=configs.find{it.id==config.id},onSaved:()->Unit){
+        saveConfig(config,key,ModelPurpose.CHAT,true,original,onSaved)
+    }
+    private fun saveConfig(config:ModelConfig,key:String,purpose:ModelPurpose?,protectOthers:Boolean,original:ModelConfig?,onSaved:()->Unit){
         if(busy)return;saving=true;status=""
-        viewModelScope.launch {try {
-            val resolved=secret(config,key);val invalid=ConfigRules.validate(config,resolved)
+        viewModelScope.launch {
+        var attempted=false;var configurationConfirmed=false;var selectionConfirmed=false
+        try {
+            var old:ModelConfig?=null;var oldKey="";var resolved=""
+            val invalid=withContext(Dispatchers.IO){AppMutationGate.write<String?>{
+                if(protectOthers&&ModelPurpose.entries.any{it!=ModelPurpose.CHAT&&vault.purposeId(it)==config.id})throw SharedCreationModel()
+                old=vault.list().find{it.id==config.id}
+                if(old!=original)throw StaleModelEditor()
+                oldKey=if(old!=null)vault.secret(config.id)else""
+                resolved=ModelKeyDraft.resolve(old,config,key){oldKey}
+                ConfigRules.validate(config,resolved)?.let{return@write it}
+                attempted=true
+                if(ModelKeyDraft.needsWrite(old,config,oldKey,resolved))vault.save(config,resolved)
+                configurationConfirmed=true
+                if(purpose!=null){vault.setPurpose(purpose,config.id);selectionConfirmed=true}
+                null
+            }}
             if(invalid!=null){message(invalid,true);return@launch}
             val keep=probeStamp==stamp(config,resolved)&&probe.phase in setOf(ProbePhase.REACHABLE,ProbePhase.FAILED)
-            val old=configs.find{it.id==config.id}
-            val oldKey=if(old!=null)withContext(Dispatchers.IO){vault.secret(config.id)} else ""
-            withContext(Dispatchers.IO){if(ModelKeyDraft.needsWrite(old,config,oldKey,resolved))vault.save(config,resolved);if(purpose!=null)vault.setPurpose(purpose,config.id)}
             // Address, key or model changed: the old test no longer describes this configuration.
-            val changedTarget=old==null||old.baseUrl!=config.baseUrl||old.modelId!=config.modelId||old.providerId!=config.providerId||oldKey!=resolved
+            val changedTarget=old?.let{it.baseUrl!=config.baseUrl||it.modelId!=config.modelId||it.providerId!=config.providerId||oldKey!=resolved}?:true
             val pending=pendingTest
             if(keep&&pending!=null)statusStore.saveTest(config.id,pending) else if(changedTarget)statusStore.clearTest(config.id)
             reload()
             connections=if(keep)connections+(config.id to probe) else connections-config.id
-            message(ProviderRequestMetadata.compatibilityNotice(config)?.let{"已保存；$it"}?:"已保存，请在模型用途中选择这份配置；保存本身不发送请求。")
+            val savedText=if(purpose!=null)"已保存并用于${purpose.title}；保存本身不发送请求。"else"已保存，请在模型用途中选择这份配置；保存本身不发送请求。"
+            message(ProviderRequestMetadata.compatibilityNotice(config)?.let{"$savedText $it"}?:savedText)
             onSaved()
         }catch(e:CancellationException){throw e}
-        catch(_:Exception){message("保存失败，请重试。",true)}finally{saving=false}}
+        catch(_:StaleModelEditor){message("这份配置已在别处更改，请返回并重新打开后再保存。当前设置未被覆盖。",true)}
+        catch(_:SharedCreationModel){runCatching{reload()};message("这份配置也用于其他用途，创建引导中不能修改。请新增全局聊天配置，或仅选择现有配置用于聊天。",true)}
+        catch(_:Exception){message(when{
+            configurationConfirmed&&(purpose==null||selectionConfirmed)->"配置${if(purpose!=null)"和${purpose.title}用途"else""}已保存，但状态刷新未完成。返回后可重新读取。"
+            configurationConfirmed->"配置已保存，但用途写入未确认。请返回核对或重试。"
+            attempted->"保存未完整完成，部分配置可能已写入。请返回核对或重试。"
+            else->"保存失败，请重试。"
+        },true)}finally{saving=false}}
     }
     fun testEmbedding(config:ModelConfig,key:String){
         if(busy)return;clearResult();val version=requestVersion;testing=true
@@ -106,8 +135,12 @@ class ModelConfigState @JvmOverloads constructor(
     fun makeDefault(config:ModelConfig){if(busy)return;saving=true;viewModelScope.launch {try{withContext(Dispatchers.IO){vault.setDefault(config.id)};reload();message("已设为默认，没有发起网络请求。 ")}catch(_:Exception){message("默认配置保存失败。",true)}finally{saving=false}}}
     fun selectPurpose(purpose:ModelPurpose,id:String){
         if(busy)return;saving=true
-        viewModelScope.launch{try{withContext(Dispatchers.IO){vault.setPurpose(purpose,id)};reload();message("用途选择已保存，没有发起网络请求。")}
-        catch(_:Exception){message("用途保存失败，请重试。",true)}finally{saving=false}}
+        viewModelScope.launch{
+            var attempted=false;var confirmed=false
+            try{withContext(Dispatchers.IO){attempted=true;vault.setPurpose(purpose,id);confirmed=true};reload();message("用途选择已保存，没有发起网络请求。")}
+            catch(e:CancellationException){throw e}
+            catch(_:Exception){message(if(confirmed)"用途选择已保存，但状态刷新未完成。返回后可重新读取。"else if(attempted)"用途写入未确认，可能已改变。请返回核对或重试。"else"用途保存失败，请重试。",true)}finally{saving=false}
+        }
     }
     fun delete(config:ModelConfig){if(busy)return;clearResult();saving=true;viewModelScope.launch {try{withContext(Dispatchers.IO){vault.delete(config.id)};statusStore.clearAll(config.id);reload();connections=connections-config.id;message("配置和关联密钥已删除。")}catch(_:Exception){message("删除未完成，请重试。",true)}finally{saving=false}}}
     fun request(config:ModelConfig,key:String,fetch:Boolean){

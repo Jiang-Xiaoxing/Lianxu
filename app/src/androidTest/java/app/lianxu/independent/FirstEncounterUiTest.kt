@@ -130,6 +130,7 @@ class FirstEncounterUiTest {
         ui.onNodeWithTag("create-next").performScrollTo().performClick()
         ui.onNodeWithTag("create-skip-relationship").performScrollTo().performClick()
         ui.onNodeWithTag("create-next").performScrollTo().performClick()
+        ui.onNodeWithTag("create-use-original").performScrollTo().performClick()
         ui.activityRule.scenario.onActivity{activity->
             val input=activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
             input.hideSoftInputFromWindow(activity.window.decorView.windowToken,0)

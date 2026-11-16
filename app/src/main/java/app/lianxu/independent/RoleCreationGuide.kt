@@ -22,6 +22,7 @@ import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -31,6 +32,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.flow.first
 
 /** Same light sample, source bounds and stretch as the settled approved door. */
 @Composable private fun EncounterWarmLight(modifier:Modifier){
@@ -44,6 +49,7 @@ import androidx.compose.ui.unit.dp
 
 @Composable internal fun RoleCreationGuide(
     draft:RoleCreationDraft,onDraft:(RoleCreationDraft)->Unit,busy:Boolean,saved:Boolean=false,
+    polisher:RoleCreationPolish?=null,onConfigure:()->Unit={},
     onExit:()->Unit,onCreate:(RoleCreationDraft)->Unit
 ){
     val scope=rememberCoroutineScope()
@@ -58,9 +64,16 @@ import androidx.compose.ui.unit.dp
     val currentOnDraft by rememberUpdatedState(onDraft)
     val focus=LocalFocusManager.current
     val keyboard=LocalSoftwareKeyboardController.current
+    val lifecycle=LocalLifecycleOwner.current.lifecycle
     val moving=entering||targetStep!=null
     val enabled=!moving&&!busy&&!submitting
     LaunchedEffect(submitting,busy){if(submitting&&!busy)submitting=false}
+    LaunchedEffect(draft.step,polisher){if(draft.step==RoleCreationStep.MODEL)polisher?.refreshModel()}
+    DisposableEffect(lifecycle,polisher){
+        val observer=LifecycleEventObserver{_,event->if(event==Lifecycle.Event.ON_STOP)polisher?.cancel()}
+        lifecycle.addObserver(observer)
+        onDispose{lifecycle.removeObserver(observer);polisher?.cancel()}
+    }
 
     LaunchedEffect(targetStep,reduced){
         if(reduced){
@@ -81,14 +94,29 @@ import androidx.compose.ui.unit.dp
     fun canNavigate()=!locked()&&!exitDialog
     fun moveTo(step:RoleCreationStep){
         if(!canNavigate())return
+        if(draft.step==RoleCreationStep.MODEL)polisher?.cancel()
         focus.clearFocus();keyboard?.hide();problem=null;entering=true;targetStep=step
     }
     fun leave(){
         if(!canNavigate())return
+        polisher?.cancel()
         focus.clearFocus();keyboard?.hide()
         if(draft.hasContent)exitDialog=true else onExit()
     }
     fun previous(){if(canNavigate()){draft.previous()?.let{moveTo(it)}?:leave()}}
+    fun editPolished(change:(RoleCreationText)->RoleCreationText){
+        if(canNavigate())currentDraft.polished?.let{currentOnDraft(currentDraft.copy(polished=change(it)))}
+    }
+    LaunchedEffect(polisher?.result){
+        val value=polisher?.result?:return@LaunchedEffect
+        snapshotFlow{!locked()&&!exitDialog}.first{it}
+        val active=currentDraft
+        if(polisher.result===value&&active.step==RoleCreationStep.MODEL&&active.creationId==value.creationId&&active.text==value.source){
+            currentOnDraft(active.copy(polished=value.value,usePolished=true))
+            polisher.consume(value)
+            moveTo(RoleCreationStep.CONFIRM)
+        }
+    }
     BackHandler{previous()}
 
     if(exitDialog)AlertDialog(
@@ -124,46 +152,80 @@ import androidx.compose.ui.unit.dp
                                 RoleCreationStep.DEFINITION->"这是一位怎样的角色？"
                                 RoleCreationStep.RELATIONSHIP->"你们之间是什么关系？"
                                 RoleCreationStep.MORE->"还有想补充的吗？"
+                                RoleCreationStep.MODEL->"用全局模型帮你润色吗？"
                                 RoleCreationStep.CONFIRM->"准备好开始相遇了吗？"
                             },Modifier.testTag("create-step-${draft.step.name.lowercase()}").semantics{liveRegion=LiveRegionMode.Polite},style=MaterialTheme.typography.titleLarge)
                             when(draft.step){
                                 RoleCreationStep.NAME->{
                                     Text("从一个名字开始，不需要先选性别。",style=MaterialTheme.typography.bodyMedium,color=Muted)
-                                    AppField(draft.name,{onDraft(draft.copy(name=creationText(it,30)));problem=null},"名字（必填）","friend-name",singleLine=true,enabled=enabled&&!saved)
+                                    CreationField(draft.name,{onDraft(draft.copy(name=creationText(it,30)));problem=null},"名字（必填）","friend-name",singleLine=true,enabled=enabled&&!saved)
                                 }
                                 RoleCreationStep.DEFINITION->{
                                     Text("写下性格、经历，或你希望保留的特点。",style=MaterialTheme.typography.bodyMedium,color=Muted)
-                                    AppField(draft.definition,{onDraft(draft.copy(definition=creationText(it,8000)));problem=null},"角色设定（必填）","friend-bio",minLines=3,enabled=enabled&&!saved)
+                                    CreationField(draft.definition,{onDraft(draft.copy(definition=creationText(it,8000)));problem=null},"角色设定（必填）","friend-bio",minLines=3,enabled=enabled&&!saved)
                                 }
                                 RoleCreationStep.RELATIONSHIP->{
                                     Text("这是你设定的相处起点，可以留空或跳过。",style=MaterialTheme.typography.bodyMedium,color=Muted)
-                                    AppField(draft.relationship,{onDraft(draft.copy(relationship=creationText(it,4000)))},"初始关系背景（可选）","friend-relationship",minLines=2,enabled=enabled&&!saved)
+                                    CreationField(draft.relationship,{onDraft(draft.copy(relationship=creationText(it,4000)))},"初始关系背景（可选）","friend-relationship",minLines=2,enabled=enabled&&!saved)
                                 }
                                 RoleCreationStep.MORE->{
                                     Text("更多设置均可留空，之后也能在角色设定里修改。",style=MaterialTheme.typography.bodyMedium,color=Muted)
-                                    AppField(draft.expression,{onDraft(draft.copy(expression=creationText(it,8000)))},"说话方式（可选）","friend-expression",minLines=2,enabled=enabled&&!saved)
-                                    AppField(draft.opening,{onDraft(draft.copy(opening=creationText(it,8000)))},"开场白（可选）","friend-opening",minLines=2,enabled=enabled&&!saved)
-                                    AppField(draft.extra,{onDraft(draft.copy(extra=creationText(it,4000)))},"自定义提示词（可选）","friend-prompt",minLines=3,enabled=enabled&&!saved)
+                                    CreationField(draft.expression,{onDraft(draft.copy(expression=creationText(it,8000)))},"说话方式（可选）","friend-expression",minLines=2,enabled=enabled&&!saved)
+                                    CreationField(draft.opening,{onDraft(draft.copy(opening=creationText(it,8000)))},"开场白（可选）","friend-opening",minLines=2,enabled=enabled&&!saved)
+                                    CreationField(draft.extra,{onDraft(draft.copy(extra=creationText(it,4000)))},"自定义提示词（可选）","friend-prompt",minLines=3,enabled=enabled&&!saved)
                                     Text("模型仍在设置中选择；未配置聊天模型时不会生成演示回复。",style=MaterialTheme.typography.bodySmall,color=Muted)
                                 }
+                                RoleCreationStep.MODEL->{
+                                    Text("只整理你填写的内容，不补写设定。润色后先预览，可自由修改，也可以使用原文。",style=MaterialTheme.typography.bodyMedium,color=Muted)
+                                    Text(polisher?.modelLabel?.let{"全局聊天模型：$it"}?:if(polisher?.modelReadFailed==true)"全局模型配置暂时无法读取"else if(polisher?.checked==true)"尚未配置全局聊天模型"else"正在读取全局聊天模型…",Modifier.testTag("create-global-model"),style=MaterialTheme.typography.bodyMedium)
+                                    Text("润色会将当前填写的角色资料发送给所选服务商，使用已保存的全局配置；不会发送聊天或记忆。",style=MaterialTheme.typography.bodySmall,color=Muted)
+                                    Text("从这里保存的聊天配置会用于全局聊天；记忆整理和识图仍保留各自的用途选择。",style=MaterialTheme.typography.bodySmall,color=Muted)
+                                    if(polisher?.running==true){
+                                        Text("正在润色，可以取消或使用原文继续。",Modifier.testTag("create-polish-running"),style=MaterialTheme.typography.bodyMedium)
+                                        TextButton(onClick={polisher.cancel()},enabled=enabled,modifier=Modifier.testTag("create-polish-cancel")){Text("取消润色")}
+                                    }else if(polisher?.modelLabel!=null){
+                                        PrimaryAction(if(draft.polished==null)"润色并预览"else"重新润色",enabled=enabled&&polisher.checked,modifier=Modifier.fillMaxWidth().testTag("create-polish")){if(canNavigate())polisher.start(draft)}
+                                    }
+                                    if(polisher?.message?.isNotBlank()==true)Text(polisher.message,Modifier.testTag("create-polish-message"),style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.error)
+                                    TextButton(onClick={if(canNavigate()){polisher?.cancel();focus.clearFocus();keyboard?.hide();onConfigure()}},enabled=enabled,modifier=Modifier.testTag("create-model-config")){Text(if(polisher?.modelLabel==null)"配置全局聊天模型"else"管理全局模型配置")}
+                                    if(draft.polished!=null)TextButton(onClick={if(canNavigate()){onDraft(draft.copy(usePolished=true));moveTo(RoleCreationStep.CONFIRM)}},enabled=enabled,modifier=Modifier.testTag("create-view-polished")){Text("查看已有润色稿")}
+                                    PrimaryAction("使用原文继续",enabled=enabled,modifier=Modifier.fillMaxWidth().testTag("create-use-original")){
+                                        if(canNavigate()){onDraft(draft.copy(usePolished=false));moveTo(RoleCreationStep.CONFIRM)}
+                                    }
+                                }
                                 RoleCreationStep.CONFIRM->{
-                                    CreationSummary("名字",draft.name)
-                                    CreationSummary("角色设定",draft.definition)
-                                    CreationSummary("初始关系背景",draft.relationship.ifBlank{"暂未设置"})
-                                    if(draft.expression.isNotBlank())CreationSummary("说话方式",draft.expression)
-                                    if(draft.opening.isNotBlank())CreationSummary("开场白",draft.opening)
-                                    if(draft.extra.isNotBlank())CreationSummary("自定义提示词",draft.extra)
-                                    Text("长内容在此简要显示，完整填写内容会保存。可返回修改。",style=MaterialTheme.typography.bodySmall,color=Muted)
+                                    if(draft.polished!=null)Row{
+                                        TextButton(onClick={if(canNavigate()){focus.clearFocus();keyboard?.hide();onDraft(draft.copy(usePolished=true))}},enabled=enabled&&!saved,modifier=Modifier.testTag("create-select-polished")){Text(if(draft.usePolished)"已选润色稿"else"使用润色稿")}
+                                        TextButton(onClick={if(canNavigate()){focus.clearFocus();keyboard?.hide();onDraft(draft.copy(usePolished=false))}},enabled=enabled&&!saved,modifier=Modifier.testTag("create-select-original")){Text(if(draft.usePolished)"使用原文"else"已选原文")}
+                                    }
+                                    val value=draft.polished
+                                    if(draft.usePolished&&value!=null){
+                                        Text("润色稿可逐项修改，请核对是否保留了你的原意。确认后才保存角色。",style=MaterialTheme.typography.bodySmall,color=Muted)
+                                        CreationField(value.name,{field->editPolished{it.copy(name=creationText(field,30))};problem=null},"名字（必填）","polish-name",singleLine=true,enabled=enabled&&!saved)
+                                        CreationField(value.definition,{field->editPolished{it.copy(definition=creationText(field,8000))};problem=null},"角色设定（必填）","polish-definition",minLines=3,enabled=enabled&&!saved)
+                                        CreationField(value.relationship,{field->editPolished{it.copy(relationship=creationText(field,4000))}},"初始关系背景（可选）","polish-relationship",minLines=2,enabled=enabled&&!saved)
+                                        CreationField(value.expression,{field->editPolished{it.copy(expression=creationText(field,8000))}},"说话方式（可选）","polish-expression",minLines=2,enabled=enabled&&!saved)
+                                        CreationField(value.opening,{field->editPolished{it.copy(opening=creationText(field,8000))}},"开场白（可选）","polish-opening",minLines=2,enabled=enabled&&!saved)
+                                        CreationField(value.extra,{field->editPolished{it.copy(extra=creationText(field,4000))}},"自定义提示词（可选）","polish-extra",minLines=3,enabled=enabled&&!saved)
+                                    }else{
+                                        CreationSummary("名字",draft.name)
+                                        CreationSummary("角色设定",draft.definition)
+                                        CreationSummary("初始关系背景",draft.relationship.ifBlank{"暂未设置"})
+                                        if(draft.expression.isNotBlank())CreationSummary("说话方式",draft.expression)
+                                        if(draft.opening.isNotBlank())CreationSummary("开场白",draft.opening)
+                                        if(draft.extra.isNotBlank())CreationSummary("自定义提示词",draft.extra)
+                                        Text("当前使用原文。长内容简要显示，完整内容会保存，可返回修改。",style=MaterialTheme.typography.bodySmall,color=Muted)
+                                    }
                                 }
                             }
                             problem?.let{Text(it,Modifier.testTag("create-validation"),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodyMedium)}
                             if(draft.step==RoleCreationStep.RELATIONSHIP)TextButton(onClick={if(canNavigate()){onDraft(draft.copy(relationship=""));moveTo(RoleCreationStep.MORE)}},enabled=enabled,modifier=Modifier.testTag("create-skip-relationship")){Text("跳过")}
-                            PrimaryAction(if(draft.step==RoleCreationStep.CONFIRM)if(busy)"正在创建…"else if(saved)"打开已创建的角色"else"确认创建"else"下一步",
+                            if(draft.step!=RoleCreationStep.MODEL)PrimaryAction(if(draft.step==RoleCreationStep.CONFIRM)if(busy)"正在创建…"else if(saved)"打开已创建的角色"else"确认创建"else"下一步",
                                 enabled=enabled,modifier=Modifier.fillMaxWidth().testTag(if(draft.step==RoleCreationStep.CONFIRM)"create-friend"else"create-next")){
                                 if(!entering&&targetStep==null&&!busy&&!submitting&&!exitDialog){
                                     problem=draft.problem()
                                     if(problem==null){
-                                        if(draft.step==RoleCreationStep.CONFIRM){submitting=true;focus.clearFocus();keyboard?.hide();onCreate(draft)}
+                                        if(draft.step==RoleCreationStep.CONFIRM){submitting=true;polisher?.cancel();focus.clearFocus();keyboard?.hide();onCreate(draft.selectedDraft())}
                                         else draft.next()?.let{moveTo(it)}
                                     }
                                 }
@@ -174,6 +236,17 @@ import androidx.compose.ui.unit.dp
             }
         }
     }
+}
+
+@Composable private fun CreationField(value:String,onChange:(String)->Unit,label:String,tag:String,singleLine:Boolean=false,minLines:Int=1,enabled:Boolean=true){
+    val fill=Color(0xFFEEE0CC).copy(alpha=.86f)
+    val text=Color(0xFF57402E)
+    AppField(value,onChange,label,tag,singleLine,minLines,enabled,colors=OutlinedTextFieldDefaults.colors(
+        focusedContainerColor=fill,unfocusedContainerColor=fill,disabledContainerColor=fill.copy(alpha=.60f),
+        focusedBorderColor=Color(0xFF916D4D),unfocusedBorderColor=Color(0xFFC2A78D),
+        focusedTextColor=text,unfocusedTextColor=text,disabledTextColor=text.copy(alpha=.65f),
+        focusedLabelColor=Color(0xFF79583D),unfocusedLabelColor=Color(0xFF8F7155),cursorColor=Color(0xFF79583D)
+    ))
 }
 
 @Composable private fun CreationSummary(label:String,value:String){

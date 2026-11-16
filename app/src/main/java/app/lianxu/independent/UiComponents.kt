@@ -110,8 +110,8 @@ internal fun decodeAvatar(bytes:ByteArray,target:Int):android.graphics.Bitmap?=r
         Text("保存",Modifier.clip(RoundedCornerShape(8.dp)).background(SelectedBackground).padding(horizontal=14.dp,vertical=6.dp),style=MaterialTheme.typography.labelLarge,color=GreenText.copy(alpha=if(enabled)1f else .4f))
     }
 }
-@Composable internal fun AppField(value:String,onChange:(String)->Unit,label:String,tag:String="",singleLine:Boolean=false,minLines:Int=1,enabled:Boolean=true){
-    OutlinedTextField(value,onChange,label={Text(label)},singleLine=singleLine,minLines=minLines,maxLines=if(singleLine)1 else 6,enabled=enabled,modifier=Modifier.fillMaxWidth().testTag(tag),shape=RoundedCornerShape(14.dp),textStyle=MaterialTheme.typography.bodyLarge,colors=OutlinedTextFieldDefaults.colors(focusedContainerColor=Paper,unfocusedContainerColor=Paper,focusedBorderColor=GreenText,unfocusedBorderColor=Line))
+@Composable internal fun AppField(value:String,onChange:(String)->Unit,label:String,tag:String="",singleLine:Boolean=false,minLines:Int=1,enabled:Boolean=true,colors:TextFieldColors?=null){
+    OutlinedTextField(value,onChange,label={Text(label)},singleLine=singleLine,minLines=minLines,maxLines=if(singleLine)1 else 6,enabled=enabled,modifier=Modifier.fillMaxWidth().testTag(tag),shape=RoundedCornerShape(14.dp),textStyle=MaterialTheme.typography.bodyLarge,colors=colors?:OutlinedTextFieldDefaults.colors(focusedContainerColor=Paper,unfocusedContainerColor=Paper,focusedBorderColor=GreenText,unfocusedBorderColor=Line))
 }
 
 @Composable internal fun SectionLabel(text:String,modifier:Modifier=Modifier){

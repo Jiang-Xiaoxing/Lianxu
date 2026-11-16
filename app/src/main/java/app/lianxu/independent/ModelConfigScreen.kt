@@ -41,7 +41,7 @@ private val ConfigErrorColor:Color @Composable get()=MaterialTheme.colorScheme.e
 private fun providerName(p:ProviderPreset)=p.label.substringBefore(" · ")
 private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
 
-@Composable fun ModelConfigScreen(onBack:()->Unit,state:ModelConfigState=viewModel()) {
+@Composable fun ModelConfigScreen(onBack:()->Unit,state:ModelConfigState=viewModel(),saveForPurpose:ModelPurpose?=null) {
     LaunchedEffect(Unit){state.refresh()}
     var screen by remember {mutableStateOf("overview")}
     var overviewTab by rememberSaveable {mutableIntStateOf(0)}
@@ -76,8 +76,9 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
         key="";reveal=false
         if(screen=="edit")screen="overview" else onBack()
     }
-    fun add(embedding:Boolean=false){if(state.saving)return;prefilledKey="";keyDraft.invalidate();embeddingEditor=embedding;original=null;draftId=UUID.randomUUID().toString();name="";key="";reveal=false;model="";budgets=ModelBudgetDraft();query="";allProviders=false;providerReturn="overview";state.clearResult();screen="providers"}
-    fun edit(config:ModelConfig){prefilledKey="";embeddingEditor=state.purposes[ModelPurpose.EMBEDDING]==config.id;original=config;draftId=config.id;name=config.name;provider=config.providerId;base=config.baseUrl;model=config.modelId;budgets=ModelBudgetDraft.existing(config);key="";reveal=false;advanced=false;state.clearResult();screen="edit"
+    fun add(embedding:Boolean=false){if(state.saving||saveForPurpose==ModelPurpose.CHAT&&embedding)return;prefilledKey="";keyDraft.invalidate();embeddingEditor=embedding;original=null;draftId=UUID.randomUUID().toString();name="";key="";reveal=false;model="";budgets=ModelBudgetDraft();query="";allProviders=false;providerReturn="overview";state.clearResult();screen="providers"}
+    fun sharedWithOtherPurposes(id:String)=saveForPurpose==ModelPurpose.CHAT&&state.purposes.any{(purpose,value)->purpose!=ModelPurpose.CHAT&&value==id}
+    fun edit(config:ModelConfig){if(sharedWithOtherPurposes(config.id))return;prefilledKey="";embeddingEditor=state.purposes[ModelPurpose.EMBEDDING]==config.id;original=config;draftId=config.id;name=config.name;provider=config.providerId;base=config.baseUrl;model=config.modelId;budgets=ModelBudgetDraft.existing(config);key="";reveal=false;advanced=false;state.clearResult();screen="edit"
         keyDraft.invalidate()
         val ticket=keyDraft.ticket()
         editorScope.launch {
@@ -100,10 +101,11 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
             title=when(screen){"providers"->if(embeddingEditor)"选择向量服务商" else "选择聊天服务商";"edit"->if(embeddingEditor)"向量模型配置" else if(original==null)"添加 ${providerName(preset)}" else "编辑配置";else->"大模型配置"},
             onBack={back()},backTag="config-back",enabled=!state.saving,
             extra={when(screen){
-                "edit"->SaveAction(!state.busy){reveal=false;state.save(draft(),enteredKey(),if(embeddingEditor)ModelPurpose.EMBEDDING else null){key="";screen="overview"}}
+                "edit"->SaveAction(!state.busy&&!sharedWithOtherPurposes(draftId)){reveal=false;if(saveForPurpose==ModelPurpose.CHAT)state.saveChatFromCreation(draft(),enteredKey(),original){key="";screen="overview"}else state.save(draft(),enteredKey(),if(embeddingEditor)ModelPurpose.EMBEDDING else null,original){key="";screen="overview"}}
                 else->Spacer(Modifier.width(48.dp))
             }}
         )
+        if(saveForPurpose==ModelPurpose.CHAT&&!embeddingEditor)Text("这里只设置全局聊天。其他用途正在使用的配置可直接选用，但不能在这里修改或删除；可另加全局聊天配置。",Modifier.padding(horizontal=UiSpace.page,vertical=8.dp).testTag("config-chat-context"),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
         if(screen=="overview"){
             Row(Modifier.padding(horizontal=UiSpace.page,vertical=12.dp).fillMaxWidth().selectableGroup().clip(RoundedCornerShape(28.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(4.dp)){
                 listOf("服务商","模型用途").forEachIndexed{index,label->
@@ -124,11 +126,12 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
                 item{Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
                     state.configs.forEachIndexed {index,config->
                         val p=ProviderPresets.get(config.providerId)
-                        Row(Modifier.fillMaxWidth().clickable(enabled=!state.busy){edit(config)}.testTag("config-edit-${config.id}").padding(18.dp),verticalAlignment=Alignment.CenterVertically){
+                        Row(Modifier.fillMaxWidth().clickable(enabled=!state.busy&&!sharedWithOtherPurposes(config.id)){edit(config)}.testTag("config-edit-${config.id}").padding(18.dp),verticalAlignment=Alignment.CenterVertically){
                             ProviderMark(p);Spacer(Modifier.width(14.dp))
                             Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){
                                 Text(config.name,style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Medium,maxLines=1,overflow=TextOverflow.Ellipsis)
                                 Text("${providerName(p)} · ${config.modelId}",style=MaterialTheme.typography.bodySmall,color=ConfigMuted,maxLines=1,overflow=TextOverflow.Ellipsis)
+                                if(sharedWithOtherPurposes(config.id))Text("其他用途正在使用，在此不能修改",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
                                 val test=state.tests[config.id];val testLine=ModelStatusText.test(test,config)
                                 Text(testLine,Modifier.testTag("config-probe-${config.id}"),style=MaterialTheme.typography.bodySmall,color=when{testLine=="未测试"->ConfigMuted;test?.ok==true->ConfigGreen;else->ConfigErrorColor})
                                 val call=state.calls[config.id]
@@ -142,9 +145,9 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
                 }}
                 }
                 item{OutlinedButton(onClick={add()},enabled=!state.saving,modifier=Modifier.fillMaxWidth().heightIn(min=UiSpace.action).testTag("config-add")){Text("添加服务商")}}
-                item{OutlinedButton(onClick={add(true)},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).testTag("config-add-embedding")){Text("添加向量模型")}}
+                if(saveForPurpose==null)item{OutlinedButton(onClick={add(true)},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).testTag("config-add-embedding")){Text("添加向量模型")}}
                 }else{
-                item{PurposeSelection(state)}
+                item{PurposeSelection(state,only=saveForPurpose)}
                 }
             }
         }else if(screen=="providers"){
@@ -189,7 +192,7 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
                     else Text(preset.modelsHint,Modifier.padding(vertical=12.dp,horizontal=16.dp).testTag("config-models-unavailable"),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
                 }
                 if(state.models.isNotEmpty()){
-                    Notice(state.status,false)
+                    Notice(state.status,state.statusError)
                     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Paper).padding(12.dp)){
                         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){Text("选择模型（含向量等类型）",style=MaterialTheme.typography.labelLarge);Text("点选填入，保存后生效",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)}
                         OutlinedTextField(modelQuery,{modelQuery=it.take(200)},placeholder={Text("筛选已获取目录（不填入模型）",style=MaterialTheme.typography.bodyMedium)},singleLine=true,leadingIcon={ControlIcon("search")},modifier=Modifier.fillMaxWidth().padding(vertical=8.dp).testTag("model-search"),shape=RoundedCornerShape(12.dp))
@@ -215,7 +218,7 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
                     else Row(Modifier.heightIn(min=48.dp),verticalAlignment=Alignment.CenterVertically){ControlIcon("plug");Spacer(Modifier.width(8.dp));Text("此服务商暂未适配连接测试",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)}
                     val result=state.probe
                     Text(when(result.phase){ProbePhase.UNTESTED->"未测试";ProbePhase.TESTING->"正在查询目录/认证接口…";else->result.text},Modifier.padding(start=4.dp,top=2.dp).testTag("config-probe-inline"),style=MaterialTheme.typography.bodySmall,color=when(result.phase){ProbePhase.REACHABLE->ConfigGreen;ProbePhase.FAILED->ConfigErrorColor;else->ConfigMuted})
-                    Text(if(embeddingEditor)"点击测试才向 /embeddings 发送一句合成文本，可能按服务商规则计费；不会发送聊天或记忆。" else "测试连接仅检查目录/认证，不验证聊天或向量生成。目录含不同类型，保存后请为配置选择对应用途。",Modifier.padding(start=4.dp,top=8.dp),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
+                    Text(if(embeddingEditor)"点击测试才向 /embeddings 发送一句合成文本，可能按服务商规则计费；不会发送聊天或记忆。" else if(saveForPurpose==ModelPurpose.CHAT)"连接测试仅检查目录/认证，不验证聊天生成。聊天配置保存后会直接用于全局聊天；其他用途选择不变。" else "测试连接仅检查目录/认证，不验证聊天或向量生成。目录含不同类型，保存后请为配置选择对应用途。",Modifier.padding(start=4.dp,top=8.dp),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
                 }
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
                     Row(Modifier.fillMaxWidth().heightIn(min=64.dp).clickable{advanced=!advanced}.testTag("config-advanced").padding(horizontal=18.dp,vertical=14.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("高级设置",style=MaterialTheme.typography.labelLarge);Text("服务地址与兼容方式",style=MaterialTheme.typography.bodySmall,color=ConfigMuted,modifier=Modifier.padding(top=4.dp))};ControlIcon(if(advanced)"up" else "chevron")}
@@ -239,7 +242,7 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
                         Text("切到后台再回来保留本页未保存草稿，密钥仅留在进程内；返回退出或进程被回收后不保证恢复。改变地址或服务商需重新输入密钥。显示密钥时禁止系统截图。",Modifier.padding(bottom=16.dp),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
                     }
                 }
-                original?.let{saved->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){TextButton(onClick={state.makeDefault(saved)},enabled=!state.busy&&state.defaultId!=saved.id,modifier=Modifier.testTag("config-default-${saved.id}")){Text(if(state.defaultId==saved.id)"已为默认" else "设为默认",style=MaterialTheme.typography.bodySmall)};TextButton(onClick={deleting=saved},enabled=!state.busy,modifier=Modifier.testTag("config-delete-${saved.id}")){Text("删除配置",style=MaterialTheme.typography.bodySmall,color=ConfigErrorColor)}}}
+                if(saveForPurpose==null)original?.let{saved->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){TextButton(onClick={state.makeDefault(saved)},enabled=!state.busy&&state.defaultId!=saved.id,modifier=Modifier.testTag("config-default-${saved.id}")){Text(if(state.defaultId==saved.id)"已为默认" else "设为默认",style=MaterialTheme.typography.bodySmall)};TextButton(onClick={deleting=saved},enabled=!state.busy,modifier=Modifier.testTag("config-delete-${saved.id}")){Text("删除配置",style=MaterialTheme.typography.bodySmall,color=ConfigErrorColor)}}}
                 Spacer(Modifier.height(12.dp))
             }
         }
