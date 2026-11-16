@@ -241,13 +241,25 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     }
     fun saveProfile(name:String){if(name.isBlank()){error="昵称不能为空。";return};savePersona(persona.copy(name=name))}
     fun savePersona(value:UserPersona){if(!value.valid()){error="请检查名字、称呼及自我介绍的长度；名字和称呼不要换行。";return};save{store.savePersona(value);persona=store.persona()}}
-    fun createCompanion(name:String,definition:String,expression:String,opening:String,extra:String=""){
+    internal var savedCreationId by mutableStateOf<String?>(null);private set
+    fun createCompanion(name:String,definition:String,expression:String,opening:String,extra:String="",initialRelationship:String="",creationId:String?=null){
         if(busy)return
+        val id=creationId?:UUID.randomUUID().toString()
+        if(savedCreationId==id){save{openSavedCompanion(id)};return}
         if(name.isBlank()||definition.isBlank()){error="请填写名字和角色设定。";return}
-        if(name.trim().length>30||listOf(definition,expression,opening,extra).any{it.length>8000}){error="请检查角色资料长度。";return}
+        if(name.trim().length>30||initialRelationship.length>4000||listOf(definition,expression,opening,extra).any{it.length>8000}){error="请检查角色资料长度。";return}
         val body=definition.trim();val summary=body.take(500).let{if(it.lastOrNull()?.isHighSurrogate()==true)it.dropLast(1)else it}
-        val f=Friend(UUID.randomUUID().toString(),name.trim(),summary,"")
-        save{store.addConfigured(f,RolePrompts(expression=expression,extra=extra,characterDefinition=body,opening=opening));reload();open("chat",f.id)}
+        val f=Friend(id,name.trim(),summary,"")
+        save{
+            if(store.friends().none{it.id==f.id})store.addConfigured(f,RolePrompts(expression=expression,extra=extra,characterDefinition=body,opening=opening,initialRelationship=initialRelationship.trim()))
+            savedCreationId=f.id
+            openSavedCompanion(f.id)
+        }
+    }
+    private suspend fun openSavedCompanion(id:String){
+        try{reload();check(friends.any{it.id==id});open("chat",id);savedCreationId=null}
+        catch(e:CancellationException){throw e}
+        catch(e:Exception){error="角色已保存，打开未完成，请重试。"}
     }
     fun saveCharacter(id:String,name:String,definition:String,expression:String,opening:String,extra:String,initialRelationship:String){
         if(name.isBlank()||definition.isBlank()){error="请填写名字和角色设定。";return}

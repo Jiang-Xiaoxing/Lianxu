@@ -103,7 +103,7 @@ class FirstEncounterUiTest {
     @Test fun createCancelAndRecreationReturnToTheSettledChoice(){
         enter();ui.onNodeWithTag("first-encounter-create").performClick()
         ui.onNodeWithTag("friend-name").assertIsDisplayed();shot("create-existing-page")
-        ui.activityRule.scenario.recreate();back()
+        ui.activityRule.scenario.recreate();ui.onNodeWithTag("create-back").assertIsEnabled();back()
         ui.onNodeWithTag("first-encounter-create").assertIsDisplayed()
         ui.onNodeWithText("轻触，开始相遇").assertDoesNotExist();assertTrue(app.friends.isEmpty());shot("returned-from-create")
     }
@@ -125,7 +125,11 @@ class FirstEncounterUiTest {
     @Test fun creatingTheFirstRoleLeavesTheDoorAndDoesNotRequestAModel(){
         enter();ui.onNodeWithTag("first-encounter-create").performClick()
         ui.onNodeWithTag("friend-name").performTextInput("门内合成角色")
+        ui.onNodeWithTag("create-next").performScrollTo().performClick()
         ui.onNodeWithTag("friend-bio").performTextInput("仅用于首次引导测试，不是真实用户资料。")
+        ui.onNodeWithTag("create-next").performScrollTo().performClick()
+        ui.onNodeWithTag("create-skip-relationship").performScrollTo().performClick()
+        ui.onNodeWithTag("create-next").performScrollTo().performClick()
         ui.activityRule.scenario.onActivity{activity->
             val input=activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
             input.hideSoftInputFromWindow(activity.window.decorView.windowToken,0)
