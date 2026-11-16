@@ -42,7 +42,7 @@ private fun providerName(p:ProviderPreset)=p.label.substringBefore(" · ")
 private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
 
 @Composable fun ModelConfigScreen(onBack:()->Unit,state:ModelConfigState=viewModel(),saveForPurpose:ModelPurpose?=null) {
-    LaunchedEffect(Unit){state.refresh()}
+    LaunchedEffect(state.vaultVersion){state.refresh()}
     var screen by remember {mutableStateOf("overview")}
     var overviewTab by rememberSaveable {mutableIntStateOf(0)}
     val servicesScroll=rememberLazyListState()
@@ -53,6 +53,7 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
     var showUnknownModels by remember {mutableStateOf(false)}
     var providerReturn by remember {mutableStateOf("overview")}
     var original by remember {mutableStateOf<ModelConfig?>(null)}
+    var originalRevision by remember {mutableStateOf<String?>(null)}
     var draftId by remember {mutableStateOf(UUID.randomUUID().toString())}
     var name by remember {mutableStateOf("")};var provider by remember {mutableStateOf("silicon-cn")}
     var base by remember {mutableStateOf("")};var model by remember {mutableStateOf("")}
@@ -76,9 +77,9 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
         key="";reveal=false
         if(screen=="edit")screen="overview" else onBack()
     }
-    fun add(embedding:Boolean=false){if(state.saving||saveForPurpose==ModelPurpose.CHAT&&embedding)return;prefilledKey="";keyDraft.invalidate();embeddingEditor=embedding;original=null;draftId=UUID.randomUUID().toString();name="";key="";reveal=false;model="";budgets=ModelBudgetDraft();query="";allProviders=false;providerReturn="overview";state.clearResult();screen="providers"}
+    fun add(embedding:Boolean=false){if(state.saving||saveForPurpose==ModelPurpose.CHAT&&embedding)return;prefilledKey="";keyDraft.invalidate();embeddingEditor=embedding;original=null;originalRevision=null;draftId=UUID.randomUUID().toString();name="";key="";reveal=false;model="";budgets=ModelBudgetDraft();query="";allProviders=false;providerReturn="overview";state.clearResult();screen="providers"}
     fun sharedWithOtherPurposes(id:String)=saveForPurpose==ModelPurpose.CHAT&&state.purposes.any{(purpose,value)->purpose!=ModelPurpose.CHAT&&value==id}
-    fun edit(config:ModelConfig){if(sharedWithOtherPurposes(config.id))return;prefilledKey="";embeddingEditor=state.purposes[ModelPurpose.EMBEDDING]==config.id;original=config;draftId=config.id;name=config.name;provider=config.providerId;base=config.baseUrl;model=config.modelId;budgets=ModelBudgetDraft.existing(config);key="";reveal=false;advanced=false;state.clearResult();screen="edit"
+    fun edit(config:ModelConfig){if(sharedWithOtherPurposes(config.id))return;prefilledKey="";embeddingEditor=state.purposes[ModelPurpose.EMBEDDING]==config.id;original=config;originalRevision=state.configRevisions[config.id];draftId=config.id;name=config.name;provider=config.providerId;base=config.baseUrl;model=config.modelId;budgets=ModelBudgetDraft.existing(config);key="";reveal=false;advanced=false;state.clearResult();screen="edit"
         keyDraft.invalidate()
         val ticket=keyDraft.ticket()
         editorScope.launch {
@@ -101,7 +102,7 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
             title=when(screen){"providers"->if(embeddingEditor)"选择向量服务商" else "选择聊天服务商";"edit"->if(embeddingEditor)"向量模型配置" else if(original==null)"添加 ${providerName(preset)}" else "编辑配置";else->"大模型配置"},
             onBack={back()},backTag="config-back",enabled=!state.saving,
             extra={when(screen){
-                "edit"->SaveAction(!state.busy&&!sharedWithOtherPurposes(draftId)){reveal=false;if(saveForPurpose==ModelPurpose.CHAT)state.saveChatFromCreation(draft(),enteredKey(),original){key="";screen="overview"}else state.save(draft(),enteredKey(),if(embeddingEditor)ModelPurpose.EMBEDDING else null,original){key="";screen="overview"}}
+                "edit"->SaveAction(!state.busy&&!sharedWithOtherPurposes(draftId)){reveal=false;if(saveForPurpose==ModelPurpose.CHAT)state.saveChatFromCreation(draft(),enteredKey(),original,originalRevision){key="";screen="overview"}else state.save(draft(),enteredKey(),if(embeddingEditor)ModelPurpose.EMBEDDING else null,original,originalRevision){key="";screen="overview"}}
                 else->Spacer(Modifier.width(48.dp))
             }}
         )

@@ -7,7 +7,7 @@ import com.google.gson.stream.JsonToken
 import java.io.StringReader
 import kotlinx.coroutines.*
 
-internal class RolePolishResult(val version:Long,val creationId:String,val source:RoleCreationText,val value:RoleCreationText)
+internal class RolePolishResult(val version:Long,val creationId:String,val source:RoleCreationText,val value:RoleCreationText,val modelStamp:String)
 private class RolePolishFailure(message:String):Exception(message)
 
 /** Only current form fields and the existing global chat credential; never chat history. */
@@ -46,7 +46,13 @@ internal class RoleCreationPolish(
         version++;job?.cancel();job=null;running=false;result=null
         message=if(wasRunning)"已取消润色，原文仍可使用。"else""
     }
-    fun consume(value:RolePolishResult){if(result===value)result=null}
+    /** A short final check and handoff share the same gate as model writes; no provider call under it. */
+    fun consumeCurrent(value:RolePolishResult,apply:()->Unit):Boolean = AppMutationGate.read {
+        if(result!==value)return@read false
+        val valid=try{current(value.modelStamp)}catch(_:Exception){result=null;readFailed();return@read false}
+        if(!valid){result=null;refreshModel();message="全局聊天模型已变化，请重新润色；原文已保留。";return@read false}
+        apply();result=null;true
+    }
     fun start(draft:RoleCreationDraft){
         if(running)return
         val displayed=displayedStamp
@@ -74,7 +80,7 @@ internal class RoleCreationPolish(
             }
             if(listOf(value.name,value.definition,value.relationship,value.expression,value.opening,value.extra).any{it.contains(model.key)})
                 throw RolePolishFailure("润色结果含不应展示的配置内容，未采用；可使用原文继续。")
-            if(ticket==version)result=RolePolishResult(ticket,draft.creationId,source,value)
+            if(ticket==version)result=RolePolishResult(ticket,draft.creationId,source,value,model.stamp)
         }catch(_:TimeoutCancellationException){if(ticket==version)message="润色超时，原文已保留，可重试或直接创建。"}
         catch(e:CancellationException){throw e}
         catch(e:RolePolishFailure){if(ticket==version)message=e.message.orEmpty()}

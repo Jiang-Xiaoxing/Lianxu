@@ -126,6 +126,9 @@ class ModelVault(context:Context,private val namespace:String="model-configs",pr
     }
     fun defaultId():String = purposeId(ModelPurpose.CHAT)
     fun setDefault(id:String) {setPurpose(ModelPurpose.CHAT,id)}
+    internal fun recordStamp(id:String):String = AppMutationGate.read {
+        if(!file(id).exists())"" else stableDigest(java.util.Base64.getEncoder().encodeToString(AtomicFile(file(id)).readFully()))
+    }
     fun selectionStamp(purpose:ModelPurpose):String = AppMutationGate.read {
         val selected=purposeValues();val id=selected.optString(purpose.key)
         if(id.isEmpty()||!file(id).exists()) "" else stableDigest(id+":"+selected.optString(purpose.key+".revision")+":"+stableDigest(java.util.Base64.getEncoder().encodeToString(AtomicFile(file(id)).readFully())))

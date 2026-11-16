@@ -113,9 +113,7 @@ import kotlinx.coroutines.flow.first
         snapshotFlow{!locked()&&!exitDialog}.first{it}
         val active=currentDraft
         if(polisher.result===value&&active.step==RoleCreationStep.MODEL&&active.creationId==value.creationId&&active.text==value.source){
-            currentOnDraft(active.copy(polished=value.value,usePolished=true))
-            polisher.consume(value)
-            moveTo(RoleCreationStep.CONFIRM)
+            if(polisher.consumeCurrent(value){currentOnDraft(active.copy(polished=value.value,usePolished=true))})moveTo(RoleCreationStep.CONFIRM)
         }
     }
     BackHandler{previous()}

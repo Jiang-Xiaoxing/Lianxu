@@ -1,8 +1,5 @@
 package app.lianxu.independent
 
-import android.graphics.Bitmap
-import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
@@ -42,14 +39,18 @@ class LocalTlsMock(private val status:Int=200,private val body:String="{\"data\"
 
 @RunWith(AndroidJUnit4::class)
 class ModelConfigTest {
-    @get:Rule val ui=createAndroidComposeRule<MainActivity>()
-    private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
-    private fun screenshot(name:String) {
-        ui.waitForIdle();android.os.SystemClock.sleep(500)
-        val dir=File(context.getExternalFilesDir(null),"evidence-model-config").apply{mkdirs()}
-        val image=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
-        File(dir,"$name.png").outputStream().use {image.compress(Bitmap.CompressFormat.PNG,100,it)}
+    @Test fun customBaseNeverOpensThePresetsAbsoluteCatalog():Unit=runBlocking {
+        val opened=mutableListOf<String>()
+        val client=HttpsModelClient(HttpsConnectionFactory{url->opened+=url.toString();throw java.io.IOException("Synthetic connection blocked before credentials")})
+        val preset=ProviderPresets.get("opencode-go")
+        for(base in listOf("https://different.example.invalid/v1",preset.base+"/other-tenant")){
+            val result=client.request(ModelConfig("catalog-scope","合成目录范围","opencode-go",base,"synthetic"),"synthetic-catalog-scope-not-real",true)
+            assertEquals(ConfigError.UNSUPPORTED,(result as ConfigResult.Failure).error);assertTrue(opened.isEmpty())
+        }
+        client.request(ModelConfig("catalog-scope","合成目录范围","opencode-go",preset.base,"synthetic"),"synthetic-catalog-scope-not-real",true)
+        assertEquals(listOf(preset.modelsUrl),opened)
     }
+    private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
     @Test fun vaultEncryptionEditDefaultDeleteAndReopen() {
         val namespace="test-vault-${System.nanoTime()}";val a=ModelConfig("a","合成A","custom","https://example.invalid/v1","synthetic-model")
         var vault=ModelVault(context,namespace);vault.save(a,"synthetic-key-only");vault.save(a.copy(id="b",name="合成B"),"synthetic-b")

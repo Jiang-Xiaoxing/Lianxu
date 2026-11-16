@@ -4,6 +4,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ModelDirectoryTest {
+ @Test fun changedBaseCannotSendItsCredentialToThePresetCatalog(){
+  val preset=ProviderPresets.get("opencode-go")
+  assertNull(ModelDirectoryRules.url(config("opencode-go","https://different.example.invalid/v1"),preset,true))
+  assertNull(ModelDirectoryRules.url(config("opencode-go",preset.base+"/other-tenant"),preset,true))
+  assertEquals(preset.modelsUrl,ModelDirectoryRules.url(config("opencode-go",preset.base+"/"),preset,true))
+ }
  private fun config(p:String,base:String=ProviderPresets.get(p).base)=ModelConfig("c","synthetic",p,base,"synthetic-model")
  @Test fun goDirectoryUsesTheDocumentedAbsoluteAddress(){
   val go=ProviderPresets.get("opencode-go")

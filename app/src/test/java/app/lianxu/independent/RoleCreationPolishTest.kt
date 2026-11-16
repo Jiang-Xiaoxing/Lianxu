@@ -9,6 +9,15 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 class RoleCreationPolishTest {
+    @Test fun aModelChangedAfterCompletionCannotBeAppliedToTheDraft()=runBlocking{
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);val valid=AtomicBoolean(true)
+        try{
+            val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest)=TextChatResult.Success(json())}
+            val state=RoleCreationPolish(scope,client,{credential()},{valid.get()});prepare(state);state.start(draft());settled(state)
+            val result=requireNotNull(state.result);valid.set(false);var applied=false
+            assertFalse(state.consumeCurrent(result){applied=true});assertFalse(applied);assertNull(state.result);assertTrue(state.message.contains("已变化"))
+        }finally{scope.cancel()}
+    }
     private val text=RoleCreationText("合成名字","喜欢看书； 话不多。","旧识","用短句。","","保持原设定。")
     private val config=ModelConfig("synthetic-chat","合成聊天模型","custom","https://example.invalid/v1","synthetic-model",64000,2048)
     private fun json(value:RoleCreationText=text)=Gson().toJson(value)
