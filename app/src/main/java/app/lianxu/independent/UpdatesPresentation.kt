@@ -8,6 +8,15 @@ internal object UpdatesPresentation {
         "更新说明区分体验改动与正式记录，历史版本可展开。"
     )
     fun experienceFor(installedCode:Long)=experienceChanges.takeIf{installedCode==60L}
+    /** Startup highlights only; the updates page keeps the complete facts and limitations. */
+    fun noticeSummary(note:LocalReleaseNote):List<String> = when(note.code){
+        61L->listOf(
+            "回想和整理结果可展开查看，修复更正后新记忆未保存的问题。",
+            "模型设置、备份与诊断改为分页，新增本人头像。",
+            "聊天输入更紧凑，思考入口和胶囊状态更清晰。"
+        )
+        else->summary(note)
+    }
     fun summary(note:LocalReleaseNote):List<String> = when(note.code){
         61L->listOf(
             "回想与整理结果能展开查看，保留当时内容和来源；修复更正后新记忆没有提交。",
