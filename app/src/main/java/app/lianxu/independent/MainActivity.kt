@@ -49,7 +49,10 @@ class MainActivity:ComponentActivity(){
     override fun onNewIntent(intent:android.content.Intent){super.onNewIntent(intent);notificationIntent=consumeNotification(intent)}
 }
 @Composable fun Lianxu(vm:AppState=viewModel()){
-    LocalUpdateNotice(vm)
+    var encounter by rememberSaveable(stateSaver=FirstEncounterSaver){mutableStateOf(FirstEncounterState())}
+    val encounterHome=encounter.shouldShow(vm.ready,vm.friends.isNotEmpty(),vm.page)
+    LaunchedEffect(vm.page){if(vm.page=="home")encounter=encounter.returned()}
+    if(vm.ready&&vm.friends.isNotEmpty())LocalUpdateNotice(vm)
     val lifecycle=LocalLifecycleOwner.current.lifecycle
     val chatState=rememberSaveableStateHolder()
     var rememberedChatIds by rememberSaveable(stateSaver=listSaver<List<String>,String>(save={it},restore={it.toList()})){mutableStateOf(emptyList<String>())}
@@ -62,9 +65,13 @@ class MainActivity:ComponentActivity(){
     // Role generation belongs to the ViewModel; backgrounding only pauses its animation.
     DisposableEffect(lifecycle){val observer=LifecycleEventObserver{_,event->if(event==Lifecycle.Event.ON_START)vm.foreground()};lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}}
     BackHandler(vm.page!="home"){vm.back()}
-    CompositionLocalProvider(LocalRoleAvatars provides vm.roleAvatars){Surface(Modifier.fillMaxSize(),color=Chrome){Column(Modifier.safeDrawingPadding().imePadding()){
+    CompositionLocalProvider(LocalRoleAvatars provides vm.roleAvatars){Surface(Modifier.fillMaxSize(),color=if(encounterHome)FirstEncounterPaper else Chrome){Column(Modifier.safeDrawingPadding().imePadding()){
         if(vm.error.isNotEmpty())Text(vm.error,Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer).padding(12.dp),style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onErrorContainer)
         if(!vm.ready)Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()}
+        else if(encounterHome)FirstEncounterDoor(encounter,{encounter=it},onChoose={target->
+            val choice=encounter.choose(target);encounter=choice.state
+            choice.navigateTo?.let{vm.open(it.page)}
+        })
         else when(vm.page){
             "home"->Home(vm)
             "chat"->chatState.SaveableStateProvider("chat-${vm.activeId}"){Chat(vm)}
