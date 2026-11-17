@@ -162,9 +162,13 @@ class InteriorPagesUiTest {
     @Test fun emptyStatesStayEmptyAfterReopening(){
         runBlocking{vm.friends.toList().forEach{friend->vm.deleteRole(vm.previewRoleDeletion(friend.id),true)}}
         ui.waitUntil(10000){vm.friends.isEmpty()}
-        ui.runOnIdle{vm.home();vm.tab=0};ui.onNodeWithTag("roles-empty-chat").assertIsDisplayed();shot("34-empty-chat")
-        ui.onNodeWithTag("tab-1").performClick();ui.onNodeWithTag("roles-empty-contacts").assertIsDisplayed();shot("35-empty-contacts")
-        ui.onNodeWithTag("tab-0").performClick();assertTrue(vm.friends.isEmpty())
+        // The approved first-encounter flow replaces empty home tabs when no role remains.
+        ui.runOnIdle{vm.home();vm.tab=0};ui.onNodeWithTag("first-encounter").assertIsDisplayed();shot("34-empty-encounter")
+        ui.onNodeWithTag("tab-1").assertDoesNotExist()
+        ui.activityRule.scenario.recreate()
+        ui.activityRule.scenario.onActivity{vm=ViewModelProvider(it)[AppState::class.java]}
+        ui.waitUntil(10000){vm.ready};ui.onNodeWithTag("first-encounter").assertIsDisplayed();shot("35-empty-encounter-reopened")
+        assertTrue(vm.friends.isEmpty())
         assertEquals(0,calls.get())
     }
 }
