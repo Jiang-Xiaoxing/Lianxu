@@ -142,7 +142,6 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
                                 Text(ModelStatusText.calls(call),Modifier.testTag("config-calls-${config.id}"),style=MaterialTheme.typography.bodySmall,color=if(call?.ok==false)ConfigErrorColor else ConfigMuted)
                             }
                             if(config.id==state.defaultId)Text("默认",Modifier.padding(horizontal=8.dp).clip(RoundedCornerShape(8.dp)).background(SelectedBackground).padding(horizontal=8.dp,vertical=4.dp),color=ConfigGreen,style=MaterialTheme.typography.bodySmall)
-                            ControlIcon("chevron")
                         }
                         if(index<state.configs.lastIndex)HorizontalDivider(Modifier.padding(start=72.dp,end=18.dp),color=ConfigLine)
                     }
@@ -167,7 +166,7 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
                 if(groups.isEmpty())item{Text("没有找到，可选择自定义兼容服务。",Modifier.padding(20.dp),style=MaterialTheme.typography.bodyMedium,color=ConfigMuted);TextButton({choose(ProviderPresets.get("custom"))}){Text("手动填写")}}
                 items(groups,key={it.name}){group->val p=group.regions.first()
                     Row(Modifier.fillMaxWidth().clickable{if(group.regions.size==1)choose(p) else regionGroup=group}.testTag("provider-${p.id}").padding(horizontal=18.dp,vertical=14.dp),verticalAlignment=Alignment.CenterVertically){
-                        ProviderMark(p);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(group.name,style=MaterialTheme.typography.titleSmall);val detail=if(p.id=="custom")"手填地址与模型 ID" else group.regions.map{regionName(it)}.filter{it.isNotBlank()}.joinToString(" / ");if(detail.isNotBlank())Text(detail,style=MaterialTheme.typography.labelSmall,color=ConfigMuted,modifier=Modifier.padding(top=3.dp))};ControlIcon("chevron")
+                        ProviderMark(p);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(group.name,style=MaterialTheme.typography.titleSmall);val detail=if(p.id=="custom")"手填地址与模型 ID" else group.regions.map{regionName(it)}.filter{it.isNotBlank()}.joinToString(" / ");if(detail.isNotBlank())Text(detail,style=MaterialTheme.typography.labelSmall,color=ConfigMuted,modifier=Modifier.padding(top=3.dp))}
                     };HorizontalDivider(Modifier.padding(start=72.dp,end=18.dp),color=ConfigLine)
                 }
                 if(!allProviders&&query.isBlank())item{TextButton({allProviders=true},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).testTag("providers-all")){Text("全部服务")}}

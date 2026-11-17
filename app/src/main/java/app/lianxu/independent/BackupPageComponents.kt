@@ -39,7 +39,6 @@ import androidx.compose.ui.unit.dp
             Text(title,style=MaterialTheme.typography.titleSmall,color=Ink)
             Text(description,style=MaterialTheme.typography.bodySmall,color=Muted)
         }
-        ControlIcon("chevron")
     }
 }
 

@@ -40,7 +40,6 @@ import androidx.compose.ui.unit.dp
 
                         }
                         IconButton(onClick={help=purpose},modifier=Modifier.size(UiSpace.action).testTag("purpose-help-${purpose.key}").semantics{contentDescription="${purpose.title}说明"}){ControlIcon("info")}
-                        ControlIcon("chevron")
                     }
                     DropdownMenu(menu,{menu=false}){
                         DropdownMenuItem(text={Text("不选择")},onClick={menu=false;state.selectPurpose(purpose,"")},modifier=Modifier.testTag("purpose-clear-${purpose.key}"))

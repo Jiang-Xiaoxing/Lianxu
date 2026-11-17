@@ -53,10 +53,10 @@ internal fun taskDescription(s:ProcessingRepository.TaskStatus)=when(s.state){
         AppTopBar("记忆",{vm.back()})
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
             Text("选择角色，查看记住的内容、原话来源与待确认记忆。",style=MaterialTheme.typography.bodyMedium,color=Muted)
-            Card(onClick={vm.open("settings-memory")},modifier=Modifier.fillMaxWidth().testTag("settings-memory-rules")){Row(Modifier.fillMaxWidth().padding(18.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("记忆规则",style=MaterialTheme.typography.titleMedium);Text("保留与总结数量 · 主动回查 · 当场写记忆",style=MaterialTheme.typography.bodySmall,color=Muted)};ControlIcon("chevron")}}
+            Card(onClick={vm.open("settings-memory")},modifier=Modifier.fillMaxWidth().testTag("settings-memory-rules")){Row(Modifier.fillMaxWidth().padding(18.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("记忆规则",style=MaterialTheme.typography.titleMedium);Text("保留与总结数量 · 主动回查 · 当场写记忆",style=MaterialTheme.typography.bodySmall,color=Muted)}}}
             if(vm.friends.isEmpty())Text("先创建一位角色，再留下你们的记忆。",color=Muted)
             Column(Modifier.fillMaxWidth().background(Paper,androidx.compose.foundation.shape.RoundedCornerShape(UiSpace.radius))){vm.friends.forEachIndexed{index,friend->
-                Row(Modifier.fillMaxWidth().clickable{vm.open("processing-role",friend.id)}.padding(horizontal=18.dp,vertical=16.dp).testTag("processing-friend-${friend.id}"),verticalAlignment=Alignment.CenterVertically){Avatar(friend);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(friend.name,style=MaterialTheme.typography.titleSmall);Text("查看记忆",style=MaterialTheme.typography.bodySmall,color=Muted)};ControlIcon("chevron")}
+                Row(Modifier.fillMaxWidth().clickable{vm.open("processing-role",friend.id)}.padding(horizontal=18.dp,vertical=16.dp).testTag("processing-friend-${friend.id}"),verticalAlignment=Alignment.CenterVertically){Avatar(friend);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(friend.name,style=MaterialTheme.typography.titleSmall);Text("查看记忆",style=MaterialTheme.typography.bodySmall,color=Muted)}}
                 if(index<vm.friends.lastIndex)HorizontalDivider(Modifier.padding(start=80.dp,end=18.dp),color=Line)
             }}
         }

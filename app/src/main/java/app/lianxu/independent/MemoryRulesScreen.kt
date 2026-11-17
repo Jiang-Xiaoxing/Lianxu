@@ -50,7 +50,6 @@ import kotlinx.coroutines.launch
             Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clickable(enabled=ready&&!busy){reviewDraft=reviewRounds.toString();reviewSheet=true}.testTag("rules-review-open"),verticalAlignment=Alignment.CenterVertically){
                 Text("心情与关系回顾",Modifier.weight(1f),style=MaterialTheme.typography.bodyLarge)
                 Text("每 $reviewRounds 轮",color=Muted,style=MaterialTheme.typography.bodyMedium)
-                Text("›",Modifier.padding(start=12.dp),color=Muted,style=MaterialTheme.typography.titleLarge)
             }
             HorizontalDivider(color=Line)
             Row(verticalAlignment=Alignment.CenterVertically){Text("主动回查");IconButton({help="主动回查"},Modifier.size(48.dp).testTag("rules-recall-info").semantics{contentDescription="主动回查说明"}){Text("ⓘ",color=Muted)};Spacer(Modifier.weight(1f));Switch(recall,{recall=it},enabled=ready&&!busy,modifier=Modifier.testTag("rules-recall-enabled"))}
