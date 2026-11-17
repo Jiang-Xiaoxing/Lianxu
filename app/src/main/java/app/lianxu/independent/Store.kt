@@ -8,7 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** Own app-private database. Primary key on friend is also the unique conversation key. */
-class Store(context: Context, name: String = AppServices.databaseName) : SQLiteOpenHelper(context, name, null, 17) {
+class Store(context: Context, name: String = AppServices.databaseName) : SQLiteOpenHelper(context, name, null, 18) {
     internal val applicationContext=context.applicationContext
     internal val memorySummary=MemorySummaryGuard()
     /**
@@ -56,7 +56,7 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
         // Databases created by an earlier build of this version already have the table but not the column.
         ChatMemoryPills.createSchema(db)
         if(!hasColumn(db,"memory_operations","saved"))db.execSQL("ALTER TABLE memory_operations ADD COLUMN saved INTEGER NOT NULL DEFAULT 0")
-    };if(oldVersion<16)ContactFailures.migrate(db);if(oldVersion<17)ChatImages.create(db) }
+    };if(oldVersion<16)ContactFailures.migrate(db);if(oldVersion<17)ChatImages.create(db);if(oldVersion<18)ChatImages.migrateOriginals(db) }
     private fun hasColumn(db:SQLiteDatabase,table:String,column:String)=column in columns(db,table)
     private fun columns(db:SQLiteDatabase,table:String)=db.rawQuery("PRAGMA table_info($table)",null).use{c->buildList{while(c.moveToNext())add(c.getString(1))}}
     private fun createReasoningSchema(db:SQLiteDatabase){

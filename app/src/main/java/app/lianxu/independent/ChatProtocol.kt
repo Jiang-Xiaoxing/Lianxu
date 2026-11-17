@@ -23,7 +23,8 @@ data class TextChatRequest(val messages:List<WireMessage>,val outputLimit:Int=20
 enum class ChatFailure(val display:String) {
     MISSING_CONFIG("请先在设置的大模型配置中选择聊天模型。"),
     MISSING_VISION_MODEL("辅助看图已开启，请先选择辅助看图模型并保存密钥。"),
-    IMAGE_LIMIT("本轮图片超过发送上限，请先整理较早的图片对话或选择较小图片后重试；没有自动删图或换模型。"),
+    IMAGE_LIMIT("图片超过本机单图、完整请求或切片处理上限；原消息保留，没有自动降质、删图或换模型。请核对错误后手动重试，已发出的批次可能再次计费。"),
+    IMAGE_PROVIDER_LIMIT("服务商返回HTTP 413，拒绝了本次请求体大小；没有自动压图、删图、分批重发或换服务。请核对服务商限制后手动重试，已发批次可能计费。"),
     GO_ENDPOINT_UNVERIFIED(ProviderRequestMetadata.GO_UNVERIFIED_NOTICE),
     INVALID_CONFIG("模型配置不完整，请检查服务地址、模型和密钥。"),
     UNAUTHORIZED("认证失败，请检查服务商、地域和 API Key。"),

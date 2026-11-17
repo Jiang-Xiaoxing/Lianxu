@@ -10,7 +10,7 @@ internal object BackupArchive {
     const val MAX_BYTES=64*1024*1024
     const val MAX_EXPANDED=48*1024*1024
     const val MAX_JSON=8*1024*1024
-    const val MAX_FILE=16*1024*1024
+    const val MAX_FILE=ImagePolicy.INPUT_LIMIT
     private const val MAX_MANIFEST=1024*1024
     private val assetPath=Regex("assets/[0-9]+\\.bin")
     data class Package(val root:JsonObject,val files:Map<String,ByteArray>,val digest:String,val legacy:RoleArchive.Package?=null){

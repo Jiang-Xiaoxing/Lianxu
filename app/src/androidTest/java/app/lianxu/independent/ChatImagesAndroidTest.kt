@@ -53,10 +53,9 @@ class ChatImagesAndroidTest {
     }
     @Test fun commonFormatsLargeCorruptAndInputBudgetAreBounded(){
         for(format in listOf(Bitmap.CompressFormat.PNG,Bitmap.CompressFormat.JPEG,Bitmap.CompressFormat.WEBP_LOSSLESS)){
-            val output=ChatImages.prepare(pixels(format).inputStream());assertEquals("image/jpeg",output.mime);assertEquals(320,output.width);assertTrue(output.bytes.size<=ChatImages.MAX_IMAGE)
-            assertArrayEquals(output.bytes,UserAvatarData.withoutMetadata(output.bytes))
+            val original=pixels(format);val output=ChatImages.prepare(original.inputStream());assertEquals(320,output.width);assertArrayEquals(original,output.bytes)
         }
-        val big=ChatImages.prepare(pixels(width=4000,height=3000).inputStream());assertTrue(big.width<=1600&&big.height<=1600)
+        val original=pixels(width=4000,height=3000);val big=ChatImages.prepare(original.inputStream());assertEquals(4000,big.width);assertEquals(3000,big.height);assertArrayEquals(original,big.bytes)
         assertTrue(runCatching{ChatImages.prepare(byteArrayOf(1,2,3).inputStream())}.isFailure)
         val oversized=object:java.io.InputStream(){var n=0;override fun read():Int=if(n++<=ChatImages.MAX_INPUT)1 else -1}
         assertTrue(runCatching{ChatImages.prepare(oversized)}.isFailure)
@@ -137,9 +136,11 @@ class ChatImagesAndroidTest {
         }
     }
     @Test fun actualHttpErrorsKeepStatusRedactPixelsAndNeverRetryOrFallback():Unit=runBlocking{
-        for(status in listOf(401,402,403,413,415,422,429,500,503,302))TextTlsMock(status,response="{\"error\":\"synthetic image rejected data:image/jpeg;base64,PRIVATEPIXELS\"}").use{server->
+        for(status in listOf(400,401,402,403,413,415,422,429,500,503,302))TextTlsMock(status,response="{\"error\":\"synthetic image rejected data:image/jpeg;base64,PRIVATEPIXELS\"}").use{server->
             val c=config("chat",server.base);val result=server.client().complete(c,"synthetic-key-only",TextChatRequest(listOf(WireMessage("user","",images=listOf(WireImage("image/jpeg",image().bytes)))))) as TextChatResult.Failure
             assertEquals(status,result.httpStatus);assertEquals(1,server.calls.get());assertFalse(result.detail.contains("PRIVATEPIXELS"));assertTrue(result.detail.contains(status.toString()))
+            if(status==400)assertEquals(ChatFailure.REJECTED,result.reason)
+            if(status==413)assertEquals(ChatFailure.IMAGE_PROVIDER_LIMIT,result.reason)
         }
     }
     @Test fun missingAuxiliaryAndAuxiliaryFailureNeverCallChat():Unit=runBlocking{

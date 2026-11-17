@@ -13,7 +13,11 @@ data class SourceDialogue(val requestId:String,val source:SourceRef,val user:Mes
     fun json()=JSONObject().put("request",requestId).put("character",source.characterId).put("turn",source.turnId).put("version",source.version).put("user_id",user.id).put("assistant_id",assistant?.id?:JSONObject.NULL).put("user",user.text).put("assistant",assistant?.text?:JSONObject.NULL).put("user_at",user.created).put("assistant_at",assistant?.created?:JSONObject.NULL).put("zone",zone).put("image_origin",user.image?.let{JSONObject(com.google.gson.Gson().toJson(it))}?:JSONObject.NULL).put("image_observations",JSONArray().apply{imageObservations.forEach{put(it.json())}})
     companion object {fun from(j:JSONObject):SourceDialogue {
         val friend=j.getString("character");val ref=SourceRef(friend,j.getLong("turn"),j.getLong("version"))
-        return SourceDialogue(j.getString("request"),ref,Message(j.getLong("user_id"),friend,j.getString("user"),true,j.getLong("user_at"),image=j.optJSONObject("image_origin")?.let{com.google.gson.Gson().fromJson(it.toString(),ChatImageRef::class.java)}),if(j.isNull("assistant_id"))null else Message(j.getLong("assistant_id"),friend,j.getString("assistant"),false,j.getLong("assistant_at")),j.getString("zone"),(j.optJSONArray("image_observations")?:JSONArray()).let{a->(0 until a.length()).map{ImageObservation.from(a.getJSONObject(it))}})
+        val image=j.optJSONObject("image_origin")?.let{raw->
+            val kind=raw.optString("storageKind","legacy-normalized");require(kind in setOf("original","legacy-normalized"))
+            com.google.gson.Gson().fromJson(raw.toString(),ChatImageRef::class.java).copy(storageKind=kind)
+        }
+        return SourceDialogue(j.getString("request"),ref,Message(j.getLong("user_id"),friend,j.getString("user"),true,j.getLong("user_at"),image=image),if(j.isNull("assistant_id"))null else Message(j.getLong("assistant_id"),friend,j.getString("assistant"),false,j.getLong("assistant_at")),j.getString("zone"),(j.optJSONArray("image_observations")?:JSONArray()).let{a->(0 until a.length()).map{ImageObservation.from(a.getJSONObject(it))}})
     }}
 }
 // Live history/batch/recall counts belong to MemoryRules. Old serialized no-op budgets are ignored on read.

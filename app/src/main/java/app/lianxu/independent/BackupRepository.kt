@@ -79,7 +79,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
             budget.json(JsonPrimitive(v));preferences.addProperty(k,v)
         }
         val assets=JsonArray();db.rawQuery("SELECT path,kind,mime,length(data) FROM role_assets WHERE friend_id=? ORDER BY path",arrayOf(id)).use{c->while(c.moveToNext()){
-            val size=c.getInt(3);require(size in 0..BackupArchive.MAX_FILE){"单个资源超过16 MiB"};budget.asset(size);val data=RoleAssets.read(db,id,c.getString(0),size);val name="assets/${files.size}.bin";files[name]=data
+            val size=c.getInt(3);require(size in 0..BackupArchive.MAX_FILE){"单个资源超过40,000,000字节"};budget.asset(size);val data=RoleAssets.read(db,id,c.getString(0),size);val name="assets/${files.size}.bin";files[name]=data
             assets.add(JsonObject().apply{addProperty("path",c.getString(0));addProperty("kind",c.getString(1));addProperty("mime",c.getString(2));addProperty("entry",name)})
         }}
         return JsonObject().apply{add("character",friend);add("tables",tables);add("preferences",preferences);add("assets",assets)}
@@ -168,15 +168,19 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
         require(images.map{it["message_id"].asLong}.distinct().size==images.size)
         val assets=role["assets"].asJsonArray.map{it.asJsonObject}.associateBy{it["path"].asString}
         for(image in images){
-            require(image.keySet()==setOf("friend_id","message_id","path","mime","hash","width","height","revision"))
+            val fields=setOf("friend_id","message_id","path","mime","hash","width","height","revision")
+            require(image.keySet()==fields||image.keySet()==fields+"storage_kind")
+            val storage=image["storage_kind"]?.asString?:"legacy-normalized"
+            require(storage in setOf("original","legacy-normalized"))
             require(image["friend_id"].asString==friend&&messages[image["message_id"].asLong]?.get("mine")?.asInt==1)
             val asset=assets[image["path"].asString]?:error("图片缺少对应资源")
             val bytes=files[asset["entry"].asString]?:error("图片文件不在备份中")
-            require(bytes.size in 1..ChatImages.MAX_IMAGE&&asset["kind"].asString=="attachment"&&image["mime"].asString=="image/jpeg"&&asset["mime"].asString==image["mime"].asString)
+            require(bytes.size in 1..ChatImages.MAX_IMAGE&&asset["kind"].asString=="attachment"&&image["mime"].asString in ImagePolicy.mimes&&asset["mime"].asString==image["mime"].asString)
             require(RoleArchive.hash(bytes)==image["hash"].asString&&image["hash"].asString.matches(Regex("[a-f0-9]{64}"))&&image["revision"].asLong>0)
-            val bounds=android.graphics.BitmapFactory.Options().apply{inJustDecodeBounds=true};android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.size,bounds)
-            require(bounds.outWidth==image["width"].asInt&&bounds.outHeight==image["height"].asInt&&bounds.outWidth in 1..1600&&bounds.outHeight in 1..1600&&bounds.outMimeType=="image/jpeg"){"图片尺寸与记录不一致"}
-            require(UserAvatarData.withoutMetadata(bytes).contentEquals(bytes)){"图片含未清理的私人元数据"}
+            val info=ChatImages.inspect(bytes)
+            require(info.width==image["width"].asInt&&info.height==image["height"].asInt&&info.mime==image["mime"].asString){"图片尺寸与记录不一致"}
+            ImagePixels.preview(bytes,512).recycle()
+            if(storage=="legacy-normalized")require(bytes.size<=512*1024&&info.mime=="image/jpeg"&&info.width<=1600&&info.height<=1600&&UserAvatarData.withoutMetadata(bytes).contentEquals(bytes)){"旧版图片副本记录无效"}
         }
         val turns=tables["chat_turns"].asJsonArray.map{it.asJsonObject}.associateBy{it["user_message_id"].asLong}
         val imageMap=images.associateBy{it["message_id"].asLong}

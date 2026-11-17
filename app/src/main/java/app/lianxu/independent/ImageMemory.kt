@@ -9,7 +9,7 @@ data class ImageEvidence(val imageSource:SourceRef,val hash:String,val observati
     companion object {fun from(j:JSONObject)=ImageEvidence(SourceRef(j.getString("character"),j.getLong("turn"),j.getLong("version")),j.getString("hash"),j.getString("observation_id"))}
 }
 data class ImageObservation(val evidence:ImageEvidence,val text:String){
-    fun json()=JSONObject().put("origin","auxiliary_model_observation_not_user_words").put("image",evidence.json()).put("text",text)
+    fun json()=JSONObject().put("origin","model_observation_not_user_words").put("image",evidence.json()).put("text",text)
     companion object{fun from(j:JSONObject)=ImageObservation(ImageEvidence.from(j.getJSONObject("image")),j.getString("text"))}
 }
 internal object ImageMemory {

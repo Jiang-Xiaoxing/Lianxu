@@ -67,6 +67,11 @@ class HttpsTextChatClient(
             fun shown(text:String)=Diagnostics.redact(text,listOf(key)).take(DETAIL_LIMIT)
             val result=try {
                 if(!continuation.isActive)return@submit
+                val body=ImageWire.body(config,request,onEvent!=null)
+                val messages=body.getJSONArray("messages")
+                val requestBytes=ImageWire.size(body,request)
+                val requestLimit=if(request.messages.any{it.images.isNotEmpty()})ImagePolicy.REQUEST_LIMIT else 2*1024*1024
+                if(requestBytes>requestLimit)throw RequestTooLarge()
                 val active=factory.open(URL(config.baseUrl.trimEnd('/')+"/chat/completions"));c=active;connection.set(active)
                 if(!continuation.isActive)return@submit
                 val provider=ProviderPresets.get(config.providerId)
@@ -74,28 +79,18 @@ class HttpsTextChatClient(
                 active.setRequestProperty(provider.authHeader,if(provider.authHeader=="Authorization")"Bearer $key" else key)
                 ProviderRequestMetadata.headers(config,request).forEach{(name,value)->active.setRequestProperty(name,value)}
                 active.setRequestProperty("Content-Type","application/json; charset=utf-8");active.setRequestProperty("Accept",if(onEvent==null)"application/json" else "text/event-stream, application/json")
-                val messages=JSONArray();request.messages.forEach{m->messages.put(JSONObject().put("role",m.role).put("content",ImageWire.content(m)).apply{
-                    if(m.toolCalls.isNotEmpty())put("tool_calls",JSONArray().apply{m.toolCalls.forEach{call->put(JSONObject().put("id",call.id).put("type","function").put("function",JSONObject().put("name",call.name).put("arguments",call.arguments)))}})
-                    if(m.role=="assistant"&&m.toolCalls.isNotEmpty()&&StructuredResponsePolicy.supportsJsonObject(config))m.continuation?.let{put("reasoning_content",it.wireValue())}
-                    if(m.role=="tool"){put("tool_call_id",m.toolCallId);put("name",m.name)}
-                })}
-                val body=JSONObject().put("model",config.modelId).put("messages",messages).put("stream",onEvent!=null)
-                if(StructuredResponsePolicy.jsonMode(config,request))body.put("response_format",JSONObject().put("type","json_object"))
-                if(request.tools.isNotEmpty())body.put("tools",JSONArray(request.tools)).put("tool_choice","auto")
-                body.put(if(config.providerId in setOf("openai","mimo"))"max_completion_tokens" else "max_tokens",request.outputLimit)
-                val bytes=body.toString().toByteArray(Charsets.UTF_8)
                 val diagnosticBody=JSONObject();body.keys().forEach{k->if(k!="messages")diagnosticBody.put(k,body.get(k))};val diagnosticMessages=JSONArray();request.messages.forEachIndexed{i,m->diagnosticMessages.put((if(m.images.isEmpty())JSONObject(messages.getJSONObject(i).toString())else JSONObject()).put("role",m.role).put("content",ImageWire.content(m,true)))};diagnosticBody.put("messages",diagnosticMessages)
                 request.messages.forEachIndexed{i,m->if(m.images.isNotEmpty())diagnosticMessages.getJSONObject(i).put("content",ImageWire.content(m,true))}
                 for(i in 0 until diagnosticMessages.length())diagnosticMessages.getJSONObject(i).remove("reasoning_content")
                 Diagnostics.event("http.request.body",mapOf("method" to "POST","endpoint" to config.baseUrl.trimEnd('/')+"/chat/completions","body" to Diagnostics.raw(diagnosticBody.toString())),trace=diagnosticTrace,secrets=listOf(key))
-                require(bytes.size<=2*1024*1024);active.setFixedLengthStreamingMode(bytes.size)
-                active.outputStream.use{it.write(bytes)};bytes.fill(0)
-                requestDiagnostics?.stage("http.request_sent",mapOf("request_bytes" to bytes.size,"stream" to (onEvent!=null)))
+                active.setFixedLengthStreamingMode(requestBytes)
+                active.outputStream.use{ImageWire.write(body,request,it)}
+                requestDiagnostics?.stage("http.request_sent",mapOf("request_bytes" to requestBytes,"stream" to (onEvent!=null)))
                 val status=active.responseCode;responded=status
                 Diagnostics.event("http.response",mapOf("status" to status,"content_type" to active.contentType,"content_encoding" to active.contentEncoding,"content_length" to active.contentLengthLong,"stream" to (onEvent!=null)),trace=diagnosticTrace,secrets=listOf(key))
                 val error=if(status !in 200..299)diagnosticErrorBody(active,deadline,diagnosticTrace,key) else ErrorBody("",true)
                 val errorBody=error.text
-                if(status !in 200..299)TextChatResult.Failure(if(request.tools.isNotEmpty()&&status in setOf(400,422)&&explicitToolsUnsupported(errorBody))ChatFailure.UNSUPPORTED_TOOLS else when(status){401->ChatFailure.UNAUTHORIZED;402->ChatFailure.PAYMENT;403->ChatFailure.FORBIDDEN;429->ChatFailure.RATE_LIMIT;in 300..399->ChatFailure.REDIRECT;in 500..599->ChatFailure.SERVER;else->ChatFailure.REJECTED},status,
+                if(status !in 200..299)TextChatResult.Failure(if(request.tools.isNotEmpty()&&status in setOf(400,422)&&explicitToolsUnsupported(errorBody))ChatFailure.UNSUPPORTED_TOOLS else when(status){401->ChatFailure.UNAUTHORIZED;402->ChatFailure.PAYMENT;403->ChatFailure.FORBIDDEN;413->ChatFailure.IMAGE_PROVIDER_LIMIT;429->ChatFailure.RATE_LIMIT;in 300..399->ChatFailure.REDIRECT;in 500..599->ChatFailure.SERVER;else->ChatFailure.REJECTED},status,
                     shown(providerError(status,active.responseMessage,errorBody,error.complete)))
                 else if(onEvent!=null&&active.contentType.orEmpty().substringBefore(';').trim().equals("text/event-stream",true)){
                     (requestDiagnostics?.count(active.inputStream)?:active.inputStream).use{input->
@@ -136,7 +131,8 @@ class HttpsTextChatClient(
                         }
                     }
                 }
-            }catch(e:SocketTimeoutException){
+            }catch(e:RequestTooLarge){TextChatResult.Failure(ChatFailure.IMAGE_LIMIT,detail="完整JSON请求体超过本机发送上限，本次未连接或发送；没有删图、降质或换服务")}
+            catch(e:SocketTimeoutException){
                 val diagnostic=requestDiagnostics?.timeout(System.nanoTime()>=deadline)
                 transportFailure("http.timeout",e,diagnostic)
                 val status=responded
@@ -168,6 +164,7 @@ class HttpsTextChatClient(
         }
     }
     private class ErrorBody(val text:String,val complete:Boolean)
+    private class RequestTooLarge:Exception()
     private fun overallTimeout(budget:Int):TextChatResult.Failure {
         Diagnostics.requestState()?.let{it.stop("total_timeout");it.stage("http.total_timeout",mapOf("timeout_ms" to budget))}
         return TextChatResult.Failure(ChatFailure.TIMEOUT,detail="等了 ${budget/1000} 秒仍没有完成回复，已停止等待。")
