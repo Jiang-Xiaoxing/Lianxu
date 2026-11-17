@@ -38,6 +38,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
     internal fun acknowledge(friendId:String,turnId:String,attempt:Int,count:Int){
         val st=attempts[friendId]?:return
         val t=st.turn?:return
+        val lease=leases[friendId]?:return
         if(!st.current())return
         if(t.id!=turnId||t.attempt!=attempt||leases[friendId]?.isActive()!=true)return
         val before=st.delivery.visible
@@ -49,7 +50,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         st.displaySave=scope.launch(NonCancellable){
             previous?.join()
             try{
-                val saved=ledger.recordSpoken(t.id,t.attempt,spoken,st.epoch,st.current)
+                val saved=ledger.recordSpoken(t.id,t.attempt,spoken,st.epoch,st.current,lease)
                 withContext(Dispatchers.Main.immediate){
                     if(saved&&attempts[friendId]===st&&leases[friendId]?.isActive()==true){
                         previews[friendId]?.takeIf{it.turnId==t.id&&it.attempt==t.attempt}?.let{
@@ -153,7 +154,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                 withContext(NonCancellable){
                     st.displaySave?.join()
                     // Also cover failure/cancellation just after a bubble's layout acknowledgement.
-                    st.turn?.let{t->runCatching{ledger.recordSpoken(t.id,t.attempt,st.delivery.spoken,st.epoch,st.current)}}
+                    st.turn?.let{t->runCatching{ledger.recordSpoken(t.id,t.attempt,st.delivery.spoken,st.epoch,st.current,lease)}}
                 }
                 if(st.gated){ReplyGate.leave(friendId);st.gated=false}
                 releaseRole(friendId,st.turn,st.settled,lease,st.locked,roleLock)
@@ -403,7 +404,11 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                         previews=previews+(friendId to it.copy(text=result.text,phase=ChatReplyPhase.REPLYING,bubbles=st.delivery.bubbles,visible=if(displayReplies)it.visible else st.delivery.visible))
                     }
                 }
-                st.delivery.completed.await()
+                while(!st.delivery.completed.isCompleted){
+                    currentCoroutineContext().ensureActive()
+                    if(!modelCurrent())throw CompanionModelFailure(ChatFailure.SOURCE_CHANGED)
+                    withTimeoutOrNull(250){st.delivery.completed.await()}
+                }
                 st.displaySave?.join()
                 val saved=ledger.finishWithMemory(current.id,current.attempt,st.delivery.spoken,lease,context.stamp,{db->imageRoute.commit(db);tools.commit(db);st.settled[2]=true;companion.finishReply(db,current,companionState)},displayReasoning=result.displayReasoning){
                     modelCurrent()&&companion.current(store.readableDatabase,companionState)&&processing.referenceCurrent(friendId,refs.stamp)

@@ -72,6 +72,31 @@ class ChatImagesAndroidTest {
         assertTrue(runCatching{ledger.begin("a","应当整体回滚","chat",image=chosen)}.isFailure)
         assertEquals(before,store.messages().size);assertEquals(1,RoleAssets(repo).list("a").size)
     }
+    @Test fun concurrentVisiblePrefixSaveAndFinalCommitAlwaysSettle():Unit=runBlocking{
+        val chosen=image()
+        repeat(30){index->
+            val t=ledger.begin("a","并发图片$index","chat",image=chosen);val lease=ChatAttemptLease();val start=CompletableDeferred<Unit>()
+            val epoch=AppMutationGate.epoch()
+            val prefix=async(Dispatchers.IO){start.await();ledger.recordSpoken(t.id,1,"合成回复",epoch,{lease.isActive()},lease)}
+            val finish=async(Dispatchers.IO){start.await();ledger.finish(t.id,1,"合成回复",lease=lease)}
+            start.complete(Unit)
+            withTimeout(8000){prefix.await();assertTrue(finish.await())}
+            assertEquals(TurnState.COMPLETED,ledger.all().last().state)
+        }
+        assertEquals(60,store.messages().size)
+    }
+    @Test fun changingRouteWhileWaitingForVisibleReplyFailsInsteadOfStalling():Unit=runBlocking{
+        configure("https://example.invalid/v1")
+        val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest)=TextChatResult.Success("这段合成回复尚未确认显示")}
+        val memory=MemoryEngine(scope,repo,ModelAccess(vault),client,{})
+        val runner=ConversationRunner(scope,store,vault,client,repo,memory,{},{},displayReplies=true)
+        withContext(Dispatchers.Main){assertTrue(runner.sendImage("a","合成图片",image()){})}
+        withTimeout(10000){while(runner.previews["a"]?.bubbles.isNullOrEmpty())delay(10)}
+        ChatImages.setEnabled(store.writableDatabase,true)
+        withTimeout(5000){while(ledger.all().last().state==TurnState.PENDING||"a" in runner.sending)delay(10)}
+        assertEquals(ChatFailure.SOURCE_CHANGED,ledger.all().last().failure)
+        assertTrue(store.messages().none{!it.mine})
+    }
     @Test fun directRouteResendsExactPictureForUnmentionedSecondTurnDetail():Unit=runBlocking{
         val bodies=Collections.synchronizedList(mutableListOf<String>())
         val chosen=image()

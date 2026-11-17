@@ -94,7 +94,8 @@ class ChatLedger(private val store:Store,private val session:String=processSessi
         db.update("chat_turns",ContentValues().apply{put("state",TurnState.COMPLETED.name);put("assistant_message_id",message);putNull("error_code")},"id=?",arrayOf(id))
         db.delete("preferences","key=?",arrayOf(errorKey(id)));onCompleted(db);true
     }}
-        if(lease==null)write() else lease.commit(write)
+        // Repository/tool writes already own the mutation gate before checking the attempt.
+        AppMutationGate.read{if(lease==null)write() else lease.commit(write)}
     }
     suspend fun fail(id:String,attempt:Int,error:ChatFailure,detail:String="")=transition(id,attempt,TurnState.FAILED,error,detail)
     suspend fun cancel(id:String,attempt:Int)=transition(id,attempt,TurnState.CANCELLED,null)
@@ -102,13 +103,18 @@ class ChatLedger(private val store:Store,private val session:String=processSessi
         store.readableDatabase.rawQuery("SELECT m.body FROM chat_turns t JOIN messages m ON m.id=t.assistant_message_id WHERE t.id=?",arrayOf(id)).use{if(it.moveToFirst())it.getString(0)else ""}
     }
     /** A UI acknowledgement is saved independently of network success and accounting. */
-    internal suspend fun recordSpoken(id:String,attempt:Int,text:String,expectedEpoch:Long,configUnchanged:()->Boolean={true})=withContext(Dispatchers.IO){atomic{db->
+    internal suspend fun recordSpoken(id:String,attempt:Int,text:String,expectedEpoch:Long,configUnchanged:()->Boolean={true},lease:ChatAttemptLease?=null)=withContext(Dispatchers.IO){
+        // Same order as completion and repository/tool writes: mutation gate, then attempt.
+        // Neither side can hold the attempt while waiting for the other side's mutation gate.
+        val write={atomic{db->
         if(expectedEpoch!=AppMutationGate.epoch()||!configUnchanged())return@atomic false
         val t=turn(db,id)?:return@atomic false
         if(t.attempt!=attempt||t.state !in setOf(TurnState.PENDING,TurnState.FAILED,TurnState.CANCELLED,TurnState.INTERRUPTED))return@atomic false
         if(!db.rawQuery("SELECT 1 FROM chat_turns WHERE id=? AND owner_session=?",arrayOf(id,session)).use{it.moveToFirst()})return@atomic false
         saveSpoken(db,t,text);true
-    }}
+        }}
+        AppMutationGate.read{if(lease==null)write()else lease.guard(write)}
+    }
     private fun saveSpoken(db:SQLiteDatabase,t:ChatTurn,text:String):Long? {
         val id=t.assistantMessageId
         if(id!=null){

@@ -59,11 +59,13 @@ class ChatImagesUiTest {
         ui.onNodeWithTag("pending-picture").performClick();ui.onNodeWithTag("image-viewer").assertIsDisplayed();shot("03-preview")
         ui.onNodeWithTag("image-viewer-close").performClick();ui.onNodeWithTag("message-input").performClick();ui.onNodeWithTag("pending-picture-expanded").assertIsDisplayed();ui.onNodeWithTag("remove-picture").performClick();ui.onNodeWithTag("pending-picture").assertDoesNotExist();assertEquals(0,calls.get())
         pick();ui.onNodeWithTag("send-message").performClick();ui.waitUntil(15000){vm.messages.any{it.friendId=="seed-lin"&&it.mine&&it.text.isEmpty()&&it.image!=null}&&!vm.chatSending}
+        assertEquals(TurnState.COMPLETED,vm.turns.last{it.friendId=="seed-lin"}.state)
         val sent=vm.messages.single{it.friendId=="seed-lin"&&it.mine&&it.text.isEmpty()&&it.image!=null}
         ui.onNodeWithTag("pending-picture").assertDoesNotExist();ui.onNodeWithTag("message-image-${sent.id}",true).performClick();ui.onNodeWithTag("image-viewer").assertIsDisplayed();ui.onNodeWithTag("image-viewer-close").performClick()
         ui.onNodeWithTag("message-image-${sent.id}",true).performTouchInput{longClick()};ui.onNodeWithText("这条消息的使用方式").assertIsDisplayed();ui.onNodeWithText("取消").performClick()
         pick();ui.onNodeWithTag("message-input").performTextInput("今天看到的花")
         ui.onNodeWithTag("send-message").performClick();ui.waitUntil(15000){vm.messages.any{it.text=="今天看到的花"&&it.image!=null}&&!vm.chatSending}
+        assertEquals(TurnState.COMPLETED,vm.turns.last{it.friendId=="seed-lin"}.state)
         ui.waitUntil(15000){ui.onAllNodesWithTag("send-message").fetchSemanticsNodes().size==1}
         ui.activityRule.scenario.onActivity{it.getSystemService(android.view.inputmethod.InputMethodManager::class.java).hideSoftInputFromWindow(it.window.decorView.windowToken,0)}
         shot("04-message-history");assertTrue(calls.get()>=2)
