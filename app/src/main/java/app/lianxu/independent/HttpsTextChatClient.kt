@@ -55,6 +55,7 @@ class HttpsTextChatClient(
         }
         if(ConfigRules.validate(config,key)!=null||!ModelTokenPolicy.acceptsRequest(config,request.outputLimit)){continuation.resume(TextChatResult.Failure(ChatFailure.INVALID_CONFIG));return@suspendCancellableCoroutine}
         if(ProviderRequestMetadata.blockedGoPreset(config)){continuation.resume(TextChatResult.Failure(ChatFailure.GO_ENDPOINT_UNVERIFIED));return@suspendCancellableCoroutine}
+        if(!ImageWire.fits(request)){continuation.resume(TextChatResult.Failure(ChatFailure.IMAGE_LIMIT));return@suspendCancellableCoroutine}
         val connection=AtomicReference<HttpsURLConnection?>(null)
         val deadline=System.nanoTime()+budget*1_000_000L
         val task=workers.submit {
@@ -73,7 +74,7 @@ class HttpsTextChatClient(
                 active.setRequestProperty(provider.authHeader,if(provider.authHeader=="Authorization")"Bearer $key" else key)
                 ProviderRequestMetadata.headers(config,request).forEach{(name,value)->active.setRequestProperty(name,value)}
                 active.setRequestProperty("Content-Type","application/json; charset=utf-8");active.setRequestProperty("Accept",if(onEvent==null)"application/json" else "text/event-stream, application/json")
-                val messages=JSONArray();request.messages.forEach{m->messages.put(JSONObject().put("role",m.role).put("content",m.content).apply{
+                val messages=JSONArray();request.messages.forEach{m->messages.put(JSONObject().put("role",m.role).put("content",ImageWire.content(m)).apply{
                     if(m.toolCalls.isNotEmpty())put("tool_calls",JSONArray().apply{m.toolCalls.forEach{call->put(JSONObject().put("id",call.id).put("type","function").put("function",JSONObject().put("name",call.name).put("arguments",call.arguments)))}})
                     if(m.role=="assistant"&&m.toolCalls.isNotEmpty()&&StructuredResponsePolicy.supportsJsonObject(config))m.continuation?.let{put("reasoning_content",it.wireValue())}
                     if(m.role=="tool"){put("tool_call_id",m.toolCallId);put("name",m.name)}
@@ -83,7 +84,8 @@ class HttpsTextChatClient(
                 if(request.tools.isNotEmpty())body.put("tools",JSONArray(request.tools)).put("tool_choice","auto")
                 body.put(if(config.providerId in setOf("openai","mimo"))"max_completion_tokens" else "max_tokens",request.outputLimit)
                 val bytes=body.toString().toByteArray(Charsets.UTF_8)
-                val diagnosticBody=JSONObject(body.toString());val diagnosticMessages=diagnosticBody.getJSONArray("messages")
+                val diagnosticBody=JSONObject();body.keys().forEach{k->if(k!="messages")diagnosticBody.put(k,body.get(k))};val diagnosticMessages=JSONArray();request.messages.forEachIndexed{i,m->diagnosticMessages.put((if(m.images.isEmpty())JSONObject(messages.getJSONObject(i).toString())else JSONObject()).put("role",m.role).put("content",ImageWire.content(m,true)))};diagnosticBody.put("messages",diagnosticMessages)
+                request.messages.forEachIndexed{i,m->if(m.images.isNotEmpty())diagnosticMessages.getJSONObject(i).put("content",ImageWire.content(m,true))}
                 for(i in 0 until diagnosticMessages.length())diagnosticMessages.getJSONObject(i).remove("reasoning_content")
                 Diagnostics.event("http.request.body",mapOf("method" to "POST","endpoint" to config.baseUrl.trimEnd('/')+"/chat/completions","body" to Diagnostics.raw(diagnosticBody.toString())),trace=diagnosticTrace,secrets=listOf(key))
                 require(bytes.size<=2*1024*1024);active.setFixedLengthStreamingMode(bytes.size)

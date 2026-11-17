@@ -73,7 +73,7 @@ verdict仅DUPLICATE（同一主体、时间、状态的同一完整事实，不�
             val anchor=facts.getValue(target)
             if(anchor.operation==null)emptyList()else MemoryEvidenceRules.merge(anchor.memory.evidence,members.flatMap{facts.getValue(it.key).memory.evidence})
         }
-        fun proof(rows:List<MemoryEvidence>)=JSONArray().apply{rows.forEach{e->put(JSONObject().put("turn",e.source.turnId).put("version",e.source.version).put("side",e.side).put("quote",e.quote))}}
+        fun proof(rows:List<MemoryEvidence>)=JSONArray().apply{rows.forEach{e->put(JSONObject().put("turn",e.source.turnId).put("version",e.source.version).put("side",e.side).put("quote",e.quote).apply{e.image?.let{put("observation_id",it.observationId)}})}}
         return ops.map{raw->
             val f=fresh[raw.getString("id")]?:return@map raw
             val op=JSONObject(raw.toString());val action=actions[f.ref]

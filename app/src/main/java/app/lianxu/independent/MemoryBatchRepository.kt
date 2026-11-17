@@ -38,7 +38,7 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
         val work=pendingWork(db,friendId)?:throw ProcessingRejected("STALE_TASK")
         rejectUnless(work.id==batchId&&repo.sourcesMatch(db,work.targets),"SOURCE_CHANGED")
         val m=repo.memory(db,friendId,memoryId)?:throw ProcessingRejected("SOURCE_CHANGED")
-        rejectUnless(m.version==expectedVersion&&m.valid&&m.evidence.all{repo.sourceValid(db,it.source)},"SOURCE_CHANGED")
+        rejectUnless(m.version==expectedVersion&&m.valid&&m.evidence.all{repo.evidenceValid(db,it)},"SOURCE_CHANGED")
         rejectUnless(db.rawQuery("SELECT 1 FROM memory_operations WHERE batch_id=? AND result_id=?",arrayOf(batchId,memoryId)).use{it.moveToFirst()},"STALE_TASK")
         db.insertWithOnConflict("memory_batch_reviews",null,ContentValues().apply{put("batch_id",batchId);put("memory_id",memoryId);put("version",m.version);put("digest",reviewDigest(db,work,m));put("decision","KEEP_CURRENT");put("created",System.currentTimeMillis())},SQLiteDatabase.CONFLICT_REPLACE)
     }
@@ -82,9 +82,9 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
         val captured=work.resultVersions+work.existingVersions
         for(id in captured.keys+own.keys){
             val m=repo.memory(db,work.friendId,id)
-            val current=m!=null&&m.valid&&m.evidence.all{repo.sourceValid(db,it.source)}&&MemoryEvidenceRules.contextCurrent(captured[id],own[id],m.version)
+            val current=m!=null&&m.valid&&m.evidence.all{repo.evidenceValid(db,it)}&&MemoryEvidenceRules.contextCurrent(captured[id],own[id],m.version)
             if(!current){
-                if(allowReviewed&&id in own&&m!=null&&m.valid&&m.evidence.all{repo.sourceValid(db,it.source)}&&acknowledged(db,work,m))continue
+                if(allowReviewed&&id in own&&m!=null&&m.valid&&m.evidence.all{repo.evidenceValid(db,it)}&&acknowledged(db,work,m))continue
                 throw ProcessingRejected(if(id in own)"BATCH_REVIEW_REQUIRED" else "SOURCE_CHANGED")
             }
         }
@@ -109,7 +109,11 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
         return (0 until a.length()).map{i->val j=a.getJSONObject(i)
             val turn=j.getLong("turn");val version=j.getLong("version");val side=j.getString("side");val quote=j.getString("quote")
             val source=work.targets.find{it.source.turnId==turn&&it.source.version==version}?:throw ProcessingRejected("EVIDENCE")
-            rejectUnless(side in setOf("user","assistant")&&quote.isNotBlank(),"EVIDENCE")
+            rejectUnless(side in setOf("user","assistant","image")&&quote.isNotBlank(),"EVIDENCE")
+            if(side=="image"){
+                val observation=source.imageObservations.firstOrNull{it.evidence.observationId==j.optString("observation_id")&&quote in it.text}?:throw ProcessingRejected("EVIDENCE")
+                return@map MemoryEvidence(source.source,"image",quote,observation.text,source.user.created,source.zone,observation.evidence)
+            }
             val message=(if(side=="user")source.user else source.assistant)?:throw ProcessingRejected("EVIDENCE")
             rejectUnless(quote in message.text,"EVIDENCE")
             MemoryEvidence(source.source,side,quote,message.text,message.created,source.zone)
@@ -150,6 +154,7 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
         val proof=evidence(work,op)
         repo.deletedMatch(db,work.friendId,id,text,proof)?.let{return skipDeleted(it)}
         if(about==MemoryAbout.USER)rejectUnless(proof.any{it.side=="user"},"USER_EVIDENCE")
+        if(about==MemoryAbout.BOTH&&proof.any{it.side=="image"})rejectUnless(proof.any{it.side=="user"},"USER_EVIDENCE")
         val dateType=if(op.has("date_type"))op.getString("date_type").also{rejectUnless(it in setOf("day","habit","birthday"))} else old?.dateType
         val expression=if(op.optString("date_type")=="habit")null else if(!op.has("date_expression"))old?.dateExpression else if(op.isNull("date_expression"))null else op.optString("date_expression").takeIf{it.isNotBlank()}
         if(expression!=null&&op.has("date_expression"))rejectUnless(proof.any{expression in it.quote&&(about!=MemoryAbout.USER||it.side=="user")},"DATE_EVIDENCE")
@@ -213,7 +218,7 @@ class MemoryBatchRepository(private val repo:ProcessingRepository) {
                 rejectUnless(c.getInt(1)==0&&repo.candidates(db,work.friendId).any{it.valid&&it.proposed.id==c.getString(0)},"SOURCE_CHANGED")
                 continue
             }
-            rejectUnless(m.valid&&m.evidence.all{repo.sourceValid(db,it.source)},"SOURCE_CHANGED")
+            rejectUnless(m.valid&&m.evidence.all{repo.evidenceValid(db,it)},"SOURCE_CHANGED")
             rejectUnless(m.version==c.getInt(1)||acknowledged(db,work,m),"BATCH_REVIEW_REQUIRED")
         }}
         work.targets.forEach{s->db.insertWithOnConflict("memory_retired",null,ContentValues().apply{put("friend_id",work.friendId);put("source_user_id",s.source.turnId);put("source_version",s.source.version);put("batch_id",work.id)},SQLiteDatabase.CONFLICT_IGNORE)}

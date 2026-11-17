@@ -14,8 +14,8 @@ class SourceChanges(private val repo:ProcessingRepository){
         require(side in setOf("user","assistant"));require(retract||text.isNotBlank()&&text.length<=8000)
         val source=repo.sources(db,friendId).firstOrNull{it.source.turnId==turnId}?:throw ProcessingRejected("SOURCE_CHANGED")
         rejectUnless(side=="user"||source.assistant!=null,"SOURCE_CHANGED")
-        val affected=repo.memories(db,friendId).filter{m->m.evidence.any{it.source.turnId==turnId&&it.source.characterId==friendId}}
-        val candidates=repo.candidates(db,friendId).filter{c->c.proposed.evidence.any{it.source.turnId==turnId&&it.source.characterId==friendId}}
+        val affected=repo.memories(db,friendId).filter{m->m.evidence.any{(it.source.turnId==turnId&&it.source.characterId==friendId)||(it.image?.imageSource?.turnId==turnId&&it.image?.imageSource?.characterId==friendId)}}
+        val candidates=repo.candidates(db,friendId).filter{c->c.proposed.evidence.any{(it.source.turnId==turnId&&it.source.characterId==friendId)||(it.image?.imageSource?.turnId==turnId&&it.image?.imageSource?.characterId==friendId)}}
         val stamp=stableDigest(source.json().toString()+affected.joinToString{it.json().toString()}+candidates.joinToString{it.toString()})
         return SourceImpact(source,side,text,retract,affected,candidates,stamp)
     }

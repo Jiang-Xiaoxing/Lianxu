@@ -13,14 +13,17 @@ class ProviderContinuation internal constructor(@Transient private val reasoning
 }
 data class WireMessage(val role:String,val content:String,val toolCalls:List<ChatToolCall> = emptyList(),val toolCallId:String="",val name:String="",val memoryIds:List<String> = emptyList(),val sourceMessageId:String="",
     /** Length of the program-added time head in front of a history message; the original text starts after it. */
-    val sourcePrefix:Int=0,val capabilityRange:IntRange?=null,val turnContext:Boolean=false,@Transient val continuation:ProviderContinuation?=null) {
-    init {require(role in setOf("system","user","assistant","tool"));require(content.isNotBlank()||(role=="assistant"&&toolCalls.isNotEmpty()));require(role!="tool"||toolCallId.isNotBlank())}
+    val sourcePrefix:Int=0,val capabilityRange:IntRange?=null,val turnContext:Boolean=false,@Transient val continuation:ProviderContinuation?=null,
+    val imageRefs:List<ChatImageRef> = emptyList(),val images:List<WireImage> = emptyList()) {
+    init {require(role in setOf("system","user","assistant","tool"));require(content.isNotBlank()||(role=="assistant"&&toolCalls.isNotEmpty())||(role=="user"&&(imageRefs.isNotEmpty()||images.isNotEmpty())));require(role!="tool"||toolCallId.isNotBlank());require(role=="user"||(imageRefs.isEmpty()&&images.isEmpty()))}
 }
 data class TextChatRequest(val messages:List<WireMessage>,val outputLimit:Int=2048,val timeoutMillis:Int=120000,val tools:List<Map<String,Any>> = emptyList(),val conversationId:String=java.util.UUID.randomUUID().toString(),val jsonObject:Boolean=false) {
     init {require(conversationId.matches(Regex("[A-Za-z0-9_-]{1,160}")));require(messages.isNotEmpty());require(outputLimit in 1..ModelTokenPolicy.MAX_OUTPUT);require(timeoutMillis in 1..300000)}
 }
 enum class ChatFailure(val display:String) {
     MISSING_CONFIG("请先在设置的大模型配置中选择聊天模型。"),
+    MISSING_VISION_MODEL("辅助看图已开启，请先选择辅助看图模型并保存密钥。"),
+    IMAGE_LIMIT("本轮图片超过发送上限，请先整理较早的图片对话或选择较小图片后重试；没有自动删图或换模型。"),
     GO_ENDPOINT_UNVERIFIED(ProviderRequestMetadata.GO_UNVERIFIED_NOTICE),
     INVALID_CONFIG("模型配置不完整，请检查服务地址、模型和密钥。"),
     UNAUTHORIZED("认证失败，请检查服务商、地域和 API Key。"),
@@ -102,5 +105,5 @@ interface TextChatClient {
     }
 }
 enum class ModelPurpose(val key:String,val title:String) {
-    EMBEDDING("embedding","记忆向量（可选）"),CHAT("chat","聊天"),MEMORY("memory","总结记忆"),AUX_VISION("aux-vision","辅助视觉")
+    EMBEDDING("embedding","记忆向量（可选）"),CHAT("chat","聊天"),MEMORY("memory","总结记忆"),AUX_VISION("aux-vision","辅助看图")
 }

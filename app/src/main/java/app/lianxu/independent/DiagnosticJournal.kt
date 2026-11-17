@@ -20,7 +20,7 @@ internal class DiagnosticRedactor {
     }}
     private val sensitive=Regex("(?i)^(key|authorization|proxy-authorization|cookie|set-cookie|reasoning|reasoning_content|thinking|thinking_content|displayReasoning|.*(?:api.?key|token|password|secret|credential).*)$")
     @Synchronized fun text(raw:String):String {
-        var value=raw
+        var value=ChatImages.redact(raw)
         secrets.sortedByDescending{it.length}.forEach{value=value.replace(it,"[已脱敏]")}
         value=value.replace(Regex("""(?is)<think(?:ing)?\b[^>]*>.*?(?:</think(?:ing)?\s*>|$)"""),"[模型思考内容已省略]")
         value=value.replace(Regex("""(?im)(authorization|proxy-authorization|cookie|set-cookie|x-api-key)\s*["']?\s*[:=]\s*[^\r\n]*"""),"$1: [已脱敏]")

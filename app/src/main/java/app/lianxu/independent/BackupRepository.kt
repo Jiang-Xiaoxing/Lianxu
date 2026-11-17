@@ -16,11 +16,11 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
     suspend fun commitWithReport(plan:Preview,confirmed:Boolean=false)=RestoreResult(commit(plan,confirmed),plan.relationReport)
     data class RoleDeletion(val friendId:String,val name:String,val characterStamp:String)
     private val base=RoleArchive.tables.keys.toList()
-    private val extra=listOf("processing_policies","memory_batches","memory_operations","memory_batch_reviews","candidate_injections","message_reasoning","memory_recall_state","chat_memory_pills")
+    private val extra=listOf("processing_policies","memory_batches","memory_operations","memory_batch_reviews","candidate_injections","message_reasoning","memory_recall_state","chat_memory_pills","chat_images","image_observations")
     private val companionTables=listOf("companion_state","companion_sources","companion_blocks","companion_uses","companion_opportunities","companion_receipts","companion_action_learning")
     private val order=base+extra+companionTables
     // One-off migration markers travel as global settings, so a full backup never stops on them and a restore never reruns the migration.
-    private val globalKeys=setOf("nickname","compact","diagnostic-detailed",MemoryRules.KEY,UserPersona.KEY,LocalUpdateReceipt.KEY,MemoryForgetting.RECALL_DEFAULT_MIGRATED,UserAvatarData.KEY)
+    private val globalKeys=setOf("nickname","compact","diagnostic-detailed",MemoryRules.KEY,UserPersona.KEY,LocalUpdateReceipt.KEY,MemoryForgetting.RECALL_DEFAULT_MIGRATED,UserAvatarData.KEY,ChatImages.SWITCH,ChatImages.SWITCH_REVISION)
     private val legacy=RoleArchiveRepository(store)
     private val repo=ProcessingRepository(store)
     private class Budget {
@@ -107,20 +107,20 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
     }
     private fun validate(db:SQLiteDatabase,root:JsonObject,files:Map<String,ByteArray>){
         require(root["preferences"].asJsonObject.keySet().all{it in globalKeys})
-        root["preferences"].asJsonObject.entrySet().forEach{(k,v)->require(v.isJsonPrimitive&&v.asJsonPrimitive.isString);when(k){"compact"->require(v.asString in setOf("true","false"));"diagnostic-detailed"->require(v.asString in setOf("0","1"));"nickname"->require(v.asString.length in 1..80);MemoryRules.KEY->require(MemoryRules.from(JSONObject(v.asString)).valid());UserPersona.KEY->UserPersona.decode(v.asString);LocalUpdateReceipt.KEY->LocalUpdateReceipt.decode(v.asString);MemoryForgetting.RECALL_DEFAULT_MIGRATED->require(v.asString=="true");UserAvatarData.KEY->require(v.asString.length<=UserAvatarData.MAX_ENCODED){"本人头像资料过大"}}}
+        root["preferences"].asJsonObject.entrySet().forEach{(k,v)->require(v.isJsonPrimitive&&v.asJsonPrimitive.isString);when(k){"compact"->require(v.asString in setOf("true","false"));ChatImages.SWITCH->require(v.asString in setOf("0","1"));ChatImages.SWITCH_REVISION->require(v.asString.length<=80);"diagnostic-detailed"->require(v.asString in setOf("0","1"));"nickname"->require(v.asString.length in 1..80);MemoryRules.KEY->require(MemoryRules.from(JSONObject(v.asString)).valid());UserPersona.KEY->UserPersona.decode(v.asString);LocalUpdateReceipt.KEY->LocalUpdateReceipt.decode(v.asString);MemoryForgetting.RECALL_DEFAULT_MIGRATED->require(v.asString=="true");UserAvatarData.KEY->require(v.asString.length<=UserAvatarData.MAX_ENCODED){"本人头像资料过大"}}}
         val configs=models(root);require(configs.map{it.config.id}.distinct().size==configs.size)
         root["selections"].asJsonObject.entrySet().forEach{(k,v)->require(ModelPurpose.entries.any{it.key==k}&&(v.asString.isEmpty()||configs.any{it.config.id==v.asString}))}
         val ids=hashSetOf<String>();val used=hashSetOf<String>();var total=0
         root["roles"].asJsonArray.forEach{v->val role=v.asJsonObject;require(role.keySet()==setOf("character","tables","preferences","assets"));val id=role["character"].asJsonObject["id"].asString;require(ids.add(id))
             val tables=role["tables"].asJsonObject
             // These tables may be absent from backups made before they existed.
-            val optional=setOf("message_reasoning","memory_recall_state","chat_memory_pills")
+            val optional=setOf("message_reasoning","memory_recall_state","chat_memory_pills","chat_images","image_observations")
             val requiredExtra=extra-optional;val keys=tables.keySet()
             require(keys.all{it in (base+requiredExtra+companionTables+optional).toSet()}&&(base+requiredExtra).all{it in keys})
             total+=base.sumOf{tables[it].asJsonArray.size()};require(total<=200000){"备份记录超过200000行"}
             val old=JsonObject().apply{addProperty("scope","records");add("character",role["character"]);add("prompts",JsonParser.parseString(role["preferences"].asJsonObject[RolePromptStore.key(id)]?.asString?:"{}"));add("records",JsonObject().apply{base.forEach{add(it,tables[it].deepCopy())}})}
             old["records"].asJsonObject["chat_turns"].asJsonArray.forEach{it.asJsonObject.addProperty("config_id","")}
-            legacy.validateForBackup(db,RoleArchive.validate(old.toString().toByteArray()))
+            legacy.validateForBackup(db,RoleArchive.validate(old.toString().toByteArray()),tables["image_observations"]?.asJsonArray?:JsonArray())
             val turns=tables["chat_turns"].asJsonArray.map{it.asJsonObject["id"].asString}.toSet();val batches=tables["memory_batches"].asJsonArray.map{it.asJsonObject["id"].asString}.toSet()
             val messageIds=tables["messages"].asJsonArray.map{it.asJsonObject["id"].asLong}.toSet()
             val assistantIds=tables["messages"].asJsonArray.map{it.asJsonObject}.filter{it["mine"].asInt==0}.map{it["id"].asLong}.toSet()
@@ -156,9 +156,40 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
                     if(table=="memory_batches")require(j["state"].asString in setOf("COMMITTED","ARCHIVED")&&j["next_retry"].asLong==0L)
                 }
             }
+            validateImages(role,files)
             val paths=hashSetOf<String>();role["assets"].asJsonArray.forEach{a->val j=a.asJsonObject;require(j.keySet()==setOf("path","kind","mime","entry"));val path=RoleArchive.entryName(j["path"].asString);require(path.length<=240&&paths.add(path)&&j["kind"].asString in setOf("avatar","attachment")&&j["mime"].asString.length in 1..100);val entry=j["entry"].asString;require(used.add(entry)&&files.containsKey(entry)&&files.getValue(entry).size<=BackupArchive.MAX_FILE)}
         }
         require(used==files.keys){"资源清单不完整"}
+    }
+    private fun validateImages(role:JsonObject,files:Map<String,ByteArray>){
+        val tables=role["tables"].asJsonObject;val friend=role["character"].asJsonObject["id"].asString
+        val messages=tables["messages"].asJsonArray.map{it.asJsonObject}.associateBy{it["id"].asLong}
+        val images=(tables["chat_images"]?.asJsonArray?:JsonArray()).map{it.asJsonObject}
+        require(images.map{it["message_id"].asLong}.distinct().size==images.size)
+        val assets=role["assets"].asJsonArray.map{it.asJsonObject}.associateBy{it["path"].asString}
+        for(image in images){
+            require(image.keySet()==setOf("friend_id","message_id","path","mime","hash","width","height","revision"))
+            require(image["friend_id"].asString==friend&&messages[image["message_id"].asLong]?.get("mine")?.asInt==1)
+            val asset=assets[image["path"].asString]?:error("图片缺少对应资源")
+            val bytes=files[asset["entry"].asString]?:error("图片文件不在备份中")
+            require(bytes.size in 1..ChatImages.MAX_IMAGE&&asset["kind"].asString=="attachment"&&image["mime"].asString=="image/jpeg"&&asset["mime"].asString==image["mime"].asString)
+            require(RoleArchive.hash(bytes)==image["hash"].asString&&image["hash"].asString.matches(Regex("[a-f0-9]{64}"))&&image["revision"].asLong>0)
+            val bounds=android.graphics.BitmapFactory.Options().apply{inJustDecodeBounds=true};android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.size,bounds)
+            require(bounds.outWidth==image["width"].asInt&&bounds.outHeight==image["height"].asInt&&bounds.outWidth in 1..1600&&bounds.outHeight in 1..1600&&bounds.outMimeType=="image/jpeg"){"图片尺寸与记录不一致"}
+            require(UserAvatarData.withoutMetadata(bytes).contentEquals(bytes)){"图片含未清理的私人元数据"}
+        }
+        val turns=tables["chat_turns"].asJsonArray.map{it.asJsonObject}.associateBy{it["user_message_id"].asLong}
+        val imageMap=images.associateBy{it["message_id"].asLong}
+        val observationIds=hashSetOf<String>()
+        for(value in tables["image_observations"]?.asJsonArray?:JsonArray()){
+            val row=value.asJsonObject
+            require(row.keySet()==setOf("id","friend_id","message_id","question_message_id","question_revision","source_revision","image_hash","model_id","body","created"))
+            require(row["id"].asString.matches(Regex("[a-zA-Z0-9-]{1,80}"))&&observationIds.add(row["id"].asString)&&row["friend_id"].asString==friend)
+            val image=imageMap[row["message_id"].asLong]?:error("观察缺少图片来源")
+            require(row["image_hash"].asString==image["hash"].asString&&row["source_revision"].asLong>0&&messages[row["question_message_id"].asLong]?.get("mine")?.asInt==1)
+            RoleArchive.text(row,"body",8000);RoleArchive.text(row,"model_id",80);require(row["created"].asLong>0)
+            require(row["source_revision"].asLong in 1..(turns[row["message_id"].asLong]?.get("source_revision")?.asLong?:0)&&row["question_revision"].asLong in 1..(turns[row["question_message_id"].asLong]?.get("source_revision")?.asLong?:0)){"图片观察引用了不存在或未来版本的轮次"}
+        }
     }
     private fun fingerprint(db:SQLiteDatabase):String {
         val hash=java.security.MessageDigest.getInstance("SHA-256")
@@ -231,17 +262,17 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
         val turnIds=ids("chat_turns");val batches=ids("memory_batches")
         prefs(db).keys.filter{key->roleKey(key,id,turnIds,batches)||key=="relationship-cache:$id"||key==RelationFeeling.key(id)||key=="memory-vectors-v1:$id"||key=="memory-batch-failure:$id"||key=="memory-core-set:$id"||turnIds.any{key.startsWith("memory-tools:$it:")||key==ChatLedger.errorKey(it)||key=="chat_tool_display:$it"}}.forEach{db.delete("preferences","key=?",arrayOf(it))}
         companionTables.reversed().forEach{db.delete(it,"role=?",arrayOf(id))}
-        db.delete("role_assets","friend_id=?",arrayOf(id))
         for(table in (extra+base).reversed().distinct()){
             val predicate=when(table){
             "message_state","message_history","message_reasoning"->"message_id IN (SELECT id FROM messages WHERE friend_id=?)";"memory_history"->"memory_id IN (SELECT id FROM memory_current WHERE friend_id=?)";"memory_operations","memory_batch_reviews"->"batch_id IN (SELECT id FROM memory_batches WHERE friend_id=?)";else->"friend_id=?"}
             db.delete(table,predicate,arrayOf(id))
         }
+        db.delete("role_assets","friend_id=?",arrayOf(id))
         db.delete("friends","id=?",arrayOf(id))
     }
     private fun clearAll(db:SQLiteDatabase){
         // Foreign key order also removes in-flight rows; none are imported or restarted.
-        (companionTables.reversed()+listOf("memory_recall_state","memory_operations","memory_batch_reviews","candidate_injections","message_reasoning","message_state","message_history","memory_history","memory_current","memory_candidates","memory_retired","memory_progress","memory_batches","processing_policies","chat_memory_pills","role_assets","chat_turns","messages","friends","preferences")).forEach{db.delete(it,null,null)}
+        (companionTables.reversed()+listOf("image_observations","chat_images","memory_recall_state","memory_operations","memory_batch_reviews","candidate_injections","message_reasoning","message_state","message_history","memory_history","memory_current","memory_candidates","memory_retired","memory_progress","memory_batches","processing_policies","chat_memory_pills","role_assets","chat_turns","messages","friends","preferences")).forEach{db.delete(it,null,null)}
     }
     private fun restore(db:SQLiteDatabase,role:JsonObject,id:String,files:Map<String,ByteArray>,checkpoint:()->Unit){
         val oldId=role["character"].asJsonObject["id"].asString;val tables=role["tables"].asJsonObject
@@ -251,23 +282,24 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
         var next=db.rawQuery("SELECT COALESCE(MAX(seq),0) FROM sqlite_sequence WHERE name='messages'",null).use{it.moveToFirst();it.getLong(0)}
         val messages=tables["messages"].asJsonArray.associate{it.asJsonObject["id"].asLong to ++next}
         tables["companion_opportunities"]?.asJsonArray?.forEach{strings[it.asJsonObject["id"].asString]=UUID.randomUUID().toString()}
+        tables["image_observations"]?.asJsonArray?.forEach{strings[it.asJsonObject["id"].asString]=UUID.randomUUID().toString()}
         val map=BackupRemapper(oldId,id,strings,messages)
         db.insertOrThrow("friends",null,cv(map.json(role["character"]).asJsonObject.apply{addProperty("id",id)}))
+        role["assets"].asJsonArray.forEach{v->val a=v.asJsonObject;db.insertOrThrow("role_assets",null,ContentValues().apply{put("friend_id",id);put("path",a["path"].asString);put("kind",a["kind"].asString);put("mime",a["mime"].asString);put("data",files.getValue(a["entry"].asString))})}
         for(table in order){for(value in (tables[table]?.asJsonArray?:JsonArray())){checkpoint();val row=map.json(value).asJsonObject
             if(table=="processing_policies"){val p=ProcessingPolicy.from(JSONObject(row["json"].asString));row.addProperty("json",p.json().toString())}
             db.insertOrThrow(table,null,cv(row))
         }}
         role["preferences"].asJsonObject.entrySet().forEach{(key,value)->pref(db,map.preferenceKey(key),if(key.startsWith(ChatToolJournal.PREFIX))map.toolDisplayValue(value.asString) else map.preferenceValue(value.asString))}
         CompanionRepository(store).relationship(db,id)
-        role["assets"].asJsonArray.forEach{v->val a=v.asJsonObject;db.insertOrThrow("role_assets",null,ContentValues().apply{put("friend_id",id);put("path",a["path"].asString);put("kind",a["kind"].asString);put("mime",a["mime"].asString);put("data",files.getValue(a["entry"].asString))})}
     }
     private fun pref(db:SQLiteDatabase,key:String,value:String){db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",key);put("value",value)},SQLiteDatabase.CONFLICT_REPLACE)}
     private suspend fun <T> read(block:(SQLiteDatabase)->T):T=withContext(Dispatchers.IO){AppMutationGate.read{val db=store.readableDatabase;db.beginTransaction();try{block(db)}finally{db.endTransaction()}}}
 }
 
 internal class BackupRemapper(private val old:String,private val id:String,private val strings:Map<String,String>,private val messages:Map<Long,Long>){
-    private val numeric=setOf("message_id","source_user_id","user_message_id","assistant_message_id","after_message_id","user_id","assistant_id","turn","turnId","cursor","boundary","source_id","turn_source","targets","messageId","actionMessage","replyId","afterMessage")
-    private val ids=setOf("id","request","task","task_id","batch_id","batch","candidate_id","target_id","memory_id","result_id","source","target","sourceId","targetId","memoryIds","retainedIds","opportunity_id")
+    private val numeric=setOf("message_id","question_message_id","source_user_id","user_message_id","assistant_message_id","after_message_id","user_id","assistant_id","turn","turnId","cursor","boundary","source_id","turn_source","targets","messageId","actionMessage","replyId","afterMessage")
+    private val ids=setOf("id","request","task","task_id","batch_id","batch","candidate_id","target_id","memory_id","result_id","source","target","sourceId","targetId","observation_id","memoryIds","retainedIds","opportunity_id")
     fun json(v:JsonElement,key:String=""):JsonElement=when{
         v.isJsonObject->JsonObject().apply{v.asJsonObject.entrySet().forEach{(k,x)->add(if(key in setOf("associationVersions","existingVersions","resultVersions"))strings[k]?:error("记忆版本引用缺失") else k,json(x,k))}}
         v.isJsonArray->JsonArray().apply{v.asJsonArray.forEach{add(json(it,key))}}

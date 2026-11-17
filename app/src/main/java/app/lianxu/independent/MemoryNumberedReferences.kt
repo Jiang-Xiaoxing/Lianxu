@@ -5,11 +5,14 @@ import org.json.JSONObject
 
 /** Adapter of our FusedMemoryReferences (16047cbc/e5f84f44). Call-local S/M/N identities. */
 internal class MemoryNumberedReferences(private val targets:List<SourceDialogue>,existingIds:Collection<String>) {
-    private val sources=targets.flatMap{listOfNotNull(it to "user",if(it.assistant!=null)it to "assistant"else null)}
+    private data class Item(val source:SourceDialogue,val side:String,val observation:ImageObservation?=null){
+        val text get()=observation?.text?:if(side=="user")source.user.text else requireNotNull(source.assistant).text
+        val at get()=if(side=="assistant")requireNotNull(source.assistant).created else source.user.created
+    }
+    private val sources=targets.flatMap{s->listOfNotNull(Item(s,"user"),if(s.assistant!=null)Item(s,"assistant")else null)+s.imageObservations.map{Item(s,"image",it)}}
     private val memories=existingIds.sorted()
-    fun sourceRows()=JSONArray().apply{sources.forEachIndexed{i,(s,side)->
-        val m=if(side=="user")s.user else requireNotNull(s.assistant)
-        put(JSONObject().put("ref","S${i+1}").put("side",side).put("content",m.text).put("at",m.created).put("zone",s.zone))
+    fun sourceRows()=JSONArray().apply{sources.forEachIndexed{i,item->
+        put(JSONObject().put("ref","S${i+1}").put("side",item.side).put("content",item.text).put("at",item.at).put("zone",item.source.zone).apply{item.observation?.let{put("origin","辅助模型观察，非用户原话");put("image",it.evidence.json())}})
     }}
     fun memoryRef(id:String)="M${memories.indexOf(id)+1}"
     fun normalize(operation:JSONObject):JSONObject {
@@ -23,8 +26,8 @@ internal class MemoryNumberedReferences(private val targets:List<SourceDialogue>
             val item=evidence.get(i)
             if(item !is String){normalized.put(item);continue}
             if(!item.matches(Regex("S[1-9][0-9]*")))throw ProcessingRejected("EVIDENCE",MemoryRepairFeedback.hint("EVIDENCE","",item))
-            val(s,side)=sources.getOrNull(item.drop(1).toInt()-1)?:throw ProcessingRejected("EVIDENCE",MemoryRepairFeedback.hint("EVIDENCE","",item))
-            normalized.put(JSONObject().put("turn",s.source.turnId).put("version",s.source.version).put("side",side).put("quote",if(side=="user")s.user.text else requireNotNull(s.assistant).text))
+            val source=sources.getOrNull(item.drop(1).toInt()-1)?:throw ProcessingRejected("EVIDENCE",MemoryRepairFeedback.hint("EVIDENCE","",item))
+            normalized.put(JSONObject().put("turn",source.source.source.turnId).put("version",source.source.source.version).put("side",source.side).put("quote",source.text).apply{source.observation?.let{put("observation_id",it.evidence.observationId)}})
         }
         return op.put("evidence",normalized)
     }

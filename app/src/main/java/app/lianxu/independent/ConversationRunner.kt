@@ -25,10 +25,11 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         val id=vault.purposeId(ModelPurpose.CHAT)
         vault.list().find{it.id==id}?.let{config->val key=vault.secret(id);if(key.isBlank())null else Auth(config,key,AppMutationGate.epoch())}
     }}
-    fun send(friendId:String,input:String,onPersisted:()->Unit):Boolean {
-        if(input.isBlank()||input.length>2000)return false
+    fun send(friendId:String,input:String,onPersisted:()->Unit):Boolean=sendImage(friendId,input,null,onPersisted)
+    fun sendImage(friendId:String,input:String,image:PendingChatImage?,onPersisted:()->Unit):Boolean {
+        if((input.isBlank()&&image==null)||input.length>2000)return false
         stop(friendId)
-        launch(friendId,input,null,onPersisted);return true
+        launch(friendId,input,null,onPersisted,image);return true
     }
     fun stop(friendId:String){
         attempts[friendId]?.let{it.keepSpoken=true;it.delivery.stop()}
@@ -37,6 +38,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
     internal fun acknowledge(friendId:String,turnId:String,attempt:Int,count:Int){
         val st=attempts[friendId]?:return
         val t=st.turn?:return
+        if(!st.current())return
         if(t.id!=turnId||t.attempt!=attempt||leases[friendId]?.isActive()!=true)return
         val before=st.delivery.visible
         st.delivery.acknowledge(count)
@@ -47,7 +49,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         st.displaySave=scope.launch(NonCancellable){
             previous?.join()
             try{
-                val saved=ledger.recordSpoken(t.id,t.attempt,spoken,st.epoch)
+                val saved=ledger.recordSpoken(t.id,t.attempt,spoken,st.epoch,st.current)
                 withContext(Dispatchers.Main.immediate){
                     if(saved&&attempts[friendId]===st&&leases[friendId]?.isActive()==true){
                         previews[friendId]?.takeIf{it.turnId==t.id&&it.attempt==t.attempt}?.let{
@@ -79,6 +81,9 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
             ledger.cancel(turn.id,turn.attempt);changed()
         }}
     }
+    internal fun cancelImageAttempt(friendId:String){
+        if(attempts[friendId]?.imageSensitive==true)cancel(friendId)
+    }
     fun cancelAll(){leases.keys.toList().forEach{cancel(it)}}
     /** A failure while settling must never strand the per-role lock, or the role stops answering. */
     private suspend fun releaseRole(friendId:String,turn:ChatTurn?,settled:BooleanArray,lease:ChatAttemptLease,locked:Boolean,lock:kotlinx.coroutines.sync.Mutex){
@@ -94,17 +99,17 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
             runCatching{CompanionRuntime.leave(friendId)}
         }
     }
-    private fun launch(friendId:String,input:String?,retryId:String?,onPersisted:()->Unit){
+    private fun launch(friendId:String,input:String?,retryId:String?,onPersisted:()->Unit,image:PendingChatImage?=null){
         CompanionRuntime.foreground(friendId)
         val lease=ChatAttemptLease();leases[friendId]=lease;sending=sending+friendId
-        val st=AttemptState();attempts[friendId]=st
+        val st=AttemptState();st.imageSensitive=image!=null;attempts[friendId]=st
         val prepared=inputs.submit(friendId){previous->
             if(st.epoch!=AppMutationGate.epoch())return@submit st
             previous?.displaySave?.join()
             if(previous?.keepSpoken==true&&previous.epoch==AppMutationGate.epoch())previous.turn?.let{ledger.interrupt(it.id,it.attempt,previous.delivery.spoken)}
             val selected=withContext(Dispatchers.IO){vault.purposeId(ModelPurpose.CHAT)}
             companion.beginInput(friendId)
-            st.turn=if(retryId==null)ledger.begin(friendId,input!!,selected,UUID.randomUUID().toString(),st.epoch) else ledger.retry(retryId,selected,st.epoch)
+            st.turn=if(retryId==null)ledger.begin(friendId,input!!,selected,UUID.randomUUID().toString(),st.epoch,image) else ledger.retry(retryId,selected,st.epoch)
             st.turn?.let{t->
                 st.initialSpoken=ledger.spoken(t.id)
                 st.delivery.restore(st.initialSpoken)
@@ -148,7 +153,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                 withContext(NonCancellable){
                     st.displaySave?.join()
                     // Also cover failure/cancellation just after a bubble's layout acknowledgement.
-                    st.turn?.let{t->runCatching{ledger.recordSpoken(t.id,t.attempt,st.delivery.spoken,st.epoch)}}
+                    st.turn?.let{t->runCatching{ledger.recordSpoken(t.id,t.attempt,st.delivery.spoken,st.epoch,st.current)}}
                 }
                 if(st.gated){ReplyGate.leave(friendId);st.gated=false}
                 releaseRole(friendId,st.turn,st.settled,lease,st.locked,roleLock)
@@ -163,6 +168,8 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
     }
     /** What one attempt shares with its cleanup; allocated up front so the cancellation path allocates nothing new. */
     private class AttemptState {
+        var imageSensitive=false
+        var current:()->Boolean={true}
         var turn:ChatTurn?=null
         val epoch=AppMutationGate.epoch()
         val delivery=ReplyDelivery()
@@ -198,9 +205,13 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         withContext(Dispatchers.Main.immediate){
             if(leases[friendId]===lease&&lease.isActive())previews=previews+(friendId to ChatReplyPreview(current.id,current.attempt,tools=previousTools,bubbles=st.delivery.bubbles,visible=st.delivery.visible))
         }
+        val imageContext=ledger.context(current.id)
+        st.imageSensitive=imageContext.image!=null||imageContext.recent.any{it.image!=null}
         val credentials=auth()
         if(credentials==null){ledger.fail(current.id,current.attempt,ChatFailure.MISSING_CONFIG);changed();return}
-        fun modelCurrent()=lease.isActive()&&AppMutationGate.epoch()==credentials.epoch&&vault.purposeId(ModelPurpose.CHAT)==credentials.config.id&&vault.matchesCached(credentials.config)
+        val imageRoute=ChatImageRoute(store,vault,client,current,credentials.config,credentials.epoch){lease.isActive()}
+        fun modelCurrent()=imageRoute.current()&&lease.isActive()&&AppMutationGate.epoch()==credentials.epoch&&vault.purposeId(ModelPurpose.CHAT)==credentials.config.id&&vault.matchesCached(credentials.config)
+        st.current=::modelCurrent
         suspend fun resetPreview()=withContext(Dispatchers.Main.immediate){
             if(leases[friendId]===lease&&modelCurrent()){
                 // Thinking is truncated by a tool call, never wiped: keep what she already thought
@@ -267,7 +278,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         val reusable=interpretation.understanding?.takeIf{flow->interpretation.appraisalProfileStamp==profileStamp&&roleState.entries.any{it.source==source&&it.flow==flow}}
         val needsPlan=interpretation.control=="none"&&!interpretation.controlChecked&&reusable==null
         if(needsPlan)interpretation=interpretation.copy(understanding=null)
-        val planner=RolePlanner(client)
+        val planner=RolePlanner(imageRoute)
         val appraisalTime=AppServices.companionClock()
         val contactZone=java.time.ZoneId.systemDefault()
         if(executedControl==null&&!interpretation.interpretationUnknown&&!companion.accept(current,interpretation,companionState,::modelCurrent)){ledger.fail(current.id,current.attempt,ChatFailure.SOURCE_CHANGED);changed();return}
@@ -325,7 +336,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         fun jointReserve()=if(needsPlan)planner.replyFixedTokens(interpretation,roleState,appraisalTime,rules.proactiveRecall,accountRecord,context.persona)+(context.recent.size+6)*8 else 0
         suspend fun build():PromptBuild {
             if(CompanionPrompt.profile(context.friend,prompts,context.persona)!=profile)throw CompanionModelFailure(ChatFailure.SOURCE_CHANGED)
-            val base=CompanionPrompt.build(context.friend,prompts,context.recent,context.input,references(),refs.pending,capacity=credentials.config.contextTokens,outputLimit=credentials.config.outputTokens,recentLimit=rules.recentRounds,relatedLimit=rules.relatedCount,persona=context.persona,openingEligible=context.openingEligible,adaptive=rules.adaptiveContext,toolReserve=jointReserve()+if(rules.adaptiveContext)toolReserve()else 0)
+            val base=CompanionPrompt.build(context.friend,prompts,context.recent,context.input,references(),refs.pending,capacity=credentials.config.contextTokens,outputLimit=credentials.config.outputTokens,recentLimit=rules.recentRounds,relatedLimit=rules.relatedCount,persona=context.persona,openingEligible=context.openingEligible,inputImage=context.image,currentMessageId=current.userMessageId,adaptive=rules.adaptiveContext,toolReserve=jointReserve()+if(rules.adaptiveContext)toolReserve()else 0)
             val prepared=if(needsPlan&&base is PromptBuild.Ready)planner.prepareReply(base,credentials.config,originalInput,interpretation,roleState,appraisalTime,rules.proactiveRecall,semantic,toolReserve(),accountRecord,context.persona)else base
             if(prepared is PromptBuild.Ready&&toolRunner().initialCapacityFailure(credentials.config,prepared.request)!=null){
                 return PromptBuild.Blocked(if(prepared.summaryCanShrink)ChatFailure.CONTEXT_NEEDS_MEMORY else ChatFailure.CONTEXT_CAPACITY)
@@ -342,7 +353,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         suspend fun fitExperiences(){
             if(needsPlan)return
             if(rules.adaptiveContext){companionState=replySnapshot();return}
-            val base=CompanionPrompt.build(context.friend,prompts,context.recent,context.input,refs.valid+controlReferences(),refs.pending,capacity=credentials.config.contextTokens,outputLimit=credentials.config.outputTokens,recentLimit=rules.recentRounds,relatedLimit=rules.relatedCount,persona=context.persona,openingEligible=context.openingEligible)
+            val base=CompanionPrompt.build(context.friend,prompts,context.recent,context.input,refs.valid+controlReferences(),refs.pending,capacity=credentials.config.contextTokens,outputLimit=credentials.config.outputTokens,recentLimit=rules.recentRounds,relatedLimit=rules.relatedCount,persona=context.persona,openingEligible=context.openingEligible,inputImage=context.image,currentMessageId=current.userMessageId)
             val empty=replySnapshot(0)
             val available=if(base is PromptBuild.Ready)stateBudget-base.request.messages.sumOf{ConservativeTokens.tokens(it.content)+8}-ConservativeTokens.tokens(empty.prompt)-8 else 0
             companionState=replySnapshot(available.coerceAtLeast(0))
@@ -350,10 +361,10 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         fitExperiences()
         var built=build()
         Diagnostics.event("prompt.assembled",mapOf("character" to friendId,"turn" to current.id,"recent_rounds" to context.recent.size,"reference_count" to refs.valid.size,"pending_count" to refs.pending.size,"result" to built.javaClass.simpleName))
-        val fixedOnly=CompanionPrompt.build(context.friend,prompts,emptyList(),context.input,refs.valid.filter{it.mandatory},capacity=credentials.config.contextTokens,outputLimit=credentials.config.outputTokens,persona=context.persona,openingEligible=context.openingEligible)
+        val fixedOnly=CompanionPrompt.build(context.friend,prompts,emptyList(),context.input,refs.valid.filter{it.mandatory},capacity=credentials.config.contextTokens,outputLimit=credentials.config.outputTokens,persona=context.persona,openingEligible=context.openingEligible,inputImage=context.image,currentMessageId=current.userMessageId)
         if(fixedOnly is PromptBuild.Blocked&&processing.coreBudget(friendId).overGoal){ledger.fail(current.id,current.attempt,ChatFailure.CORE_CAPACITY);changed();return}
         while(built.waitsForSummary()&&context.recent.isNotEmpty()){
-            val fixed=CompanionPrompt.build(context.friend,prompts,emptyList(),context.input,references().filter{it.mandatory},capacity=credentials.config.contextTokens,outputLimit=credentials.config.outputTokens,persona=context.persona,openingEligible=context.openingEligible)
+            val fixed=CompanionPrompt.build(context.friend,prompts,emptyList(),context.input,references().filter{it.mandatory},capacity=credentials.config.contextTokens,outputLimit=credentials.config.outputTokens,persona=context.persona,openingEligible=context.openingEligible,inputImage=context.image,currentMessageId=current.userMessageId)
             val available=AdaptiveContext.inputLimit(credentials.config.contextTokens,credentials.config.outputTokens,toolReserve()+jointReserve())-((fixed as? PromptBuild.Ready)?.estimatedInputTokens?:credentials.config.contextTokens)
             val before=context.recent.map{it.id}
             // This turn itself waits for the summary here, so it must not hold the summary's save back.
@@ -366,12 +377,13 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
             if(context.recent.map{it.id}==before){ledger.fail(current.id,current.attempt,ChatFailure.MEMORY_CAPACITY);changed();return}
         }
         if(built is PromptBuild.Blocked){ledger.fail(current.id,current.attempt,built.reason);changed();return}
+        st.imageSensitive=(built as PromptBuild.Ready).request.messages.any{it.imageRefs.isNotEmpty()||it.images.isNotEmpty()}
         var tools=toolRunner()
         val result=run {
             // Plain reply branch: the preview and the stored body go through the same decoder,
             // so an old JSON envelope can never be shown as its reply and saved as the whole shell.
             var decoder=ChatDisplayDecoder()
-            val raw=withContext(Dispatchers.IO){tools.run(credentials.config,credentials.key,(built as PromptBuild.Ready).request.copy(conversationId=ProviderRequestMetadata.conversation(friendId)),client,
+            val raw=withContext(Dispatchers.IO){tools.run(credentials.config,credentials.key,(built as PromptBuild.Ready).request.copy(conversationId=ProviderRequestMetadata.conversation(friendId)),imageRoute,
                 onResponseStart={decoder=ChatDisplayDecoder();resetPreview()},onEvent={event->receive(event,decoder)},onToolActivity={showTool(it)})}
             if(raw is TextChatResult.Success){
                 val text=ChatDisplayDecoder().append(raw.text)
@@ -393,7 +405,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                 }
                 st.delivery.completed.await()
                 st.displaySave?.join()
-                val saved=ledger.finishWithMemory(current.id,current.attempt,st.delivery.spoken,lease,context.stamp,{db->tools.commit(db);st.settled[2]=true;companion.finishReply(db,current,companionState)},displayReasoning=result.displayReasoning){
+                val saved=ledger.finishWithMemory(current.id,current.attempt,st.delivery.spoken,lease,context.stamp,{db->imageRoute.commit(db);tools.commit(db);st.settled[2]=true;companion.finishReply(db,current,companionState)},displayReasoning=result.displayReasoning){
                     modelCurrent()&&companion.current(store.readableDatabase,companionState)&&processing.referenceCurrent(friendId,refs.stamp)
                 }
                 if(!saved)ledger.fail(current.id,current.attempt,ChatFailure.SOURCE_CHANGED)
