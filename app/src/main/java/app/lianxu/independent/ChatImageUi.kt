@@ -25,6 +25,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -60,10 +61,17 @@ import kotlin.math.roundToInt
 @Composable internal fun MessagePicture(vm:AppState,ref:ChatImageRef,onControl:(()->Unit)?=null,onView:(ImageSource)->Unit){
     val loaded by produceState<Result<android.graphics.Bitmap>?>(null,ref){value=runCatching{vm.processing.read{db->synchronized(ImagePixels.thumbnailGate){ImagePixels.preview(ChatImages.source(db,ref),512)}}}}
     val bitmap=loaded?.getOrNull();val scope=rememberCoroutineScope();var opening by remember(ref){mutableStateOf(false)};var failed by remember(ref){mutableStateOf(false)}
-    if(bitmap!=null)Image(bitmap.asImageBitmap(),"消息图片，点击放大，长按管理使用方式",Modifier.sizeIn(maxWidth=220.dp,maxHeight=220.dp).width(180.dp).aspectRatio(bitmap.width.toFloat()/bitmap.height).clip(RoundedCornerShape(12.dp)).combinedClickable(role=Role.Button,onClick={if(!opening){opening=true;scope.launch{try{val result=runCatching{vm.processing.read{db->ChatImages.source(db,ref)}};result.onSuccess(onView).onFailure{failed=true}}finally{opening=false}}}},onLongClick=onControl).testTag("message-image-${ref.messageId}"),contentScale=ContentScale.Fit)
-    else if(loaded==null)Box(Modifier.size(180.dp),contentAlignment=Alignment.Center){Text("正在读取图片…",style=MaterialTheme.typography.bodySmall,color=Muted)}
-    else Text("图片暂时无法读取",style=MaterialTheme.typography.bodySmall,color=Muted)
-    if(failed)Text("原图暂时无法读取，保存文件仍保留",style=MaterialTheme.typography.bodySmall,color=Muted)
+    // Size the placeholder from stored metadata, before IO. Avoid aspectRatio's unconstrained
+    // fallback when a fixed width and a tall bitmap cannot both satisfy the parent's height.
+    BoxWithConstraints(Modifier.widthIn(max=180.dp)){
+        val sourceRatio=ref.width.coerceAtLeast(1).toFloat()/ref.height.coerceAtLeast(1)
+        val ratio=sourceRatio.coerceIn(2f/3f,3f);val edge=minOf(maxWidth,180.dp)
+        Box(Modifier.size(edge*minOf(1f,ratio),edge/maxOf(1f,ratio)).clip(RoundedCornerShape(12.dp)).testTag("message-image-frame-${ref.messageId}"),contentAlignment=Alignment.Center){
+            if(bitmap!=null)Image(bitmap.asImageBitmap(),"消息图片，点击放大，长按管理使用方式",Modifier.fillMaxSize().combinedClickable(role=Role.Button,onClick={if(!opening){opening=true;scope.launch{try{val result=runCatching{vm.processing.read{db->ChatImages.source(db,ref)}};result.onSuccess(onView).onFailure{failed=true}}finally{opening=false}}}},onLongClick=onControl).testTag("message-image-${ref.messageId}"),contentScale=if(sourceRatio==ratio)ContentScale.Fit else ContentScale.Crop,alignment=Alignment.TopStart)
+            else Text(if(loaded==null)"正在读取图片…"else"图片暂时无法读取",Modifier.testTag(if(loaded==null)"message-image-loading-${ref.messageId}"else"message-image-failed-${ref.messageId}"),style=MaterialTheme.typography.bodySmall,color=Muted,maxLines=3,overflow=TextOverflow.Ellipsis)
+            if(failed)Text("原图暂时无法读取，保存文件仍保留",Modifier.align(Alignment.BottomCenter),style=MaterialTheme.typography.bodySmall,color=Muted,maxLines=3,overflow=TextOverflow.Ellipsis)
+        }
+    }
 }
 
 @Composable internal fun ChatPictureViewer(bytes:ByteArray,onClose:()->Unit)=ChatSourceViewer(remember(bytes){ImageSource(bytes)},onClose)
