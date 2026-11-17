@@ -23,11 +23,18 @@ class OriginalImageViewerTest {
         ui.waitForIdle();Thread.sleep(350)
         val node=ui.onNodeWithContentDescription("图片，可双指缩放和拖动")
         node.performTouchInput{val c=center;pinch(c-Offset(0f,40f),c+Offset(0f,40f),c-Offset(0f,260f),c+Offset(0f,260f),600)}
-        ui.waitForIdle();Thread.sleep(250)
+        ui.mainClock.advanceTimeBy(500);ui.waitForIdle();Thread.sleep(250)
         node.performTouchInput{swipe(center,center-Offset(0f,300f),500)}
-        ui.waitForIdle();Thread.sleep(250)
+        ui.mainClock.advanceTimeBy(500);ui.waitForIdle();Thread.sleep(250)
         val instrument=InstrumentationRegistry.getInstrumentation();val dir=File(instrument.targetContext.getExternalFilesDir(null),"chat-image-evidence").apply{mkdirs()}
-        val bitmap=instrument.uiAutomation.takeScreenshot();File(dir,"11-original-viewer-zoom.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()
+        var screenshot:android.graphics.Bitmap?=null;var peak=0
+        ui.waitUntil(10000){
+            screenshot?.recycle();val shot=instrument.uiAutomation.takeScreenshot();screenshot=shot;peak=0
+            for(y in shot.height/5 until shot.height*4/5)for(x in shot.width/4 until shot.width*3/4 step 13)peak=maxOf(peak,kotlin.math.abs(android.graphics.Color.red(shot.getPixel(x,y))-android.graphics.Color.red(shot.getPixel(x,y+1))))
+            peak>=100
+        }
+        val bitmap=requireNotNull(screenshot);File(dir,"11-original-viewer-zoom.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()
+        File(dir,"compose-viewer-sharpness.txt").writeText("verticalNeighborContrast=$peak; after waiting for real IO and Compose frame")
         ui.onNodeWithText("此原图区域无法读取，原文件仍保留").assertDoesNotExist()
         ui.onNodeWithTag("image-viewer-close").performClick();ui.onNodeWithTag("image-viewer").assertDoesNotExist();assertFalse(open)
     }

@@ -18,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -79,7 +80,7 @@ import kotlin.math.roundToInt
     Dialog(onDismissRequest=onClose,properties=DialogProperties(usePlatformDefaultWidth=false)){
         Surface(Modifier.fillMaxSize().testTag("image-viewer"),color=Paper){
             Box(Modifier.fillMaxSize().clip(RoundedCornerShape(0.dp))){
-                Canvas(Modifier.fillMaxSize().padding(16.dp).onSizeChanged{viewport=it}.semantics{contentDescription="图片，可双指缩放和拖动"}.pointerInput(bytes,viewport){detectTransformGestures{centroid,pan,zoom,_->
+                Canvas(Modifier.fillMaxSize().padding(16.dp).clipToBounds().onSizeChanged{viewport=it}.semantics{contentDescription="图片，可双指缩放和拖动"}.pointerInput(bytes,viewport){detectTransformGestures{centroid,pan,zoom,_->
                     val next=(scale*zoom).coerceIn(1f,maxOf(5f,1f/fit));val change=next/scale
                     x=(x-(centroid.x-size.width/2f)) * change+(centroid.x-size.width/2f)+pan.x
                     y=(y-(centroid.y-size.height/2f)) * change+(centroid.y-size.height/2f)+pan.y
