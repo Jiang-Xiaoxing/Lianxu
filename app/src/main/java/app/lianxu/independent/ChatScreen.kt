@@ -1,5 +1,13 @@
 package app.lianxu.independent
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -7,6 +15,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -30,6 +39,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.VisualTransformation
@@ -112,10 +124,36 @@ private suspend fun LazyListState.showEndOf(index:Int){
     var persistedVersion by draftState.persistedVersion
     var submittedAt by draftState.submittedAt
     var lastSeen by rememberSaveable(friend.id){mutableStateOf<Long?>(null)}
-    var attachmentInfo by remember{mutableStateOf(false)}
+    var selectedImage by draftState.image
+    var importingImage by draftState.importing
+    var imageError by remember(friend.id){mutableStateOf("")}
+    var viewedImage by remember(friend.id){mutableStateOf<ByteArray?>(null)}
+    val context=LocalContext.current
+    val imageScope=rememberCoroutineScope()
+    val inputFocus=remember(friend.id){FocusRequester()}
+    val picker=rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()){uri->
+        val selectedFor=vm.imagePickerRole;vm.imagePickerRole=null
+        if(uri!=null&&selectedFor==friend.id&&!importingImage){
+            importingImage=true
+            imageScope.launch{try{
+                val prepared=withContext(kotlinx.coroutines.Dispatchers.IO){context.contentResolver.openInputStream(uri)?.let{ChatImages.prepare(it)}?:error("无法打开图片")}
+                selectedImage=prepared;draftVersion++;imageError=""
+            }catch(e:kotlinx.coroutines.CancellationException){throw e}
+            catch(e:Exception){imageError=e.message?:"无法读取图片，请重新选择"}
+            finally{importingImage=false}}
+        }
+    }
     var controlMessage by remember{mutableStateOf<Message?>(null)}
     var viewport by remember{mutableStateOf(Rect.Zero)}
     var focused by remember{mutableStateOf(false)}
+    val focusManager=LocalFocusManager.current
+    val keyboardController=LocalSoftwareKeyboardController.current
+    val imeVisible=WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current)>0
+    var keyboardWasVisible by remember(friend.id){mutableStateOf(false)}
+    LaunchedEffect(imeVisible,selectedImage){
+        if(imeVisible)keyboardWasVisible=true
+        else if(keyboardWasVisible){if(selectedImage!=null)focusManager.clearFocus();keyboardWasVisible=false}
+    }
     val colors=MaterialTheme.colorScheme
     // A receipt's opened card reads the stored row as it is now; it never replays tool arguments or the reply.
     val memoryReader: suspend (String) -> StoredMemory? = remember(vm, friend.id) {
@@ -137,11 +175,11 @@ private suspend fun LazyListState.showEndOf(index:Int){
         }
     }
     val typing=vm.chatSending
-    fun send(sent:String=draft,version:Long=draftVersion){if(sent.isNotBlank()&&vm.chatInputAvailable&&
+    fun send(sent:String=draft,version:Long=draftVersion){if((sent.isNotBlank()||selectedImage!=null)&&!importingImage&&vm.chatInputAvailable&&
         (version>submittedVersion||version==submittedVersion&&!vm.chatSending&&version>persistedVersion)){
         val previous=submittedVersion
         submittedVersion=version
-        if(vm.send(sent){persistedVersion=maxOf(persistedVersion,version);if(draftVersion==version)draft=""})submittedAt=android.os.SystemClock.uptimeMillis()
+        if(vm.sendImage(sent,selectedImage){persistedVersion=maxOf(persistedVersion,version);if(draftVersion==version){draft="";selectedImage=null}})submittedAt=android.os.SystemClock.uptimeMillis()
         else submittedVersion=previous
     }}
     LaunchedEffect(messages.lastOrNull()?.id,vm.notificationTarget){
@@ -176,7 +214,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
                     withFrameNanos{};list.showEndOf(timeline.lastIndex)
                 }
             }
-            LazyColumn(Modifier.fillMaxSize().testTag("chat-history"),state=list,contentPadding=PaddingValues(horizontal=UiSpace.page,vertical=20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+            LazyColumn(Modifier.fillMaxSize().then(if(selectedImage==null)Modifier else Modifier.pointerInput(friend.id){detectTapGestures(onTap={focusManager.clearFocus();keyboardController?.hide()})}).testTag("chat-history"),state=list,contentPadding=PaddingValues(horizontal=UiSpace.page,vertical=20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
                 items(timeline,key={it.key}){row->when(row){
                     is ChatRow.Date->{val date=LocalDate.ofEpochDay(row.day);Text(if(date==LocalDate.now())"今天" else date.format(DateTimeFormatter.ofPattern("M月d日")),Modifier.fillMaxWidth().padding(bottom=8.dp),style=MaterialTheme.typography.labelSmall,color=Muted,textAlign=androidx.compose.ui.text.style.TextAlign.Center)}
                     is ChatRow.Pill->MemorySummaryPill(row.value){memoryBatch=row.value.batchId}
@@ -205,13 +243,14 @@ private suspend fun LazyListState.showEndOf(index:Int){
                                         }
                                     }
                                     Column(Modifier.widthIn(max=width).onGloballyPositioned{val p=it.localToWindow(Offset.Zero);bounds=Rect(p,it.size.toSize())}.testTag("message-${message.id}").semantics(mergeDescendants=true){text=androidx.compose.ui.text.AnnotatedString(message.text)}.combinedClickable(onClick={},onLongClick={controlMessage=message}),verticalArrangement=Arrangement.spacedBy(5.dp)){
-                                        val segments=ChatBubbleSegments.forMessage(message.text,message.mine)
+                                        message.image?.let{MessagePicture(vm,it,onControl={controlMessage=message}){data->viewedImage=data}}
+                                        val segments=if(message.text.isBlank())emptyList()else ChatBubbleSegments.forMessage(message.text,message.mine)
                                         segments.forEachIndexed{index,segment->
                                             Text(segment,Modifier.widthIn(max=width).clip(shape).background(if(group.mine)ChatUserBubble else ChatRoleBubble).background(colors.primary.copy(alpha=if(message.id in highlightIds)highlightAlpha else 0f)).padding(UiSpace.bubble).clearAndSetSemantics{testTag=if(highlighted && message.id in highlightIds)"chat-turn-highlight" else "bubble-${message.id}-$index"},style=MaterialTheme.typography.bodyLarge,color=if(group.mine)ChatUserText else ChatRoleText)
                                         }
                                     }
                                     if(message.mine)RelationshipParameterCard(vm,friend,message,parameterCards)
-                                    if(!message.mine)CompanionReadMarker(vm,message,bounds,viewport,!attachmentInfo&&controlMessage==null,message.id==latestRoleMessageId)
+                                    if(!message.mine)CompanionReadMarker(vm,message,bounds,viewport,viewedImage==null&&controlMessage==null,message.id==latestRoleMessageId)
                                 }
                                 if(row.showTime)Text(time.format(Date(group.messages.last().created)),Modifier.padding(horizontal=4.dp),style=MaterialTheme.typography.labelSmall,color=Muted)
                             }
@@ -231,25 +270,28 @@ private suspend fun LazyListState.showEndOf(index:Int){
                 }}
             }
         }
+        selectedImage?.let{image->PendingPicture(image,focused,{inputFocus.requestFocus()},{viewedImage=image.bytes},{selectedImage=null;draftVersion++})}
+        if(importingImage)Text("正在读取图片…",Modifier.padding(horizontal=56.dp),style=MaterialTheme.typography.bodySmall,color=Muted)
+        if(imageError.isNotBlank())Text(imageError,Modifier.padding(horizontal=16.dp),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
         Surface(modifier=Modifier.testTag("chat-input-bar"),color=ChatBarBackground,shadowElevation=0.dp){Column{
             HorizontalDivider(color=ChatInputBorder,thickness=.5.dp)
             Row(Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=4.dp),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                IconButton(onClick={attachmentInfo=true},modifier=Modifier.size(UiSpace.action).testTag("chat-attach").semantics{contentDescription="附件，暂未接入"}){ControlIcon("plus")}
+                IconButton(onClick={vm.imagePickerRole=friend.id;picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))},enabled=!importingImage,modifier=Modifier.size(UiSpace.action).testTag("chat-attach").semantics{contentDescription="选择图片"}){ControlIcon("plus")}
                 val shape=RoundedCornerShape(28.dp)
                 val interaction=remember{MutableInteractionSource()}
                 val fieldColors=TextFieldDefaults.colors(focusedContainerColor=Paper,unfocusedContainerColor=Paper,disabledContainerColor=Paper,focusedIndicatorColor=Color.Transparent,unfocusedIndicatorColor=Color.Transparent,cursorColor=ChatSendButton)
-                BasicTextField(draft,{draft=it.take(2000);draftVersion++},modifier=Modifier.weight(1f).padding(vertical=6.dp).heightIn(min=36.dp).onFocusChanged{focused=it.hasFocus}.border(if(focused)1.dp else .5.dp,ChatInputBorder,shape).testTag("message-input"),
+                BasicTextField(draft,{draft=it.take(2000);draftVersion++},modifier=Modifier.weight(1f).padding(vertical=6.dp).heightIn(min=36.dp).focusRequester(inputFocus).onFocusChanged{focused=it.hasFocus}.border(if(focused)1.dp else .5.dp,ChatInputBorder,shape).testTag("message-input"),
                     textStyle=MaterialTheme.typography.bodyLarge.copy(color=colors.onSurface),maxLines=4,interactionSource=interaction,cursorBrush=SolidColor(ChatSendButton),
                     keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),keyboardActions=KeyboardActions(onSend={send()}),decorationBox={inner->
                         TextFieldDefaults.DecorationBox(draft,inner,true,false,VisualTransformation.None,interaction,
                             placeholder={Text("说点什么…",style=MaterialTheme.typography.bodyLarge)},shape=shape,colors=fieldColors,contentPadding=PaddingValues(horizontal=16.dp,vertical=6.dp))
                     })
-                val stopping=vm.chatSending&&draft.isBlank()
-                val enabled=stopping||draft.isNotBlank()&&vm.chatInputAvailable
+                val stopping=vm.chatSending&&draft.isBlank()&&selectedImage==null
+                val enabled=stopping||(draft.isNotBlank()||selectedImage!=null)&&!importingImage&&vm.chatInputAvailable
                 val dark=Paper.luminance()<.5f
                 val actionColor=when{
                     stopping->if(dark)Color(0xFFE9B6B1)else Color(0xFF915753)
-                    draft.isNotBlank()->if(dark)Color(0xFFAFC9B5)else Color(0xFF4E7058)
+                    draft.isNotBlank()||selectedImage!=null->if(dark)Color(0xFFAFC9B5)else Color(0xFF4E7058)
                     else->Muted
                 }
                 Box(Modifier.size(width=60.dp,height=48.dp).clip(RoundedCornerShape(8.dp))
@@ -271,9 +313,5 @@ private suspend fun LazyListState.showEndOf(index:Int){
     controlMessage?.let{m->AlertDialog(onDismissRequest={controlMessage=null},title={Text("这条消息的使用方式")},text={Text("停止提醒会保留记忆。不再使用会停止相关原话、记忆与判断的AI使用，并取消回访；原聊天保留供你查看。")},
         confirmButton={TextButton(onClick={vm.sourceControl(m.id,true);controlMessage=null},modifier=Modifier.testTag("companion-forget")){Text("不再用于记忆和判断")}},
         dismissButton={Row{TextButton(onClick={vm.sourceControl(m.id,false);controlMessage=null},modifier=Modifier.testTag("companion-stop-reminder")){Text("只停关联提醒")};TextButton(onClick={controlMessage=null}){Text("取消")}}})}
-    if(attachmentInfo)ModalBottomSheet(onDismissRequest={attachmentInfo=false},containerColor=Paper){Column(Modifier.padding(horizontal=24.dp).padding(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(16.dp)){
-        Text("附件暂未接入",style=MaterialTheme.typography.titleMedium)
-        Text("当前版本仅支持文字消息，不会读取或发送图片与文件。",style=MaterialTheme.typography.bodyMedium,color=Muted)
-        TextButton(onClick={attachmentInfo=false},modifier=Modifier.heightIn(min=UiSpace.action).testTag("close-attachment-info")){Text("知道了")}
-    }}
+    viewedImage?.let{ChatPictureViewer(it){viewedImage=null}}
 }

@@ -22,6 +22,10 @@ import androidx.compose.ui.unit.dp
     val purposes=ModelPurpose.entries.filter{only==null||it==only}
     Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
+            if(only==null||only==ModelPurpose.AUX_VISION)Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically){
+                Column(Modifier.weight(1f)){Text("辅助看图",style=MaterialTheme.typography.titleSmall);Text(if(state.auxiliaryVision)"用辅助模型看图，再交聊天模型"else"直接把图片发给聊天模型",style=MaterialTheme.typography.bodySmall,color=Muted)}
+                Switch(checked=state.auxiliaryVision,onCheckedChange=state::changeAuxiliaryVision,enabled=!state.busy,modifier=Modifier.testTag("auxiliary-vision-switch"))
+            }
             purposes.forEachIndexed{index,purpose->
                 var menu by remember(purpose){mutableStateOf(false)}
                 var includeUnknown by remember(purpose){mutableStateOf(false)}
@@ -33,7 +37,7 @@ import androidx.compose.ui.unit.dp
                         Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
                             Text(purpose.title,style=MaterialTheme.typography.titleSmall,color=Ink)
                             Text(chosen?.let{"${it.name} · ${it.modelId}"}?:"尚未选择",style=MaterialTheme.typography.bodySmall,color=Muted)
-                            if(purpose==ModelPurpose.AUX_VISION)Text("视觉附件尚未接入",Modifier.testTag("purpose-vision-limit"),style=MaterialTheme.typography.bodySmall,color=Muted)
+
                         }
                         IconButton(onClick={help=purpose},modifier=Modifier.size(UiSpace.action).testTag("purpose-help-${purpose.key}").semantics{contentDescription="${purpose.title}说明"}){ControlIcon("info")}
                         ControlIcon("chevron")
@@ -53,7 +57,7 @@ import androidx.compose.ui.unit.dp
             ModelPurpose.EMBEDDING->"用于记忆语义检索，可不选择。先添加并保存向量模型配置，再指定为记忆向量；不用于聊天或总结记忆。"
             ModelPurpose.CHAT->"发送文字和已开启的后台评估使用所选聊天模型。"
             ModelPurpose.MEMORY->"主动总结记忆使用所选总结记忆模型；未选择时沿用聊天模型。"
-            ModelPurpose.AUX_VISION->"视觉附件尚未接入。此处保留辅助视觉模型选择，不代表已经能够处理图片或附件。"
+            ModelPurpose.AUX_VISION->"辅助看图开启时，所选辅助模型接收图片并提供观察，聊天模型接收观察与文字；关闭时图片直接发给所选聊天模型。不检测模型能力，不自动换模型或回退。图片只在发送时上传。"
         })
         Text(if(only==ModelPurpose.CHAT)"所有角色共用全局聊天选择，不设角色单独覆盖。从创建引导新建或编辑聊天配置并保存后，会直接用于聊天；也可在此选择已有配置，不改其他用途。保存配置和选择用途不发出请求。"else"所有角色共用用途选择，不设角色单独覆盖。先在“服务商”页添加并保存配置，再选择对应模型。保存配置和选择用途只保存设置，不发出请求。",style=MaterialTheme.typography.bodyMedium,color=Muted)
     }},confirmButton={TextButton(onClick={help=null},modifier=Modifier.testTag("purpose-help-close")){Text("知道了")}})}

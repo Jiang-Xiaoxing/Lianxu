@@ -68,17 +68,17 @@ class LatestReadMarkerUiTest {
         assertTrue(ui.onNodeWithTag("read-$latest").getUnclippedBoundsInRoot().top>=lastBubble.getUnclippedBoundsInRoot().bottom)
         shot("01-latest-split-reply-read.png")
 
-        // The existing attachment sheet pauses visibility marking, so a newly persisted
-        // reply is deterministically unread until the sheet closes (no clock tricks).
+        // The source-control dialog pauses visibility marking, so a newly persisted
+        // reply is deterministically unread until the dialog closes (no clock tricks).
         val before=receipts().associate{it.messageId to it.readAt}
-        ui.onNodeWithTag("chat-attach").performClick()
+        ui.onNodeWithTag("message-$latest").performTouchInput{longClick()}
         val next=seed("那我等你。")
         refresh(next)
         labels().assertCountEquals(1)
         ui.onNodeWithTag("read-$next").assertTextEquals("未读")
         ui.onNodeWithTag("read-$latest").assertDoesNotExist()
         assertNull(receipts().single{it.messageId==next}.readAt)
-        ui.onNodeWithTag("close-attachment-info").performClick()
+        ui.onNodeWithText("取消").performClick()
         ui.waitUntil(10000){receipts().single{it.messageId==next}.readAt!=null}
         ui.waitUntil(10000){ui.onAllNodes(hasTestTag("read-$next") and hasText("已读")).fetchSemanticsNodes().size==1}
         before.forEach{(id,at)->assertEquals(at,receipts().single{it.messageId==id}.readAt)}

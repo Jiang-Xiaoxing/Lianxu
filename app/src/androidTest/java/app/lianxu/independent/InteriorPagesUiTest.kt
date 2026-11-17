@@ -113,7 +113,7 @@ class InteriorPagesUiTest {
         ui.onNodeWithTag("message-input").performTextInput("明天再一起聊聊。")
         shot("09-chat-keyboard",false);hideIme()
         ui.onNodeWithTag("chat-attach").performClick();shot("10-attachment-state")
-        ui.onNodeWithTag("close-attachment-info").performClick()
+        cancelNativeImagePicker()
         ui.onNodeWithTag("back").performClick();open("chat")
         ui.onNodeWithTag("message-input").assertTextContains("明天再一起聊聊。",substring=true)
         ui.onNodeWithTag("back").performClick();ui.runOnIdle{vm.home();vm.tab=2};shot("11-settings")
