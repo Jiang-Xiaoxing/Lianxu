@@ -139,10 +139,11 @@ class ModelConfigTabsUiTest {
         ui.onNodeWithTag("purpose-help-memory").performScrollTo().performClick()
         ui.onNodeWithText("主动总结记忆使用所选总结记忆模型；未选择时沿用聊天模型。").assertIsDisplayed()
         ui.onNodeWithTag("purpose-help-close").performClick()
-        ui.onNodeWithTag("auxiliary-vision-switch",useUnmergedTree=true).performScrollTo().assertIsDisplayed()
+        ui.onNodeWithTag("auxiliary-vision-switch",useUnmergedTree=true).assertDoesNotExist()
+        back();ui.onNodeWithTag("settings-toolbox").performScrollTo().performClick();ui.onNodeWithTag("tool-card-image").performClick()
         ui.onNodeWithTag("purpose-help-aux-vision").performScrollTo().performClick()
         ui.onNodeWithText("辅助看图开启时，所选辅助模型接收图片并提供观察，聊天模型接收观察与文字；关闭时图片直接发给所选聊天模型。不检测模型能力，不自动换模型或回退。图片只在发送时上传。").assertIsDisplayed()
-        back();back();ui.onNodeWithTag("settings-home").assertIsDisplayed()
+        back();back();back();ui.onNodeWithTag("settings-home").assertIsDisplayed()
     }
     @Test fun savedModelsPurposesAndTabSurviveRotationAndNavigation(){
         seed()
@@ -159,11 +160,14 @@ class ModelConfigTabsUiTest {
         ui.waitUntil(15000){ui.activity.resources.configuration.orientation==Configuration.ORIENTATION_PORTRAIT}
         ui.onNodeWithTag("config-tab-purposes").assertIsSelected()
         services();purposes()
-        ModelPurpose.entries.forEach{purpose->
+        ModelPurpose.entries.filter{it!=ModelPurpose.AUX_VISION}.forEach{purpose->
             ui.onNodeWithTag("purpose-select-${purpose.key}").performScrollTo().assertTextContains(if(purpose==ModelPurpose.EMBEDDING)embedding.modelId else chat.modelId,substring=true)
         }
         assertEquals(listOf(chat,embedding).toSet(),vault.list().toSet())
+        ui.onNodeWithTag("purpose-select-aux-vision").assertDoesNotExist()
         back();ui.onNodeWithTag("settings-home").assertIsDisplayed()
+        ui.onNodeWithTag("settings-toolbox").performScrollTo().performClick();ui.onNodeWithTag("tool-card-image").performClick()
+        ui.onNodeWithTag("purpose-select-aux-vision").assertTextContains(chat.modelId,substring=true);back();back()
         ui.onNodeWithTag("settings-models").performClick();ui.onNodeWithTag("config-tab-services").assertIsSelected()
         assertEquals(chat.id,vault.purposeId(ModelPurpose.CHAT));assertEquals(embedding.id,vault.purposeId(ModelPurpose.EMBEDDING))
     }
@@ -204,7 +208,7 @@ class ModelConfigTabsUiTest {
                 ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-add-embedding"))
                 ui.onNodeWithTag("config-add-embedding").assertIsDisplayed()
                 purposes();ui.onNodeWithTag("purpose-select-embedding").performScrollTo().assertIsDisplayed();shot("purposes",saved)
-                ui.onNodeWithTag("auxiliary-vision-switch",useUnmergedTree=true).performScrollTo().assertIsDisplayed();shot("vision-limit",saved)
+                ui.onNodeWithTag("auxiliary-vision-switch",useUnmergedTree=true).assertDoesNotExist()
             }
         }
     }

@@ -42,11 +42,27 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     internal var companionPolicy by mutableStateOf("disabled")
     var notificationTarget by mutableStateOf<Long?>(null);private set
     internal suspend fun settleCompanion(){companionNotifications.reconcile();CompanionScheduler.enqueue(getApplication(),companion)}
-    internal fun setCompanionEnabled(enabled:Boolean,onEnabled:()->Unit={}){val role=activeId;viewModelScope.launch{
+    internal suspend fun changeCompanionPermission(role:String,enabled:Boolean){
         companion.setPolicy(role,enabled,CompanionRuntime.owner)
         if(!enabled)CompanionScheduler.cancel(getApplication(),role)
-        if(activeId==role){companionPolicy=companion.policy(role);if(enabled&&companionPolicy=="enabled")onEnabled()}
+        if(activeId==role)companionPolicy=companion.contactPolicies()[role]?:"disabled"
         settleCompanion();reload()
+    }
+    internal fun setCompanionEnabled(enabled:Boolean,onEnabled:()->Unit={}){val role=activeId;viewModelScope.launch{
+        try{changeCompanionPermission(role,enabled);if(activeId==role&&enabled&&companionPolicy=="enabled")onEnabled()}
+        catch(e:CancellationException){throw e}catch(_:Exception){error="主动联系操作未完整完成，请核对当前开关后重试。"}
+    }}
+    internal fun updateCompanionPermission(role:String,enabled:Boolean,done:(Result<String>)->Unit){viewModelScope.launch{
+        try{changeCompanionPermission(role,enabled);done(Result.success(requireNotNull(companion.contactPolicies()[role])))}
+        catch(e:CancellationException){throw e}catch(e:Exception){done(Result.failure(e))}
+    }}
+    internal fun retryCompanionContact(role:String,done:(Result<Int>)->Unit){viewModelScope.launch{
+        try{companion.retryFailed(role);settleCompanion();done(Result.success(companion.retryable(role)))}
+        catch(e:CancellationException){throw e}catch(e:Exception){done(Result.failure(e))}
+    }}
+    internal fun saveToolboxOrder(order:List<String>,done:(Boolean)->Unit){viewModelScope.launch{
+        try{ToolboxPreferences.saveOrder(processing.store,order);done(true)}
+        catch(e:CancellationException){throw e}catch(_:Exception){done(false)}
     }}
     internal fun companionRead(role:String,id:Long,stillVisible:()->Boolean){viewModelScope.launch{companion.markRead(role,id){page=="chat"&&activeId==role&&stillVisible()};companionReceipts=companion.receipts();companionNotifications.reconcile()}}
     internal fun sourceControl(messageId:Long,forget:Boolean){val role=activeId;viewModelScope.launch{
@@ -185,7 +201,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     fun foreground(){if(ready)viewModelScope.launch{runCatching{companion.checkContinuity(CompanionRuntime.owner);settleCompanion();reload();recoverProcessing()}}}
     // A chat attempt belongs to its role, not to the currently visible page.
     fun open(page: String, id: String = "") { if(this.page=="chat"&&(page!="chat"||id!=activeId))runner.cancelImageAttempt(activeId); if(page=="detail") detailReturn=this.page;if(page=="settings-memory")memorySettingsReturn=this.page;if(page=="processing-role")processingReturn=if(this.page=="detail")"detail" else "processing"; cancelSearch(); this.page=page; activeId=id; error="" }
-    fun back() { if(page=="chat")runner.cancelImageAttempt(activeId); if(page=="chat" && memoryChatReturn){memoryChatReturn=false;memoryChatRequest.consume();page="processing-role";return}; if(page=="search-detail")page="search" else if(page=="settings-memory")page=memorySettingsReturn else if(page=="role-prompts"||page=="role-learning"||page=="role-relationship"||page=="role-companion")page="detail" else if(page=="processing-role")page=processingReturn else if(page=="detail") page=detailReturn else { cancelSearch(); page="home" }; error="" }
+    fun back() { if(page=="chat")runner.cancelImageAttempt(activeId); if(page=="chat" && memoryChatReturn){memoryChatReturn=false;memoryChatRequest.consume();page="processing-role";return}; if(page=="search-detail")page="search" else if(page=="settings-memory")page=memorySettingsReturn else if(page=="role-companion")page="toolbox-contact" else if(page.startsWith("toolbox-"))page="toolbox" else if(page=="role-prompts"||page=="role-learning"||page=="role-relationship")page="detail" else if(page=="processing-role")page=processingReturn else if(page=="detail") page=detailReturn else { cancelSearch(); page="home" }; error="" }
     fun home() {cancelSearch(); page="home"; error="" }
     fun startSearch(){cancelSearch();page="search";error=""}
     fun updateSearchRequirements(value:String){searchRequirements=value.take(2000)}

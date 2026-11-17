@@ -51,10 +51,14 @@ class CloseoutAcceptanceUiTest {
 
     @Test fun optionalSwitchesAndQuotaValidationPersistWithoutChangingRetention() {
         val state = ready()
-        ui.runOnIdle { state.open("settings-memory") }
+        ui.runOnIdle { state.open("toolbox-memory") }
         ui.onNodeWithTag("rules-recall-enabled").performScrollTo().assertIsOn().performClick()
         ui.onNodeWithTag("rules-recall-enabled").assertIsOff().performClick()
         ui.onNodeWithTag("rules-write-enabled").performScrollTo().assertIsOff().performClick()
+        ui.onNodeWithTag("memory-tools-save").performClick()
+        val expected = MemoryRules(proactiveRecall = true, immediateWrite = true)
+        ui.waitUntil(30_000) { runBlocking { state.processing.memoryRules().first == expected } }
+        ui.runOnIdle { state.open("settings-memory") }
         // Recall quotas were intentionally removed from this page. Validate the remaining
         // retention inputs and ensure switching tools does not silently change their values.
         ui.onNodeWithTag("rules-recall-rounds").assertDoesNotExist()
@@ -63,17 +67,19 @@ class CloseoutAcceptanceUiTest {
         ui.onNodeWithTag("rules-summary").performScrollTo().performTextReplacement("41")
         hideIme()
         ui.onNodeWithTag("memory-rules-save").performClick()
-        ui.onNodeWithTag("memory-rules-status").performScrollTo().assertTextContains("请检查", substring = true)
-        assertEquals(MemoryRules(), runBlocking { state.processing.memoryRules().first })
+        ui.onNodeWithTag("memory-rules-status").performScrollTo().assertTextContains("正整数", substring = true)
+        assertEquals(expected, runBlocking { state.processing.memoryRules().first })
         ui.onNodeWithTag("rules-summary").performScrollTo().performTextReplacement("20")
         hideIme()
         ui.onNodeWithTag("memory-rules-save").performClick()
-        val expected = MemoryRules(proactiveRecall = true, immediateWrite = true)
         ui.waitUntil(30_000) { runBlocking { state.processing.memoryRules().first == expected } }
         ui.activityRule.scenario.recreate()
-        ui.onNodeWithTag("rules-recall-enabled").performScrollTo().assertIsOn()
-        ui.onNodeWithTag("rules-write-enabled").performScrollTo().assertIsOn()
+        ui.onNodeWithTag("rules-recall-enabled").assertDoesNotExist()
+        ui.onNodeWithTag("rules-write-enabled").assertDoesNotExist()
         ui.onNodeWithTag("rules-summary").performScrollTo().assertTextContains("20")
+        ui.runOnIdle { app().open("toolbox-memory") }
+        ui.onNodeWithTag("rules-recall-enabled").assertIsOn()
+        ui.onNodeWithTag("rules-write-enabled").assertIsOn()
         screenshot("01-saved-tools-and-quotas")
         assertEquals(expected, runBlocking { app().processing.memoryRules().first })
     }

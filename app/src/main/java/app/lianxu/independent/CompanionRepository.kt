@@ -59,10 +59,13 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
     }
     suspend fun policy(role:String)=repo.tx{state(it,role).third}
     suspend fun setPolicy(role:String,enabled:Boolean,owner:String)=repo.tx{db->
+        check(db.rawQuery("SELECT 1 FROM friends WHERE id=?",arrayOf(role)).use{it.moveToFirst()}){"角色已不存在"}
         state(db,role);bump(db,role)
         db.execSQL("UPDATE companion_state SET policy=?,policy_version=policy_version+1,owner=? WHERE role=?",arrayOf<Any>(if(enabled)"enabled"else"paused_by_user",owner,role))
         // Explicit permission changes never revive a cancelled reason.
     }
+    /** The toolbox list must not create states merely by displaying roles. */
+    internal suspend fun contactPolicies()=repo.read{db->db.rawQuery("SELECT f.id,COALESCE(c.policy,'disabled') FROM friends f LEFT JOIN companion_state c ON c.role=f.id",null).use{c->buildMap{while(c.moveToNext())put(c.getString(0),c.getString(1))}}}
     suspend fun checkContinuity(owner:String)=repo.tx{db->
         // Owner is process execution identity; permission/version survive normal recreation.
         db.execSQL("UPDATE companion_state SET epoch=epoch+1,owner=? WHERE owner<>?",arrayOf<Any>(owner,owner))

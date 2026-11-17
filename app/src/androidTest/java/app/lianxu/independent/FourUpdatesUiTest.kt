@@ -26,7 +26,7 @@ class FourUpdatesUiTest {
   lateinit var vm:AppState;ui.activityRule.scenario.onActivity{vm=ViewModelProvider(it)[AppState::class.java]};ui.waitUntil(15000){vm.ready};ui.waitForIdle();if(ui.onAllNodesWithText("知道了").fetchSemanticsNodes().isNotEmpty())ui.onNodeWithText("知道了").performClick()
   ui.onNodeWithTag("tab-2").performClick();ui.onNodeWithTag("settings-processing").performClick()
   ui.onNodeWithTag("settings-memory-rules").assertIsDisplayed().assertHasClickAction();shot("entry")
-  ui.onNodeWithTag("settings-memory-rules").performClick();ui.onNodeWithTag("rules-recall-enabled").performScrollTo().assertExists();ui.onNodeWithTag("rules-write-enabled").assertExists()
+  ui.onNodeWithTag("settings-memory-rules").performClick();ui.onNodeWithTag("rules-recall-enabled").assertDoesNotExist();ui.runOnIdle{vm.open("toolbox-memory")};ui.onNodeWithTag("rules-recall-enabled").performScrollTo().assertExists();ui.onNodeWithTag("rules-write-enabled").assertExists()
   ui.onNodeWithTag("rules-recall-rounds").assertDoesNotExist();ui.onNodeWithTag("rules-recall-tokens").assertDoesNotExist();ui.onNodeWithTag("rules-recall-per-call").assertDoesNotExist();ui.onNodeWithTag("recall-adaptive-info").performScrollTo().assertExists();shot("rules")
   ui.runOnIdle{vm.open("settings-info")};ui.onNodeWithText("姜小星").assertExists();shot("about")
  }

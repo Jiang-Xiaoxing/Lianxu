@@ -43,6 +43,8 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
             DirectoryRow("chat","大模型配置",summary,"settings-models","settings-model-summary",showChevron=false){vm.open("models")}
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
             DirectoryRow("memory","记忆","记住的内容、来源与待确认","settings-processing",showChevron=false){vm.open("processing")}
+            HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
+            DirectoryRow("plug","工具包","图片、视频、记忆工具与主动联系","settings-toolbox",showChevron=false){vm.open("toolbox")}
         }
         SectionLabel("数据")
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper)) {
@@ -84,7 +86,7 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
             InformationRow("info","作者",AppInformation.AUTHOR)
             InformationRow("storage","本地数据","角色、消息与配置保存在本机。API 密钥加密保存；全部导出时可明确选择包含密钥，包含时需要备份密码。请妥善保管备份和密码。卸载应用会清除本地数据。")
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
-            InformationRow("model","当前能力","文字聊天和寻找角色使用所选模型；总结记忆会请求所选记忆模型。视觉附件未开放；主动回查与当场写记忆可在记忆规则中分别控制，主动回查默认开启，当场写记忆默认关闭。")
+            InformationRow("model","当前能力","文字聊天和寻找角色使用所选模型；总结记忆会请求所选记忆模型。图片、视频与主动联系在工具包设置；主动回查与当场写记忆可在工具包的记忆工具中分别控制，主动回查默认开启，当场写记忆默认关闭。")
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
             InformationRow("info","应用版本",version,"settings-version")
             InformationRow("info","开源许可",AppInformation.LICENSE)

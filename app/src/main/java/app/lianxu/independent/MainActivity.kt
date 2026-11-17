@@ -91,6 +91,11 @@ class MainActivity:ComponentActivity(){
             "role-learning"->LearningRecordsScreen(vm)
             "role-relationship"->RelationshipScreen(vm)
             "role-companion"->CompanionSettingsScreen(vm)
+            "toolbox"->ToolboxScreen(vm)
+            "toolbox-image"->ToolboxImageScreen(vm)
+            "toolbox-video"->ToolboxVideoScreen(vm)
+            "toolbox-memory"->ToolboxMemoryScreen(vm)
+            "toolbox-contact"->ToolboxContactScreen(vm)
             "create"->if(guidedCreate)RoleCreationGuide(creationDraft,{updateCreation(it)},vm.busy,saved=vm.savedCreationId==creationDraft.creationId,
                 polisher=vm.creationPolisher,onConfigure={vm.creationPolisher.cancel();creationConfigOpen=true;vm.open("models")},
                 onExit={vm.back()},onCreate={draft->vm.createCompanion(draft.name,draft.definition,draft.expression,draft.opening,draft.extra,draft.relationship,draft.creationId)})else Create(vm)
@@ -211,7 +216,6 @@ class MainActivity:ComponentActivity(){
                 DirectoryRow("memory","记忆","记住的内容与原话来源","role-processing-open",iconColor=ProfileIconColors.memory){vm.open("processing-role",friend.id)}
                 DirectoryRow("list","学习记录","看法、兴趣与相处习惯","role-learning-open",iconColor=ProfileIconColors.learning){vm.open("role-learning",friend.id)}
                 DirectoryRow("heart","我们的相处","她现在的心情、信任和放在心上的事","role-relationship-open",iconColor=ProfileIconColors.relationship){vm.open("role-relationship",friend.id)}
-                DirectoryRow("chat","陪伴与消息","主动联系与通知","role-companion-open",iconColor=ProfileIconColors.companion){vm.open("role-companion",friend.id)}
             }
             PrimaryAction("发消息",modifier=Modifier.fillMaxWidth()){vm.open("chat",friend.id)}
         }

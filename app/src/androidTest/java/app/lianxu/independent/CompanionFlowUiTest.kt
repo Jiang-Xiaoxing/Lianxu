@@ -67,8 +67,8 @@ class CompanionFlowUiTest {
     }
     private fun shot(name:String){ui.waitForIdle();val automation=InstrumentationRegistry.getInstrumentation().uiAutomation;automation.waitForIdle(100,3000);Thread.sleep(350);val folder=File(context.getExternalFilesDir(null),"companion-phase1-evidence").apply{mkdirs()};automation.takeScreenshot().let{b->File(folder,"$name.png").outputStream().use{b.compress(Bitmap.CompressFormat.PNG,100,it)};b.recycle()}}
     private fun open(){ui.runOnIdle{vm().open("chat","seed-lin")}}
-    /** 陪伴与消息从聊天顶栏「⋯」进角色资料，再点「陪伴与消息」那一行。 */
-    private fun openCompanionPage(){open();ui.onNodeWithTag("chat-role-detail").performClick();ui.onNodeWithTag("role-companion-open").performScrollTo().performClick();ui.onNodeWithTag("companion-page").assertExists()}
+    /** Toolbox chooses the role before opening that role's contact settings. */
+    private fun openCompanionPage(){ui.runOnIdle{vm().open("toolbox-contact")};ui.onNodeWithTag("toolbox-contact-seed-lin").performScrollTo().performClick();ui.onNodeWithTag("companion-page").assertExists()}
     private fun waitForEnabledCompanionSwitch(){
         var lastFailure:Throwable?=null
         try{ui.waitUntil(10000){try{ui.onNodeWithTag("companion-enabled").assertIsEnabled();true}catch(e:AssertionError){lastFailure=e;false}}}

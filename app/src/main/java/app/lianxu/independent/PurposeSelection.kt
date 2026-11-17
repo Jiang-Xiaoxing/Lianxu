@@ -19,10 +19,10 @@ import androidx.compose.ui.unit.dp
 
 @Composable internal fun PurposeSelection(state:ModelConfigState,only:ModelPurpose?=null){
     var help by remember {mutableStateOf<ModelPurpose?>(null)}
-    val purposes=ModelPurpose.entries.filter{only==null||it==only}
+    val purposes=ModelPurpose.entries.filter{if(only==null)it!=ModelPurpose.AUX_VISION else it==only}
     Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
-            if(only==null||only==ModelPurpose.AUX_VISION)Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically){
+            if(only==ModelPurpose.AUX_VISION)Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically){
                 Column(Modifier.weight(1f)){Text("辅助看图",style=MaterialTheme.typography.titleSmall);Text(if(state.auxiliaryVision)"用辅助模型看图，再交聊天模型"else"直接把图片发给聊天模型",style=MaterialTheme.typography.bodySmall,color=Muted)}
                 Switch(checked=state.auxiliaryVision,onCheckedChange=state::changeAuxiliaryVision,enabled=!state.busy,modifier=Modifier.testTag("auxiliary-vision-switch"))
             }

@@ -50,9 +50,10 @@ class CompanionPageUiTest {
         ui.onNodeWithTag("chat-role-detail").performClick()
         ui.onNodeWithTag("role-avatar").assertHasClickAction();assertTrue(ui.onAllNodesWithText("给她选张头像",substring=true).fetchSemanticsNodes().isEmpty())
         shot("0-profile-header")
-        ui.onNodeWithTag("role-companion-open").performScrollTo().assertTextContains("主动联系与通知",substring=true)
+        ui.onNodeWithTag("role-companion-open").assertDoesNotExist()
         shot("2-profile")
-        ui.onNodeWithTag("role-companion-open").performClick()
+        ui.runOnIdle{vm().open("toolbox-contact")}
+        ui.onNodeWithTag("toolbox-contact-seed-lin").performScrollTo().performClick()
         ui.onNodeWithTag("companion-page").assertExists()
         ui.waitUntil(10000){ui.onAllNodesWithTag("companion-last-failure").fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithTag("companion-last-failure-summary",useUnmergedTree=true).assertTextEquals("她想联系你，但没发出去。服务商返回 HTTP 429。")
