@@ -101,7 +101,8 @@ internal class RoleArchiveRepository(private val store:Store) {
         RelationStorage.write(db,id,RelationHistory(changes=listOf(RelationChange(0,view.parameters,view.parameters,view.label))))
         clearJobs(db,id)
         db.delete("candidate_injections","friend_id=?",arrayOf(id))
-        val picturePaths=db.rawQuery("SELECT path FROM chat_images WHERE friend_id=?",arrayOf(id)).use{c->buildList{while(c.moveToNext())add(c.getString(0))}}
+        val picturePaths=db.rawQuery("SELECT path FROM role_assets WHERE friend_id=? AND kind='attachment' AND path LIKE 'chat-images/%'",arrayOf(id)).use{c->buildList{while(c.moveToNext())add(c.getString(0))}}
+        ImageDisk.clearReadCache()
         db.delete("image_observations","friend_id=?",arrayOf(id))
         db.delete("chat_images","friend_id=?",arrayOf(id))
         picturePaths.forEach{db.delete("role_assets","friend_id=? AND path=?",arrayOf(id,it))}

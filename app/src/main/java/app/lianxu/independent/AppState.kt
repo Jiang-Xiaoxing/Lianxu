@@ -23,6 +23,7 @@ internal class ChatDraftState(text:String="",version:Long=0){
 
 class AppState @JvmOverloads constructor(application: Application, client:TextChatClient=AppServices.createTextClient(),vaultNamespace:String=AppServices.vaultNamespace) : AndroidViewModel(application) {
     internal val chatDrafts=mutableMapOf<String,ChatDraftState>()
+    override fun onCleared(){chatDrafts.values.forEach{it.image.value?.close()};super.onCleared()}
     internal var imagePickerRole:String?=null
     private val store = Store(application,AppServices.databaseName)
     private val ledger=ChatLedger(store)

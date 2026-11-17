@@ -11,26 +11,22 @@ import android.graphics.RectF
 internal object ImagePixels {
     // Visible list cells retain thumbnails, and do not decode many large originals in parallel.
     val thumbnailGate=Any()
-    fun animated(raw:ByteArray,mime:String):Boolean {
-        fun ascii(start:Int,n:Int)=String(raw,start,n,Charsets.US_ASCII)
-        if(mime=="image/png"){
-            var at=8L
-            while(at+12<=raw.size){val i=at.toInt();val n=(0..3).fold(0L){v,k->(v shl 8)+(raw[i+k].toInt() and 255)}
-                require(n<=raw.size-at-12){"PNG文件不完整"}
-                if(ascii(i+4,4)=="acTL")return true
-                at+=n+12
-            }
-        }
-        if(mime=="image/webp"){
-            var at=12L
-            while(at+8<=raw.size){val i=at.toInt();val n=(0..3).fold(0L){v,k->v+((raw[i+4+k].toLong() and 255) shl (8*k))}
-                require(n<=raw.size-at-8){"WebP文件不完整"}
-                val type=ascii(i,4)
-                if(type=="ANIM"||type=="ANMF"||type=="VP8X"&&n>0&&(raw[i+8].toInt() and 2)!=0)return true
-                at+=8+n+(n and 1)
-            }
-        }
-        return false
+    fun animated(raw:ByteArray,mime:String)=animated(ImageSource(raw),mime)
+    fun animated(source:ImageSource,mime:String):Boolean=source.input().use{input->
+        if(mime !in setOf("image/png","image/webp"))return@use false
+        val stream=java.io.DataInputStream(input)
+        fun skip(n:Long){var left=n;while(left>0){val got=stream.skip(left);if(got>0)left-=got else {check(stream.read()!=-1){"图片文件不完整"};left--}}}
+        var at=if(mime=="image/png")8L else 12L;skip(at)
+        while(at+(if(mime=="image/png")12 else 8)<=source.size){
+            val head=ByteArray(8);stream.readFully(head)
+            val type=String(head,if(mime=="image/png")4 else 0,4,Charsets.US_ASCII)
+            val n=if(mime=="image/png")(0..3).fold(0L){v,k->(v shl 8)+(head[k].toInt() and 255)}else (0..3).fold(0L){v,k->v+((head[4+k].toLong() and 255) shl (8*k))}
+            val trailing=if(mime=="image/png")4L else n and 1
+            require(n<=source.size-at-8-trailing){"图片文件不完整"}
+            if(type in setOf("acTL","ANIM","ANMF"))return@use true
+            if(type=="VP8X"&&n>0){val flag=stream.read();if(flag and 2!=0)return@use true;skip(n-1+trailing)}else skip(n+trailing)
+            at+=8+n+trailing
+        };false
     }
     fun matrix(orientation:Int)=Matrix().apply{when(orientation){
         2->setScale(-1f,1f);3->setRotate(180f);4->setScale(1f,-1f)
@@ -42,9 +38,10 @@ internal object ImagePixels {
         return if(m.isIdentity)bitmap else Bitmap.createBitmap(bitmap,0,0,bitmap.width,bitmap.height,m,false).also{if(it!==bitmap)bitmap.recycle()}
     }
     fun sample(width:Int,height:Int,side:Int):Int {var sample=1;while(maxOf(width,height).toLong()>side.toLong()*sample)sample*=2;return sample}
-    fun preview(raw:ByteArray,side:Int):Bitmap {
-        val info=ChatImages.inspect(raw)
-        return oriented(BitmapFactory.decodeByteArray(raw,0,raw.size,BitmapFactory.Options().apply{
+    fun preview(raw:ByteArray,side:Int):Bitmap=preview(ImageSource(raw),side)
+    fun preview(source:ImageSource,side:Int):Bitmap {
+        val info=ChatImages.inspect(source)
+        return oriented(source.decode(BitmapFactory.Options().apply{
             inSampleSize=sample(info.width,info.height,side);inPreferredConfig=Bitmap.Config.ARGB_8888
         })?:error("无法完整读取图片"),info.orientation)
     }
@@ -59,10 +56,11 @@ internal object ImagePixels {
         // EXIF transforms are integer right-angle transforms; round tiny Matrix float error.
         return Rect(kotlin.math.round(source.left).toInt().coerceIn(0,info.width-1),kotlin.math.round(source.top).toInt().coerceIn(0,info.height-1),kotlin.math.round(source.right).toInt().coerceIn(1,info.width),kotlin.math.round(source.bottom).toInt().coerceIn(1,info.height))
     }
-    fun viewRegion(raw:ByteArray,info:ChatImages.Info,visible:RectF):ViewRegion {
+    fun viewRegion(raw:ByteArray,info:ChatImages.Info,visible:RectF):ViewRegion=viewRegion(ImageSource(raw),info,visible)
+    fun viewRegion(source:ImageSource,info:ChatImages.Info,visible:RectF):ViewRegion {
         val r=sourceRegion(info,visible)
         require(r.width()>0&&r.height()>0)
-        val decoder=BitmapRegionDecoder.newInstance(raw,0,raw.size,false)?:error("此原图无法区域读取")
+        val decoder=source.region()
         val bitmap=try{decoder.decodeRegion(r,BitmapFactory.Options().apply{inSampleSize=sample(r.width(),r.height(),2048);inPreferredConfig=Bitmap.Config.ARGB_8888})?:error("图片区域读取失败")}finally{decoder.recycle()}
         val display=RectF(r);displayMatrix(info).mapRect(display)
         return ViewRegion(oriented(bitmap,info.orientation),display)

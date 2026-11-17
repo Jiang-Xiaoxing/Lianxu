@@ -57,8 +57,7 @@ class ChatImagesAndroidTest {
         }
         val original=pixels(width=4000,height=3000);val big=ChatImages.prepare(original.inputStream());assertEquals(4000,big.width);assertEquals(3000,big.height);assertArrayEquals(original,big.bytes)
         assertTrue(runCatching{ChatImages.prepare(byteArrayOf(1,2,3).inputStream())}.isFailure)
-        val oversized=object:java.io.InputStream(){var n=0;override fun read():Int=if(n++<=ChatImages.MAX_INPUT)1 else -1}
-        assertTrue(runCatching{ChatImages.prepare(oversized)}.isFailure)
+
     }
     @Test fun pictureAndEmptyCaptionPersistTogetherSurviveReopenAndRollbackTogether()=runBlocking{
         val chosen=image();val turn=ledger.begin("a","","chat",image=chosen)
@@ -252,9 +251,9 @@ class ChatImagesAndroidTest {
         }}
         val memory=MemoryEngine(scope,repo,ModelAccess(vault),client,{})
         val runner=ConversationRunner(scope,store,vault,client,repo,memory,{},{})
-        val chosen=image();withContext(Dispatchers.Main){assertTrue(runner.sendImage("a","",chosen) {})}
+        val chosen=image();withContext(Dispatchers.Main){assertTrue(runner.sendImage("a","",chosen) {});chosen.close();chosen.close()}
         withTimeout(20000){while(ledger.all().lastOrNull()?.state!=TurnState.FAILED)delay(20)}
-        val failed=ledger.all().last();assertEquals(ChatFailure.REJECTED,failed.failure);assertEquals("",store.messages().first{it.id==failed.userMessageId}.text)
+        val failed=ledger.all().last();assertFalse(chosen.source.file!!.exists());assertEquals(ChatFailure.REJECTED,failed.failure);assertEquals("",store.messages().first{it.id==failed.userMessageId}.text)
         reject=false;withContext(Dispatchers.Main){withTimeout(5000){while("a" in runner.sending)delay(10)};runner.retry(failed)}
         withTimeout(20000){while(ledger.all().last().state!=TurnState.COMPLETED)delay(20)}
         assertEquals(2,ledger.all().last().attempt);assertTrue(hashes.size>=2&&hashes.all{it==chosen.hash});assertEquals(1,store.messages().count{it.mine&&it.friendId=="a"})

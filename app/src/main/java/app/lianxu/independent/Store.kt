@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
 
 /** Own app-private database. Primary key on friend is also the unique conversation key. */
 class Store(context: Context, name: String = AppServices.databaseName) : SQLiteOpenHelper(context, name, null, 18) {
+    init {ImageDisk.cacheDirectory=context.applicationContext.cacheDir}
     internal val applicationContext=context.applicationContext
     internal val memorySummary=MemorySummaryGuard()
     /**

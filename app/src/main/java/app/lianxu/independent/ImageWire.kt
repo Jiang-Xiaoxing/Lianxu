@@ -36,7 +36,7 @@ internal object ImageWire {
     fun fits(request:TextChatRequest):Boolean {
         val images=request.messages.flatMap{it.images}
         if(images.isEmpty())return true
-        if(images.size>ImagePolicy.MAX_PARTS||images.any{it.size !in 1..ImagePolicy.ORIGINAL_LIMIT.toLong()||it.mime !in ImagePolicy.mimes})return false
+        if(images.size>ImagePolicy.MAX_IMAGES||images.any{it.size !in 1..ImagePolicy.ORIGINAL_LIMIT.toLong()||it.mime !in ImagePolicy.mimes})return false
         val stub=JSONObject().put("messages",JSONArray(request.messages.map{JSONObject().put("role",it.role).put("content",content(it,true))})).put("tools",JSONArray(request.tools))
         return size(stub,request)+4096<=ImagePolicy.REQUEST_LIMIT
     }

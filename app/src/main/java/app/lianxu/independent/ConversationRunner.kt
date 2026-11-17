@@ -101,10 +101,12 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         }
     }
     private fun launch(friendId:String,input:String?,retryId:String?,onPersisted:()->Unit,image:PendingChatImage?=null){
+        val imageHold=image?.retain()
         CompanionRuntime.foreground(friendId)
         val lease=ChatAttemptLease();leases[friendId]=lease;sending=sending+friendId
         val st=AttemptState();st.imageSensitive=image!=null;attempts[friendId]=st
         val prepared=inputs.submit(friendId){previous->
+            try{
             if(st.epoch!=AppMutationGate.epoch())return@submit st
             previous?.displaySave?.join()
             if(previous?.keepSpoken==true&&previous.epoch==AppMutationGate.epoch())previous.turn?.let{ledger.interrupt(it.id,it.attempt,previous.delivery.spoken)}
@@ -120,6 +122,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                 runCatching{onPersisted()}
             }
             runCatching{changed()};st
+            }finally{imageHold?.close()}
         }
         jobs[friendId]=scope.launch(Diagnostics.context("chat"),start=CoroutineStart.UNDISPATCHED){
             // The turn body lives in runAttempt: one giant suspend lambda made the debuggable runtime

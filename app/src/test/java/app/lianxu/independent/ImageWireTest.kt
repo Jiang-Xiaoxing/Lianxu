@@ -27,7 +27,7 @@ class ImageWireTest {
         for(raw in listOf("data:image\\/jpeg;base64,PRIVATEPIXELS","data:image\\u002fjpeg;base64,PRIVATEPIXELS","data\\u003aimage/jpeg;base64,PRIVATEPIXELS"))assertFalse(DiagnosticRedactor().text(raw).contains("PRIVATEPIXELS"))
     }
     @Test fun rejectsOversizeBeforeEncodingAndNeverSilentlyDropsPictures(){
-        val request=TextChatRequest(listOf(WireMessage("user","",images=listOf(WireImage("image/jpeg",ByteArray(ChatImages.MAX_IMAGE+1))))))
+        val request=TextChatRequest(listOf(WireMessage("user","",images=listOf(WireImage("image/jpeg",ByteArray(ImagePolicy.ORIGINAL_LIMIT+1))))))
         assertFalse(ImageWire.fits(request));assertEquals(1,request.messages.single().images.size)
     }
     @Test fun emptyUserTextRequiresAnActualPicture(){

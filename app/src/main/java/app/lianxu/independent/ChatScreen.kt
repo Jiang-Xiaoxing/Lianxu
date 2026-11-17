@@ -1,5 +1,7 @@
 package app.lianxu.independent
 
+import kotlinx.coroutines.ensureActive
+
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -127,7 +129,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
     var selectedImage by draftState.image
     var importingImage by draftState.importing
     var imageError by remember(friend.id){mutableStateOf("")}
-    var viewedImage by remember(friend.id){mutableStateOf<ByteArray?>(null)}
+    var viewedImage by remember(friend.id){mutableStateOf<ImageSource?>(null)}
     val context=LocalContext.current
     val imageScope=rememberCoroutineScope()
     val inputFocus=remember(friend.id){FocusRequester()}
@@ -135,12 +137,14 @@ private suspend fun LazyListState.showEndOf(index:Int){
         val selectedFor=vm.imagePickerRole;vm.imagePickerRole=null
         if(uri!=null&&selectedFor==friend.id&&!importingImage){
             importingImage=true
-            imageScope.launch{try{
-                val prepared=withContext(kotlinx.coroutines.Dispatchers.IO){context.contentResolver.openInputStream(uri)?.let{ChatImages.prepare(it)}?:error("无法打开图片")}
-                selectedImage=prepared;draftVersion++;imageError=""
+            imageScope.launch{var candidate:PendingChatImage?=null;try{
+                withContext(kotlinx.coroutines.Dispatchers.IO){candidate=context.contentResolver.openInputStream(uri)?.let{ChatImages.prepare(it,context.cacheDir)}?:error("无法打开图片")}
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                selectedImage?.close();selectedImage=requireNotNull(candidate);candidate=null;draftVersion++;imageError=""
             }catch(e:kotlinx.coroutines.CancellationException){throw e}
             catch(e:Exception){imageError=e.message?:"无法读取图片，请重新选择"}
-            finally{importingImage=false}}
+            finally{candidate?.close();importingImage=false}}
+
         }
     }
     var controlMessage by remember{mutableStateOf<Message?>(null)}
@@ -179,7 +183,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
         (version>submittedVersion||version==submittedVersion&&!vm.chatSending&&version>persistedVersion)){
         val previous=submittedVersion
         submittedVersion=version
-        if(vm.sendImage(sent,selectedImage){persistedVersion=maxOf(persistedVersion,version);if(draftVersion==version){draft="";selectedImage=null}})submittedAt=android.os.SystemClock.uptimeMillis()
+        if(vm.sendImage(sent,selectedImage){persistedVersion=maxOf(persistedVersion,version);if(draftVersion==version){draft="";selectedImage?.close();selectedImage=null}})submittedAt=android.os.SystemClock.uptimeMillis()
         else submittedVersion=previous
     }}
     LaunchedEffect(messages.lastOrNull()?.id,vm.notificationTarget){
@@ -270,7 +274,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
                 }}
             }
         }
-        selectedImage?.let{image->PendingPicture(image,focused,{inputFocus.requestFocus()},{viewedImage=image.bytes},{selectedImage=null;draftVersion++})}
+        selectedImage?.let{image->PendingPicture(image,focused,{inputFocus.requestFocus()},{viewedImage=image.source},{selectedImage?.close();selectedImage=null;draftVersion++})}
         if(importingImage)Text("正在读取图片…",Modifier.padding(horizontal=56.dp),style=MaterialTheme.typography.bodySmall,color=Muted)
         if(imageError.isNotBlank())Text(imageError,Modifier.padding(horizontal=16.dp),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
         Surface(modifier=Modifier.testTag("chat-input-bar"),color=ChatBarBackground,shadowElevation=0.dp){Column{
@@ -313,5 +317,5 @@ private suspend fun LazyListState.showEndOf(index:Int){
     controlMessage?.let{m->AlertDialog(onDismissRequest={controlMessage=null},title={Text("这条消息的使用方式")},text={Text("停止提醒会保留记忆。不再使用会停止相关原话、记忆与判断的AI使用，并取消回访；原聊天保留供你查看。")},
         confirmButton={TextButton(onClick={vm.sourceControl(m.id,true);controlMessage=null},modifier=Modifier.testTag("companion-forget")){Text("不再用于记忆和判断")}},
         dismissButton={Row{TextButton(onClick={vm.sourceControl(m.id,false);controlMessage=null},modifier=Modifier.testTag("companion-stop-reminder")){Text("只停关联提醒")};TextButton(onClick={controlMessage=null}){Text("取消")}}})}
-    viewedImage?.let{ChatPictureViewer(it){viewedImage=null}}
+    viewedImage?.let{ChatSourceViewer(it){viewedImage=null}}
 }

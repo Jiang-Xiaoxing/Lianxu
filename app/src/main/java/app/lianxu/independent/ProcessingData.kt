@@ -14,7 +14,7 @@ data class SourceDialogue(val requestId:String,val source:SourceRef,val user:Mes
     companion object {fun from(j:JSONObject):SourceDialogue {
         val friend=j.getString("character");val ref=SourceRef(friend,j.getLong("turn"),j.getLong("version"))
         val image=j.optJSONObject("image_origin")?.let{raw->
-            val kind=raw.optString("storageKind","legacy-normalized");require(kind in setOf("original","legacy-normalized"))
+            val kind=raw.optString("storageKind","legacy-normalized");require(kind in setOf("original","legacy-normalized","chunked-original"))
             com.google.gson.Gson().fromJson(raw.toString(),ChatImageRef::class.java).copy(storageKind=kind)
         }
         return SourceDialogue(j.getString("request"),ref,Message(j.getLong("user_id"),friend,j.getString("user"),true,j.getLong("user_at"),image=image),if(j.isNull("assistant_id"))null else Message(j.getLong("assistant_id"),friend,j.getString("assistant"),false,j.getLong("assistant_at")),j.getString("zone"),(j.optJSONArray("image_observations")?:JSONArray()).let{a->(0 until a.length()).map{ImageObservation.from(a.getJSONObject(it))}})

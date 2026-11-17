@@ -171,16 +171,25 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
             val fields=setOf("friend_id","message_id","path","mime","hash","width","height","revision")
             require(image.keySet()==fields||image.keySet()==fields+"storage_kind")
             val storage=image["storage_kind"]?.asString?:"legacy-normalized"
-            require(storage in setOf("original","legacy-normalized"))
+            require(storage in setOf("original","legacy-normalized","chunked-original"))
             require(image["friend_id"].asString==friend&&messages[image["message_id"].asLong]?.get("mine")?.asInt==1)
             val asset=assets[image["path"].asString]?:error("图片缺少对应资源")
             val bytes=files[asset["entry"].asString]?:error("图片文件不在备份中")
-            require(bytes.size in 1..ChatImages.MAX_IMAGE&&asset["kind"].asString=="attachment"&&image["mime"].asString in ImagePolicy.mimes&&asset["mime"].asString==image["mime"].asString)
-            require(RoleArchive.hash(bytes)==image["hash"].asString&&image["hash"].asString.matches(Regex("[a-f0-9]{64}"))&&image["revision"].asLong>0)
-            val info=ChatImages.inspect(bytes)
-            require(info.width==image["width"].asInt&&info.height==image["height"].asInt&&info.mime==image["mime"].asString){"图片尺寸与记录不一致"}
-            ImagePixels.preview(bytes,512).recycle()
-            if(storage=="legacy-normalized")require(bytes.size<=512*1024&&info.mime=="image/jpeg"&&info.width<=1600&&info.height<=1600&&UserAvatarData.withoutMetadata(bytes).contentEquals(bytes)){"旧版图片副本记录无效"}
+            require(asset["kind"].asString=="attachment"&&image["mime"].asString in ImagePolicy.mimes)
+            require(image["hash"].asString.matches(Regex("[a-f0-9]{64}"))&&image["revision"].asLong>0)
+            val temporary=if(storage=="chunked-original")java.io.File.createTempFile("backup-image-",".image",ImageDisk.root())else null
+            try{
+                val source=if(temporary!=null){
+                    require(asset["mime"].asString==OriginalChunks.MIME)
+                    val manifest=OriginalChunks.parse(bytes,image["path"].asString);require(manifest.hash==image["hash"].asString)
+                    OriginalChunks.extract(manifest,temporary){part->val chunk=assets[part.path]?:error("备份缺少原件资源块");require(chunk["kind"].asString=="attachment"&&chunk["mime"].asString=="application/octet-stream");files[chunk["entry"].asString]?:error("备份缺少资源块内容")};ImageSource(temporary)
+                }else{require(bytes.size in 1..BackupArchive.MAX_FILE&&asset["mime"].asString==image["mime"].asString);ImageSource(bytes)}
+                require(source.hash()==image["hash"].asString){"原件哈希不符"}
+                val info=ChatImages.inspect(source);require(info.width==image["width"].asInt&&info.height==image["height"].asInt&&info.mime==image["mime"].asString){"图片尺寸与记录不一致"}
+                ImagePixels.preview(source,512).recycle()
+                if(storage=="legacy-normalized")require(bytes.size<=512*1024&&info.mime=="image/jpeg"&&info.width<=1600&&info.height<=1600&&UserAvatarData.withoutMetadata(bytes).contentEquals(bytes)){"旧版图片副本记录无效"}
+            }finally{temporary?.delete()}
+
         }
         val turns=tables["chat_turns"].asJsonArray.map{it.asJsonObject}.associateBy{it["user_message_id"].asLong}
         val imageMap=images.associateBy{it["message_id"].asLong}
@@ -262,6 +271,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
         }
     }
     private fun clearRole(db:SQLiteDatabase,id:String){
+        ImageDisk.clearReadCache()
         fun ids(table:String)=db.rawQuery("SELECT id FROM $table WHERE friend_id=?",arrayOf(id)).use{c->buildSet{while(c.moveToNext())add(c.getString(0))}}
         val turnIds=ids("chat_turns");val batches=ids("memory_batches")
         prefs(db).keys.filter{key->roleKey(key,id,turnIds,batches)||key=="relationship-cache:$id"||key==RelationFeeling.key(id)||key=="memory-vectors-v1:$id"||key=="memory-batch-failure:$id"||key=="memory-core-set:$id"||turnIds.any{key.startsWith("memory-tools:$it:")||key==ChatLedger.errorKey(it)||key=="chat_tool_display:$it"}}.forEach{db.delete("preferences","key=?",arrayOf(it))}
@@ -275,6 +285,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
         db.delete("friends","id=?",arrayOf(id))
     }
     private fun clearAll(db:SQLiteDatabase){
+        ImageDisk.clearReadCache()
         // Foreign key order also removes in-flight rows; none are imported or restarted.
         (companionTables.reversed()+listOf("image_observations","chat_images","memory_recall_state","memory_operations","memory_batch_reviews","candidate_injections","message_reasoning","message_state","message_history","memory_history","memory_current","memory_candidates","memory_retired","memory_progress","memory_batches","processing_policies","chat_memory_pills","role_assets","chat_turns","messages","friends","preferences")).forEach{db.delete(it,null,null)}
     }

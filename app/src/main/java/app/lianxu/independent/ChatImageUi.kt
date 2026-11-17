@@ -38,8 +38,9 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-@Composable internal fun ChatPicture(bytes:ByteArray,modifier:Modifier=Modifier,description:String="图片",contentScale:ContentScale=ContentScale.Fit){
-    val bitmap by produceState<android.graphics.Bitmap?>(null,bytes){value=withContext(Dispatchers.IO){runCatching{ImagePixels.preview(bytes,512)}.getOrNull()}}
+@Composable internal fun ChatPicture(bytes:ByteArray,modifier:Modifier=Modifier,description:String="图片",contentScale:ContentScale=ContentScale.Fit)=ChatSourcePicture(remember(bytes){ImageSource(bytes)},modifier,description,contentScale)
+@Composable internal fun ChatSourcePicture(source:ImageSource,modifier:Modifier=Modifier,description:String="图片",contentScale:ContentScale=ContentScale.Fit){
+    val bitmap by produceState<android.graphics.Bitmap?>(null,source){value=withContext(Dispatchers.IO){runCatching{ImagePixels.preview(source,512)}.getOrNull()}}
     bitmap?.let{Image(it.asImageBitmap(),description,modifier,contentScale=contentScale)}
 }
 
@@ -47,7 +48,7 @@ import kotlin.math.roundToInt
     val size by animateDpAsState(if(expanded)88.dp else 34.dp,tween(if(expanded)350 else 300,easing=CubicBezierEasing(.0f,.0f,.2f,1f)),label="pending-picture-size")
     Box(Modifier.fillMaxWidth().padding(start=56.dp,top=8.dp,bottom=4.dp).testTag(if(expanded)"pending-picture-expanded"else"pending-picture-collapsed")){
         Box(Modifier.sizeIn(minWidth=48.dp,minHeight=48.dp)){
-            ChatPicture(image.bytes,Modifier.size(size).clip(RoundedCornerShape(8.dp)).border(1.dp,Paper,RoundedCornerShape(8.dp)).clickable(role=Role.Button){if(expanded)onView()else onExpand()}.testTag("pending-picture"),"待发送图片，点击${if(expanded)"放大"else"展开"}",ContentScale.Crop)
+            ChatSourcePicture(image.source,Modifier.size(size).clip(RoundedCornerShape(8.dp)).border(1.dp,Paper,RoundedCornerShape(8.dp)).clickable(role=Role.Button){if(expanded)onView()else onExpand()}.testTag("pending-picture"),"待发送图片，点击${if(expanded)"放大"else"展开"}",ContentScale.Crop)
             if(expanded)IconButton(onClick=onRemove,modifier=Modifier.align(Alignment.TopEnd).offset(16.dp,(-16).dp).size(48.dp).testTag("remove-picture").semantics{contentDescription="移除待发送图片"}){
                 Box(Modifier.size(22.dp).clip(RoundedCornerShape(50)).background(Ink),contentAlignment=Alignment.Center){Text("×",color=Paper,style=MaterialTheme.typography.labelLarge)}
             }
@@ -56,31 +57,32 @@ import kotlin.math.roundToInt
 }
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-@Composable internal fun MessagePicture(vm:AppState,ref:ChatImageRef,onControl:(()->Unit)?=null,onView:(ByteArray)->Unit){
-    val loaded by produceState<Result<android.graphics.Bitmap>?>(null,ref){value=runCatching{vm.processing.read{db->synchronized(ImagePixels.thumbnailGate){ImagePixels.preview(ChatImages.read(db,ref),512)}}}}
+@Composable internal fun MessagePicture(vm:AppState,ref:ChatImageRef,onControl:(()->Unit)?=null,onView:(ImageSource)->Unit){
+    val loaded by produceState<Result<android.graphics.Bitmap>?>(null,ref){value=runCatching{vm.processing.read{db->synchronized(ImagePixels.thumbnailGate){ImagePixels.preview(ChatImages.source(db,ref),512)}}}}
     val bitmap=loaded?.getOrNull();val scope=rememberCoroutineScope();var opening by remember(ref){mutableStateOf(false)};var failed by remember(ref){mutableStateOf(false)}
-    if(bitmap!=null)Image(bitmap.asImageBitmap(),"消息图片，点击放大，长按管理使用方式",Modifier.sizeIn(maxWidth=220.dp,maxHeight=220.dp).width(180.dp).aspectRatio(bitmap.width.toFloat()/bitmap.height).clip(RoundedCornerShape(12.dp)).combinedClickable(role=Role.Button,onClick={if(!opening){opening=true;scope.launch{try{val result=runCatching{vm.processing.read{db->ChatImages.read(db,ref)}};result.onSuccess(onView).onFailure{failed=true}}finally{opening=false}}}},onLongClick=onControl).testTag("message-image-${ref.messageId}"),contentScale=ContentScale.Fit)
+    if(bitmap!=null)Image(bitmap.asImageBitmap(),"消息图片，点击放大，长按管理使用方式",Modifier.sizeIn(maxWidth=220.dp,maxHeight=220.dp).width(180.dp).aspectRatio(bitmap.width.toFloat()/bitmap.height).clip(RoundedCornerShape(12.dp)).combinedClickable(role=Role.Button,onClick={if(!opening){opening=true;scope.launch{try{val result=runCatching{vm.processing.read{db->ChatImages.source(db,ref)}};result.onSuccess(onView).onFailure{failed=true}}finally{opening=false}}}},onLongClick=onControl).testTag("message-image-${ref.messageId}"),contentScale=ContentScale.Fit)
     else if(loaded==null)Box(Modifier.size(180.dp),contentAlignment=Alignment.Center){Text("正在读取图片…",style=MaterialTheme.typography.bodySmall,color=Muted)}
     else Text("图片暂时无法读取",style=MaterialTheme.typography.bodySmall,color=Muted)
     if(failed)Text("原图暂时无法读取，保存文件仍保留",style=MaterialTheme.typography.bodySmall,color=Muted)
 }
 
-@Composable internal fun ChatPictureViewer(bytes:ByteArray,onClose:()->Unit){
-    var scale by remember(bytes){mutableFloatStateOf(1f)};var x by remember(bytes){mutableFloatStateOf(0f)};var y by remember(bytes){mutableFloatStateOf(0f)}
+@Composable internal fun ChatPictureViewer(bytes:ByteArray,onClose:()->Unit)=ChatSourceViewer(remember(bytes){ImageSource(bytes)},onClose)
+@Composable internal fun ChatSourceViewer(source:ImageSource,onClose:()->Unit){
+    var scale by remember(source){mutableFloatStateOf(1f)};var x by remember(source){mutableFloatStateOf(0f)};var y by remember(source){mutableFloatStateOf(0f)}
     var viewport by remember{mutableStateOf(IntSize.Zero)}
-    val info=remember(bytes){ChatImages.inspect(bytes)}
+    val info=remember(source){ChatImages.inspect(source)}
     val fit=if(viewport.width>0&&viewport.height>0)minOf(viewport.width.toFloat()/info.displayWidth,viewport.height.toFloat()/info.displayHeight)else 1f
     val factor=fit*scale
     val left=(viewport.width-info.displayWidth*factor)/2+x;val top=(viewport.height-info.displayHeight*factor)/2+y
     val visible=RectF((-left/factor).coerceIn(0f,info.displayWidth.toFloat()),(-top/factor).coerceIn(0f,info.displayHeight.toFloat()),((viewport.width-left)/factor).coerceIn(0f,info.displayWidth.toFloat()),((viewport.height-top)/factor).coerceIn(0f,info.displayHeight.toFloat()))
-    val preview by produceState<android.graphics.Bitmap?>(null,bytes){value=withContext(Dispatchers.IO){runCatching{ImagePixels.preview(bytes,1024)}.getOrNull()}}
-    val region by produceState<Result<ImagePixels.ViewRegion>?>(null,bytes,viewport,scale,x,y){
-        if(viewport.width>0&&visible.width()>0&&visible.height()>0){delay(100);val next=withContext(Dispatchers.IO){runCatching{ImagePixels.viewRegion(bytes,info,visible)}};ensureActive();value=next}
+    val preview by produceState<android.graphics.Bitmap?>(null,source){value=withContext(Dispatchers.IO){runCatching{ImagePixels.preview(source,1024)}.getOrNull()}}
+    val region by produceState<Result<ImagePixels.ViewRegion>?>(null,source,viewport,scale,x,y){
+        if(viewport.width>0&&visible.width()>0&&visible.height()>0){delay(100);val next=withContext(Dispatchers.IO){runCatching{ImagePixels.viewRegion(source,info,visible)}};ensureActive();value=next}
     }
     Dialog(onDismissRequest=onClose,properties=DialogProperties(usePlatformDefaultWidth=false)){
         Surface(Modifier.fillMaxSize().testTag("image-viewer"),color=Paper){
             Box(Modifier.fillMaxSize().clip(RoundedCornerShape(0.dp))){
-                Canvas(Modifier.fillMaxSize().padding(16.dp).clipToBounds().onSizeChanged{viewport=it}.semantics{contentDescription="图片，可双指缩放和拖动"}.pointerInput(bytes,viewport){detectTransformGestures{centroid,pan,zoom,_->
+                Canvas(Modifier.fillMaxSize().padding(16.dp).clipToBounds().onSizeChanged{viewport=it}.semantics{contentDescription="图片，可双指缩放和拖动"}.pointerInput(source,viewport){detectTransformGestures{centroid,pan,zoom,_->
                     val next=(scale*zoom).coerceIn(1f,maxOf(5f,1f/fit));val change=next/scale
                     x=(x-(centroid.x-size.width/2f)) * change+(centroid.x-size.width/2f)+pan.x
                     y=(y-(centroid.y-size.height/2f)) * change+(centroid.y-size.height/2f)+pan.y
