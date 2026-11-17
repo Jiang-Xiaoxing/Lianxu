@@ -1,7 +1,7 @@
 package app.lianxu.independent
 
 data class Friend(val id: String, val name: String, val bio: String, val prompt: String = "", val tone: Int = 0)
-data class Message(val id: Long, val friendId: String, val text: String, val mine: Boolean, val created: Long, val displayReasoning:String="")
+data class Message(val id: Long, val friendId: String, val text: String, val mine: Boolean, val created: Long, val displayReasoning:String="", val image:ChatImageRef?=null)
 
 data class GeneratedRole(val friend:Friend,val definition:String,val expression:String,val opening:String)
 

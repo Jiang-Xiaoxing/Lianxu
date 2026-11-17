@@ -90,10 +90,10 @@ ${thinkingNaming(a)}
         append("[表达方式]\n${expand(prompts.expression.ifBlank{DEFAULT_EXPRESSION},friend,persona)}\n")
         if(prompts.extra.isNotBlank())append("[用户附加提示]\n${expand(prompts.extra,friend,persona)}\n")
     }
-    fun build(friend:Friend,prompts:RolePrompts,recent:List<Message>,input:String,references:List<PromptReference> = emptyList(),pending:List<String> = emptyList(),now:Instant=Instant.now(),zone:ZoneId=ZoneId.systemDefault(),capacity:Int=16384,outputLimit:Int=2048,recentLimit:Int=40,relatedLimit:Int=15,persona:UserPersona=UserPersona(),openingEligible:Boolean=false,adaptive:Boolean=false,toolReserve:Int=0):PromptBuild {
-        require(recent.all{it.friendId==friend.id});require(input.isNotBlank())
+    fun build(friend:Friend,prompts:RolePrompts,recent:List<Message>,input:String,references:List<PromptReference> = emptyList(),pending:List<String> = emptyList(),now:Instant=Instant.now(),zone:ZoneId=ZoneId.systemDefault(),capacity:Int=16384,outputLimit:Int=2048,recentLimit:Int=40,relatedLimit:Int=15,persona:UserPersona=UserPersona(),openingEligible:Boolean=false,adaptive:Boolean=false,toolReserve:Int=0,inputImage:ChatImageRef?=null,currentMessageId:Long?=null):PromptBuild {
+        require(recent.all{it.friendId==friend.id});require(input.isNotBlank()||inputImage!=null)
         // Each persisted user input is a summarizable source, including a stopped user-only turn.
-        val rounds=recent.count{it.mine&&it.text.isNotBlank()}
+        val rounds=recent.count{it.mine&&(it.text.isNotBlank()||it.image!=null)}
         // Rounds beyond recentLimit no longer block the chat: while a summary is pending or running, every
         // unsummarized round still goes in. Only a real token overflow waits, and only when there are rounds
         // a summary could take away; otherwise the overflow is plain capacity.
@@ -120,9 +120,9 @@ ${thinkingNaming(a)}
         // Informational only (summary trigger reached); it never gates the build.
         val boundary=rounds>=recentLimit
         // Empty stored rows are not speech; leave storage intact and never invent text for them.
-        val history=recent.filter{it.text.isNotBlank()}
+        val history=recent.filter{it.text.isNotBlank()||it.image!=null}
         // History stays verbatim; program-owned sending times belong only to the system reference.
-        prefix+=history.map{m->WireMessage(if(m.mine)"user" else "assistant",m.text,sourceMessageId=m.id.toString())}
+        prefix+=history.map{m->WireMessage(if(m.mine)"user" else "assistant",m.text,sourceMessageId=m.id.toString(),imageRefs=listOfNotNull(m.image))}
         val historyTimes=buildString{
             if(history.isNotEmpty()){
                 append("\n历史消息发送时间（按上方历史消息顺序，不包括当前输入）：\n")
@@ -143,7 +143,7 @@ ${thinkingNaming(a)}
             addAll(prefix)
             if(refs.isNotEmpty())add(WireMessage("system","[有效参考资料，只作参考]\n"+refs.joinToString("\n\n"){"${it.label}:\n${it.text}"},memoryIds=refs.map{it.memoryId}.filter{it.isNotBlank()}))
             if(candidates.isNotEmpty())add(WireMessage("system","[拿不准的记忆，不得当作确定事实。找自然时机问一句，对方回答后，若本次提供记忆写入工具可按证据改正，不要每条追问或一次问很多]\n"+candidates.joinToString("\n")))
-            add(WireMessage("user",input));add(WireMessage("system",tail,turnContext=true))
+            add(WireMessage("user",input,sourceMessageId=currentMessageId?.toString().orEmpty(),imageRefs=listOfNotNull(inputImage)));add(WireMessage("system",tail,turnContext=true))
         }
         val mandatory=references.filter{it.mandatory}
         val coreIds=mandatory.map{it.memoryId}.filter{it.isNotEmpty()}.toSet()

@@ -26,6 +26,7 @@ class ModelConfigState @JvmOverloads constructor(
     var configs by mutableStateOf(emptyList<ModelConfig>());private set
     internal var configRevisions by mutableStateOf(emptyMap<String,String>());private set
     var defaultId by mutableStateOf("");private set
+    var auxiliaryVision by mutableStateOf(false);private set
     var purposes by mutableStateOf(emptyMap<ModelPurpose,String>());private set
     var saving by mutableStateOf(false);private set
     var testing by mutableStateOf(false);private set
@@ -53,8 +54,14 @@ class ModelConfigState @JvmOverloads constructor(
         val readTests=rows.mapNotNull{c->statusStore.testNow(c.id)?.let{c.id to it}}.toMap()
         val readCalls=rows.mapNotNull{c->statusStore.lastCallNow(c.id)?.let{c.id to it}}.toMap()
         // Publish the whole local snapshot before releasing the mutation gate; an older refresh cannot restore cleared tests.
-        configs=rows;defaultId=selected;purposes=selections;configRevisions=revisions;tests=readTests;calls=readCalls
+        auxiliaryVision=ChatImages.enabled(storage.readableDatabase);configs=rows;defaultId=selected;purposes=selections;configRevisions=revisions;tests=readTests;calls=readCalls
     }}
+    fun changeAuxiliaryVision(enabled:Boolean){
+        if(busy)return
+        saving=true
+        viewModelScope.launch{try{withContext(Dispatchers.IO){AppMutationGate.read{ChatImages.setEnabled(storage.writableDatabase,enabled)}};reload()}
+            catch(_:Exception){message("保存辅助看图开关失败，请重试。",true)}finally{saving=false}}
+    }
     /** A test of the saved, unchanged configuration is its "last test"; a draft's result waits for a matching save. */
     private class RequestCredential(val key:String,val revision:String)
     private fun current(config:ModelConfig,credential:RequestCredential)=vault.recordStamp(config.id)==credential.revision

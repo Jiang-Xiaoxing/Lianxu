@@ -10,7 +10,7 @@ internal class RoleAssets(private val repo:ProcessingRepository){
     companion object {
         // Keep each BLOB window comfortably below Android's typical 2 MiB CursorWindow.
         internal fun read(db:android.database.sqlite.SQLiteDatabase,id:String,path:String,size:Int):ByteArray{
-            require(size in 0..BackupArchive.MAX_FILE){"单个资源超过16 MiB"}
+            require(size in 0..BackupArchive.MAX_FILE){"单个资源超过40,000,000字节"}
             val bytes=ByteArray(size);var offset=0
             while(offset<size){val count=minOf(512*1024,size-offset)
                 val chunk=db.rawQuery("SELECT substr(data,?,?) FROM role_assets WHERE friend_id=? AND path=?",arrayOf((offset+1).toString(),count.toString(),id,path)).use{check(it.moveToFirst());it.getBlob(0)}

@@ -103,9 +103,9 @@ class ModelConfigTabsUiTest {
         ui.onNodeWithTag("purpose-help-memory").performScrollTo().performClick()
         ui.onNodeWithText("主动总结记忆使用所选总结记忆模型；未选择时沿用聊天模型。").assertIsDisplayed()
         ui.onNodeWithTag("purpose-help-close").performClick()
-        ui.onNodeWithTag("purpose-vision-limit",useUnmergedTree=true).performScrollTo().assertIsDisplayed()
+        ui.onNodeWithTag("auxiliary-vision-switch",useUnmergedTree=true).performScrollTo().assertIsDisplayed()
         ui.onNodeWithTag("purpose-help-aux-vision").performScrollTo().performClick()
-        ui.onNodeWithText("视觉附件尚未接入。此处保留辅助视觉模型选择，不代表已经能够处理图片或附件。").assertIsDisplayed()
+        ui.onNodeWithText("辅助看图开启时，所选辅助模型接收图片并提供观察，聊天模型接收观察与文字；关闭时图片直接发给所选聊天模型。不检测模型能力，不自动换模型或回退。图片只在发送时上传。").assertIsDisplayed()
         back();back();ui.onNodeWithTag("settings-home").assertIsDisplayed()
     }
     @Test fun savedModelsPurposesAndTabSurviveRotationAndNavigation(){
@@ -168,7 +168,7 @@ class ModelConfigTabsUiTest {
                 ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-add-embedding"))
                 ui.onNodeWithTag("config-add-embedding").assertIsDisplayed()
                 purposes();ui.onNodeWithTag("purpose-select-embedding").performScrollTo().assertIsDisplayed();shot("purposes",saved)
-                ui.onNodeWithTag("purpose-vision-limit",useUnmergedTree=true).performScrollTo().assertIsDisplayed();shot("vision-limit",saved)
+                ui.onNodeWithTag("auxiliary-vision-switch",useUnmergedTree=true).performScrollTo().assertIsDisplayed();shot("vision-limit",saved)
             }
         }
     }

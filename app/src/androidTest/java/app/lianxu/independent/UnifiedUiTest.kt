@@ -47,7 +47,7 @@ class UnifiedUiTest {
         ui.runOnIdle{vm.open("chat",showcase.id)}
         ui.onNodeWithTag("message-input").performTextInput("好，想再和你聊一会儿。")
         shot("03-chat-detail")
-        ui.onNodeWithTag("chat-attach").performClick();ui.onNodeWithText("附件暂未接入").assertIsDisplayed();ui.onNodeWithTag("close-attachment-info").performClick()
+        ui.onNodeWithTag("chat-attach").performClick();cancelNativeImagePicker()
         ui.onNodeWithTag("chat-role-detail").performClick();shot("04-friend-detail");ui.onNodeWithTag("back").performClick()
         ui.onNodeWithTag("message-input").assertTextContains("好，想再和你聊一会儿。",substring=true)
         ui.onNodeWithTag("back").performClick();ui.onNodeWithTag("tab-0").performClick()

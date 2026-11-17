@@ -7,13 +7,17 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 
-data class SourceDialogue(val requestId:String,val source:SourceRef,val user:Message,val assistant:Message?,val zone:String) {
+data class SourceDialogue(val requestId:String,val source:SourceRef,val user:Message,val assistant:Message?,val zone:String,val imageObservations:List<ImageObservation> = emptyList()) {
     val messages get()=listOfNotNull(user,assistant)
-    val tokens get()=messages.sumOf{ConservativeTokens.tokens(it.text)}
-    fun json()=JSONObject().put("request",requestId).put("character",source.characterId).put("turn",source.turnId).put("version",source.version).put("user_id",user.id).put("assistant_id",assistant?.id?:JSONObject.NULL).put("user",user.text).put("assistant",assistant?.text?:JSONObject.NULL).put("user_at",user.created).put("assistant_at",assistant?.created?:JSONObject.NULL).put("zone",zone)
+    val tokens get()=messages.sumOf{ConservativeTokens.tokens(it.text)}+imageObservations.sumOf{ConservativeTokens.tokens(it.text)}
+    fun json()=JSONObject().put("request",requestId).put("character",source.characterId).put("turn",source.turnId).put("version",source.version).put("user_id",user.id).put("assistant_id",assistant?.id?:JSONObject.NULL).put("user",user.text).put("assistant",assistant?.text?:JSONObject.NULL).put("user_at",user.created).put("assistant_at",assistant?.created?:JSONObject.NULL).put("zone",zone).put("image_origin",user.image?.let{JSONObject(com.google.gson.Gson().toJson(it))}?:JSONObject.NULL).put("image_observations",JSONArray().apply{imageObservations.forEach{put(it.json())}})
     companion object {fun from(j:JSONObject):SourceDialogue {
         val friend=j.getString("character");val ref=SourceRef(friend,j.getLong("turn"),j.getLong("version"))
-        return SourceDialogue(j.getString("request"),ref,Message(j.getLong("user_id"),friend,j.getString("user"),true,j.getLong("user_at")),if(j.isNull("assistant_id"))null else Message(j.getLong("assistant_id"),friend,j.getString("assistant"),false,j.getLong("assistant_at")),j.getString("zone"))
+        val image=j.optJSONObject("image_origin")?.let{raw->
+            val kind=raw.optString("storageKind","legacy-normalized");require(kind in setOf("original","legacy-normalized","chunked-original"))
+            com.google.gson.Gson().fromJson(raw.toString(),ChatImageRef::class.java).copy(storageKind=kind)
+        }
+        return SourceDialogue(j.getString("request"),ref,Message(j.getLong("user_id"),friend,j.getString("user"),true,j.getLong("user_at"),image=image),if(j.isNull("assistant_id"))null else Message(j.getLong("assistant_id"),friend,j.getString("assistant"),false,j.getLong("assistant_at")),j.getString("zone"),(j.optJSONArray("image_observations")?:JSONArray()).let{a->(0 until a.length()).map{ImageObservation.from(a.getJSONObject(it))}})
     }}
 }
 // Live history/batch/recall counts belong to MemoryRules. Old serialized no-op budgets are ignored on read.
@@ -28,9 +32,9 @@ enum class MemoryCategory(val label:String,val modern:Boolean=false) {
 }
 enum class MemoryAbout(val label:String){ USER("用户"),CHARACTER("角色"),BOTH("双方") }
 enum class MemoryLife { ACTIVE,CANCELLED,COMPLETED,RETRACTED }
-data class MemoryEvidence(val source:SourceRef,val side:String,val quote:String,val snapshot:String,val sourceAt:Long,val zone:String) {
-    fun json()=JSONObject().put("character",source.characterId).put("turn",source.turnId).put("version",source.version).put("side",side).put("quote",quote).put("snapshot",snapshot).put("at",sourceAt).put("zone",zone)
-    companion object{fun from(j:JSONObject)=MemoryEvidence(SourceRef(j.getString("character"),j.getLong("turn"),j.getLong("version")),j.getString("side"),j.getString("quote"),j.getString("snapshot"),j.getLong("at"),j.getString("zone"))}
+data class MemoryEvidence(val source:SourceRef,val side:String,val quote:String,val snapshot:String,val sourceAt:Long,val zone:String,val image:ImageEvidence?=null) {
+    fun json()=JSONObject().put("character",source.characterId).put("turn",source.turnId).put("version",source.version).put("side",side).put("quote",quote).put("snapshot",snapshot).put("at",sourceAt).put("zone",zone).put("image",image?.json()?:JSONObject.NULL)
+    companion object{fun from(j:JSONObject)=MemoryEvidence(SourceRef(j.getString("character"),j.getLong("turn"),j.getLong("version")),j.getString("side"),j.getString("quote"),j.getString("snapshot"),j.getLong("at"),j.getString("zone"),j.optJSONObject("image")?.let(ImageEvidence::from))}
 }
 data class StoredMemory(val id:String,val friendId:String,val category:MemoryCategory,val text:String,val life:MemoryLife=MemoryLife.ACTIVE,val core:Boolean=false,val locked:Boolean=false,val manual:Boolean=false,val version:Int=1,val valid:Boolean=true,val dateExpression:String?=null,val eventDate:String?=null,val evidence:List<MemoryEvidence> = emptyList(),val about:MemoryAbout?=null,val tags:List<String> = emptyList(),val dueExpression:String?=null,val dueDate:String?=null,val expiresAt:Long?=null,val dateType:String?=null,val annualMonthDay:String?=null,val createdAt:Long=evidence.minOfOrNull{it.sourceAt}?:AppServices.companionClock(),val importance:MemoryImportance?=null,val gist:String?=null,val trace:String?=null,val userDeleted:Boolean=false,val deletedAt:Long?=null) {
     var createdAtStored:Boolean=true

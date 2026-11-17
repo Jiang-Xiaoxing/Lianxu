@@ -12,6 +12,8 @@ import java.util.UUID
 
 /** One live draft and its submission receipt survive an Activity rebuild together. */
 internal class ChatDraftState(text:String="",version:Long=0){
+    val image=mutableStateOf<PendingChatImage?>(null)
+    val importing=mutableStateOf(false)
     val text=mutableStateOf(text)
     val version=mutableLongStateOf(version)
     val submittedVersion=mutableLongStateOf(-1)
@@ -21,6 +23,8 @@ internal class ChatDraftState(text:String="",version:Long=0){
 
 class AppState @JvmOverloads constructor(application: Application, client:TextChatClient=AppServices.createTextClient(),vaultNamespace:String=AppServices.vaultNamespace) : AndroidViewModel(application) {
     internal val chatDrafts=mutableMapOf<String,ChatDraftState>()
+    override fun onCleared(){chatDrafts.values.forEach{it.image.value?.close()};super.onCleared()}
+    internal var imagePickerRole:String?=null
     private val store = Store(application,AppServices.databaseName)
     private val ledger=ChatLedger(store)
     private val modelVault=ModelVault(application,vaultNamespace,store)
@@ -180,8 +184,8 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     private suspend fun recoverProcessing(){memory.recover();ReplyAccountingScheduler.recover(store)}
     fun foreground(){if(ready)viewModelScope.launch{runCatching{companion.checkContinuity(CompanionRuntime.owner);settleCompanion();reload();recoverProcessing()}}}
     // A chat attempt belongs to its role, not to the currently visible page.
-    fun open(page: String, id: String = "") { if(page=="detail") detailReturn=this.page;if(page=="settings-memory")memorySettingsReturn=this.page;if(page=="processing-role")processingReturn=if(this.page=="detail")"detail" else "processing"; cancelSearch(); this.page=page; activeId=id; error="" }
-    fun back() { if(page=="chat" && memoryChatReturn){memoryChatReturn=false;memoryChatRequest.consume();page="processing-role";return}; if(page=="search-detail")page="search" else if(page=="settings-memory")page=memorySettingsReturn else if(page=="role-prompts"||page=="role-learning"||page=="role-relationship"||page=="role-companion")page="detail" else if(page=="processing-role")page=processingReturn else if(page=="detail") page=detailReturn else { cancelSearch(); page="home" }; error="" }
+    fun open(page: String, id: String = "") { if(this.page=="chat"&&(page!="chat"||id!=activeId))runner.cancelImageAttempt(activeId); if(page=="detail") detailReturn=this.page;if(page=="settings-memory")memorySettingsReturn=this.page;if(page=="processing-role")processingReturn=if(this.page=="detail")"detail" else "processing"; cancelSearch(); this.page=page; activeId=id; error="" }
+    fun back() { if(page=="chat")runner.cancelImageAttempt(activeId); if(page=="chat" && memoryChatReturn){memoryChatReturn=false;memoryChatRequest.consume();page="processing-role";return}; if(page=="search-detail")page="search" else if(page=="settings-memory")page=memorySettingsReturn else if(page=="role-prompts"||page=="role-learning"||page=="role-relationship"||page=="role-companion")page="detail" else if(page=="processing-role")page=processingReturn else if(page=="detail") page=detailReturn else { cancelSearch(); page="home" }; error="" }
     fun home() {cancelSearch(); page="home"; error="" }
     fun startSearch(){cancelSearch();page="search";error=""}
     fun updateSearchRequirements(value:String){searchRequirements=value.take(2000)}
@@ -211,9 +215,10 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
         val f=Friend(UUID.randomUUID().toString(),name.trim(),bio.trim(),prompt.trim())
         save { store.add(listOf(f),demoGreeting=false); reload(); open("chat",f.id) }
     }
-    fun send(text:String,onPersisted:()->Unit={}):Boolean {
+    fun send(text:String,onPersisted:()->Unit={}):Boolean=sendImage(text,null,onPersisted)
+    fun sendImage(text:String,image:PendingChatImage?,onPersisted:()->Unit={}):Boolean {
         if(saving||friends.none{it.id==activeId})return false
-        return runner.send(activeId,text,onPersisted)
+        return runner.sendImage(activeId,text,image,onPersisted)
     }
     fun cancelChat(friendId:String){runner.cancel(friendId)}
     fun cancelProcessing(id:String){memory.cancel(id)}

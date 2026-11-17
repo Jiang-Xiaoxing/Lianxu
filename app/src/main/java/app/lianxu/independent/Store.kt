@@ -8,7 +8,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** Own app-private database. Primary key on friend is also the unique conversation key. */
-class Store(context: Context, name: String = AppServices.databaseName) : SQLiteOpenHelper(context, name, null, 16) {
+class Store(context: Context, name: String = AppServices.databaseName) : SQLiteOpenHelper(context, name, null, 18) {
+    init {ImageDisk.cacheDirectory=context.applicationContext.cacheDir}
     internal val applicationContext=context.applicationContext
     internal val memorySummary=MemorySummaryGuard()
     /**
@@ -43,6 +44,7 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
         DatabaseRelationSnapshots.create(db)
         ChatMemoryPills.createSchema(db)
         MemoryForgetting.migrate(db,AppServices.companionClock())
+        ChatImages.create(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) { if(oldVersion<2)ChatLedger.createSchema(db);if(oldVersion<5)ProcessingSchema.create(db);if(oldVersion<7)CompanionRepository.create(db);if(oldVersion in 7 until 8)CompanionRepository.create(db);if(oldVersion<9)RetiredRelationshipMigration.remove(db);if(oldVersion<10)createReasoningSchema(db);if(oldVersion<11){
         db.execSQL("ALTER TABLE companion_opportunities RENAME TO relation_old_opportunities")
@@ -55,7 +57,7 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
         // Databases created by an earlier build of this version already have the table but not the column.
         ChatMemoryPills.createSchema(db)
         if(!hasColumn(db,"memory_operations","saved"))db.execSQL("ALTER TABLE memory_operations ADD COLUMN saved INTEGER NOT NULL DEFAULT 0")
-    };if(oldVersion<16)ContactFailures.migrate(db) }
+    };if(oldVersion<16)ContactFailures.migrate(db);if(oldVersion<17)ChatImages.create(db);if(oldVersion<18)ChatImages.migrateOriginals(db) }
     private fun hasColumn(db:SQLiteDatabase,table:String,column:String)=column in columns(db,table)
     private fun columns(db:SQLiteDatabase,table:String)=db.rawQuery("PRAGMA table_info($table)",null).use{c->buildList{while(c.moveToNext())add(c.getString(1))}}
     private fun createReasoningSchema(db:SQLiteDatabase){
@@ -71,9 +73,9 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
     private fun insertMessage(db: SQLiteDatabase, id: String, text: String, mine: Boolean) {
         db.insertOrThrow("messages", null, ContentValues().apply { put("friend_id", id); put("body", text); put("mine", if (mine) 1 else 0); put("created", System.currentTimeMillis()) })
     }
-    private val messageSelect="SELECT m.id,m.friend_id,CASE WHEN COALESCE(s.deleted,0)=1 THEN '【已撤回】' ELSE m.body END,m.mine,m.created,CASE WHEN m.mine=0 AND COALESCE(s.deleted,0)=0 THEN COALESCE(r.display_reasoning,'') ELSE '' END FROM messages m LEFT JOIN message_state s ON s.message_id=m.id LEFT JOIN message_reasoning r ON r.message_id=m.id"
+    private val messageSelect="SELECT m.id,m.friend_id,CASE WHEN COALESCE(s.deleted,0)=1 THEN '【已撤回】' ELSE m.body END,m.mine,m.created,CASE WHEN m.mine=0 AND COALESCE(s.deleted,0)=0 THEN COALESCE(r.display_reasoning,'') ELSE '' END,COALESCE(s.deleted,0) FROM messages m LEFT JOIN message_state s ON s.message_id=m.id LEFT JOIN message_reasoning r ON r.message_id=m.id"
     private fun readMessages(extra:String,args:Array<String>?=null):List<Message> =
-        readableDatabase.rawQuery("$messageSelect $extra",args).use { c -> buildList { while (c.moveToNext()) add(Message(c.getLong(0),c.getString(1),c.getString(2),c.getInt(3)==1,c.getLong(4),c.getString(5))) } }
+        readableDatabase.rawQuery("$messageSelect $extra",args).use { c -> buildList { while (c.moveToNext()) add(Message(c.getLong(0),c.getString(1),c.getString(2),c.getInt(3)==1,c.getLong(4),c.getString(5),if(c.getInt(6)==1)null else ChatImages.ref(readableDatabase,c.getLong(0)))) } }
     suspend fun friends(): List<Friend> = withContext(Dispatchers.IO) {
         readableDatabase.rawQuery("SELECT id,name,bio,prompt,tone FROM friends ORDER BY rowid", null).use { c -> buildList { while (c.moveToNext()) add(Friend(c.getString(0),c.getString(1),c.getString(2),c.getString(3),c.getInt(4))) } }
     }

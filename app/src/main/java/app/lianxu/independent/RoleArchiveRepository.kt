@@ -11,7 +11,7 @@ import java.util.UUID
 
 /** Selected-role snapshots only. Preview is optimistic; commit rechecks inside one SQLite transaction. */
 internal class RoleArchiveRepository(private val store:Store) {
-    internal fun validateForBackup(db:SQLiteDatabase,p:RoleArchive.Package)=validate(db,p)
+    internal fun validateForBackup(db:SQLiteDatabase,p:RoleArchive.Package,imageRows:JsonArray=JsonArray())=validate(db,p,imageRows)
     data class Preview(val archive:RoleArchive.Package,val target:String?,val fingerprint:String?,val impact:String)
     private val order=RoleArchive.tables.keys.toList()
     private fun rows(db:SQLiteDatabase,table:String,id:String):JsonArray {
@@ -39,7 +39,7 @@ internal class RoleArchiveRepository(private val store:Store) {
         data["chat_turns"]?.asJsonArray?.forEach{v->v.asJsonObject.apply{addProperty("config_id","");addProperty("owner_session","")}}
         return JsonObject().apply{addProperty("scope",if(records)"records" else "role");add("character",friend);add("prompts",prompts);add("records",data)}
     }
-    suspend fun export(id:String,records:Boolean):JsonObject=atomic{db->idle(db,id);snapshot(db,id,records).also{validate(db,RoleArchive.validate(it.toString().toByteArray()))}}
+    suspend fun export(id:String,records:Boolean):JsonObject=atomic{db->if(records)require(!db.rawQuery("SELECT 1 FROM chat_images WHERE friend_id=? LIMIT 1",arrayOf(id)).use{it.moveToFirst()}){"聊天含图片，请使用设置中的完整数据备份"};idle(db,id);snapshot(db,id,records).also{validate(db,RoleArchive.validate(it.toString().toByteArray()))}}
     suspend fun preview(archive:RoleArchive.Package,target:String?):Preview=atomic{db->
         validate(db,archive)
         if(target==null)Preview(archive,null,null,"新增独立角色，不修改任何现有角色。\n${archive.summary}")
@@ -101,6 +101,11 @@ internal class RoleArchiveRepository(private val store:Store) {
         RelationStorage.write(db,id,RelationHistory(changes=listOf(RelationChange(0,view.parameters,view.parameters,view.label))))
         clearJobs(db,id)
         db.delete("candidate_injections","friend_id=?",arrayOf(id))
+        val picturePaths=db.rawQuery("SELECT path FROM role_assets WHERE friend_id=? AND kind='attachment' AND path LIKE 'chat-images/%'",arrayOf(id)).use{c->buildList{while(c.moveToNext())add(c.getString(0))}}
+        ImageDisk.clearReadCache()
+        db.delete("image_observations","friend_id=?",arrayOf(id))
+        db.delete("chat_images","friend_id=?",arrayOf(id))
+        picturePaths.forEach{db.delete("role_assets","friend_id=? AND path=?",arrayOf(id,it))}
         for(table in order.reversed()){
             val predicate=when(table){"message_state","message_history"->"message_id IN (SELECT id FROM messages WHERE friend_id=?)";"memory_history"->"memory_id IN (SELECT id FROM memory_current WHERE friend_id=?)";else->"friend_id=?"}
             db.delete(table,predicate,arrayOf(id))
@@ -135,7 +140,7 @@ internal class RoleArchiveRepository(private val store:Store) {
             db.insertOrThrow(table,null,values(row))
         }}
     }
-    private fun validate(db:SQLiteDatabase,p:RoleArchive.Package){
+    private fun validate(db:SQLiteDatabase,p:RoleArchive.Package,imageRows:JsonArray=JsonArray()){
         val root=p.root();RolePromptStore.decode(root["prompts"].toString())
         if(p.scope=="role")return
         val id=root["character"].asJsonObject["id"].asString;val data=root["records"].asJsonObject
@@ -167,8 +172,18 @@ internal class RoleArchiveRepository(private val store:Store) {
         }
         fun source(ref:SourceRef,current:Boolean=false){val t=turns[ref.turnId]?:error("来源原话不在包内");require(ref.characterId==id&&ref.version>0&&ref.version<=t["source_revision"].asLong){"来源归属或版本无效"};if(current)require(t["state"].asString in setOf("COMPLETED","SUPERSEDED")&&ref.version==t["source_revision"].asLong&&listOfNotNull(ref.turnId,t["assistant_message_id"].takeUnless{it.isJsonNull}?.asLong).none{states[it]?.get("deleted")?.asLong==1L}){"有效来源已经变化"}}
         fun memory(raw:String,checkCurrent:Boolean=false):StoredMemory {RoleArchive.parse(raw.toByteArray());val m=StoredMemory.from(JSONObject(raw));require(m.friendId==id&&m.version>0&&m.text.length in 1..8000)
-            m.evidence.forEach{e->source(e.source,checkCurrent&&m.valid);require(e.side in setOf("user","assistant")&&e.quote.isNotBlank()&&e.quote in e.snapshot);java.time.ZoneId.of(e.zone)
-                val t=turns.getValue(e.source.turnId);val mid=if(e.side=="user")e.source.turnId else t["assistant_message_id"].asLong
+            m.evidence.forEach{e->source(e.source,checkCurrent&&m.valid);require(e.side in setOf("user","assistant","image")&&e.quote.isNotBlank()&&e.quote in e.snapshot);java.time.ZoneId.of(e.zone)
+                val t=turns.getValue(e.source.turnId)
+                if(e.side=="image"){
+                    val proof=e.image?:error("图片证据缺少出处")
+                    source(proof.imageSource,checkCurrent&&m.valid)
+                    val observation=imageRows.map{it.asJsonObject}.singleOrNull{it["id"].asString==proof.observationId}?:error("图片观察出处不在备份中，请使用完整备份")
+                    require(observation["friend_id"].asString==id&&observation["message_id"].asLong==proof.imageSource.turnId&&observation["source_revision"].asLong==proof.imageSource.version&&observation["image_hash"].asString==proof.hash&&observation["question_message_id"].asLong==e.source.turnId&&observation["question_revision"].asLong==e.source.version&&observation["body"].asString==e.snapshot){"图片证据与观察不一致"}
+                    require(e.sourceAt==messages.getValue(e.source.turnId)["created"].asLong&&e.zone==t["source_zone"].asString)
+                    return@forEach
+                }
+                require(e.image==null)
+                val mid=if(e.side=="user")e.source.turnId else t["assistant_message_id"].asLong
                 require(e.sourceAt==messages.getValue(mid)["created"].asLong && e.zone==t["source_zone"].asString){"来源时间或时区不一致"}
                 if(e.source.version==t["source_revision"].asLong)require(messages.getValue(mid)["body"].asString==e.snapshot){"当前来源快照不一致"}
                 require(messages[mid]?.get("body")?.asString==e.snapshot||history.any{it["message_id"].asLong==mid&&it["body"].asString==e.snapshot}){"来源快照与包内原话不一致"}

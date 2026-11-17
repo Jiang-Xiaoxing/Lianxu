@@ -33,7 +33,7 @@ internal object MemoryOperationFormat {
                     val missing=listOf("turn","version","side","quote").filter{!entry.has(it)||entry.isNull(it)}
                     if(missing.isNotEmpty())problems+="evidence[${i+1}] 缺少 ${missing.joinToString("/")}；也可直接用S编号"
                     for(field in listOf("turn","version"))if(field !in missing&&runCatching{entry.getLong(field)}.isFailure)problems+="evidence[${i+1}].$field 必须是有效轮次或版本整数"
-                    if("side" !in missing&&runCatching{entry.getString("side") in setOf("user","assistant")}.getOrDefault(false).not())problems+="evidence[${i+1}].side 只能是 user/assistant"
+                    if("side" !in missing&&runCatching{entry.getString("side") in setOf("user","assistant","image")}.getOrDefault(false).not())problems+="evidence[${i+1}].side 只能是 user/assistant/image"
                     if("quote" !in missing&&runCatching{entry.getString("quote").isNotBlank()}.getOrDefault(false).not())problems+="evidence[${i+1}].quote 必须是非空原话"
                 }
                 else->problems+="evidence[${i+1}] 必须是S编号或完整来源对象"

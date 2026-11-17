@@ -275,12 +275,12 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
         val affected=mutableSetOf<String>()
         repo.memories(db,role).forEach{m->
             val historical=db.rawQuery("SELECT json FROM memory_history WHERE memory_id=?",arrayOf(m.id)).use{c->buildList{while(c.moveToNext())add(StoredMemory.from(org.json.JSONObject(c.getString(0))))}}
-            if((historical+m).any{it.evidence.any{e->e.source.characterId==role&&e.source.turnId==id}}){
+            if((historical+m).any{it.evidence.any{e->(e.source.characterId==role&&e.source.turnId==id)||(e.image?.imageSource?.characterId==role&&e.image?.imageSource?.turnId==id)}}){
                 affected.add(m.id)
                 if(m.valid)repo.saveMemory(db,m.copy(version=m.version+1,valid=false))
             }
         }
-        repo.candidates(db,role).filter{it.targetId in affected||it.proposed.evidence.any{e->e.source.characterId==role&&e.source.turnId==id}}.forEach{repo.invalidateCandidate(db,role,it.id)}
+        repo.candidates(db,role).filter{it.targetId in affected||it.proposed.evidence.any{e->(e.source.characterId==role&&e.source.turnId==id)||(e.image?.imageSource?.characterId==role&&e.image?.imageSource?.turnId==id)}}.forEach{repo.invalidateCandidate(db,role,it.id)}
         bump(db,role)
         relationship(db,role)
     }
