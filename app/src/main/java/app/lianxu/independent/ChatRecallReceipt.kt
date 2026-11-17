@@ -20,6 +20,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /** Result tone appears softly; the real label, content and reply never wait for it. */
 @Composable internal fun ChatRecallReceipt(group:RecallReceiptGroup,modifier:Modifier=Modifier,loadContents:(suspend(List<ChatToolActivity>)->List<RecallContentPart>)?=null){
@@ -33,19 +34,14 @@ import androidx.compose.ui.unit.dp
     val failureText=if(dark)Color(0xFFE9B6B1) else Color(0xFF915753)
     val successText=if(dark)Color(0xFFAFC9B5) else Color(0xFF4E7058)
     val foreground=when{group.hasFailure->failureText;group.succeeded->successText;else->Muted}
-    val background=when{
-        group.hasFailure->if(dark)Color(0xFF493230)else Color(0xFFF8EDEC)
-        group.succeeded->if(dark)Color(0xFF29382E)else Color(0xFFEAF1E9)
-        else->Paper
-    }
     val reveal=chatCapsuleReveal(toolCapsuleKey(group.items.first(),LocalChatCapsuleOwner.current),group.items.none{it.state in setOf("running","staged")})
     Column(modifier.testTag("recall-group-${group.id}"),verticalArrangement=Arrangement.spacedBy(4.dp)){
-        Surface(shape=RoundedCornerShape(50),color=lerp(Paper,background,reveal),border=BorderStroke(.5.dp,Line),modifier=Modifier.widthIn(max=280.dp).testTag("tool-result-${group.id}")){
+        Box(Modifier.widthIn(max=280.dp).testTag("tool-result-${group.id}")){
             Row(Modifier.clickable(role=Role.Button){expanded=!expanded}.testTag("recall-toggle-${group.id}")
                 .semantics{contentDescription=if(expanded)"收起回想结果"else"查看回想结果";stateDescription=if(expanded)"已展开"else"已收起"}
-                .padding(start=14.dp,end=10.dp,top=8.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){
-                ChatCapsuleLabel(group.label(),reveal,MaterialTheme.typography.labelLarge,foreground,Modifier.weight(1f,fill=false),"让我想一想")
-                Box(Modifier.rotate(if(expanded)0f else 180f)){ControlIcon("up",lerp(Muted,foreground,reveal),16.dp)}
+                .padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){
+                ChatCapsuleLabel(group.label(),reveal,MaterialTheme.typography.labelSmall.copy(fontSize=13.sp,lineHeight=18.sp),foreground,Modifier.weight(1f,fill=false),"让我想一想")
+                Box(Modifier.rotate(if(expanded)0f else 180f)){ControlIcon("up",lerp(Muted,foreground,reveal),14.dp)}
             }
         }
         if(expanded)Surface(Modifier.widthIn(max=280.dp).testTag("recall-results-${group.id}"),shape=RoundedCornerShape(14.dp),color=Paper,border=BorderStroke(.5.dp,Line)){

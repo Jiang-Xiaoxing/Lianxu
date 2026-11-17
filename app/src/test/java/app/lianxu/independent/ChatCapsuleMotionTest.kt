@@ -53,7 +53,7 @@ class ChatCapsuleMotionTest {
         val raw=listOf(hit,failed);val copy=raw.toList();val state=chatCapsuleFrames(raw,emptyList())
         val group=recallReceiptGroups(raw).getValue(hit.id)
         assertEquals("想起来了 · 部分失败",group.label());assertTrue(group.hasFailure);assertFalse(group.succeeded)
-        assertTrue(state.getValue(toolCapsuleKey(hit)).contains("ERROR"));assertEquals(copy,raw)
+        assertTrue(state.getValue(toolCapsuleKey(hit)).contains("想起来了"));assertTrue(state.getValue(toolCapsuleKey(failed)).contains("回想出错"));assertEquals(2,state.size);assertEquals(copy,raw)
         assertEquals(RecallDisplayOutcome.NOT_FOUND,failed.copy(detail="").recallOutcome())
     }
     @Test fun everyGenericToolUsesSameArrivalAndStateTransitionPolicy(){
@@ -73,12 +73,12 @@ class ChatCapsuleMotionTest {
         assertEquals(tracker.advance(f,0),tracker.advance(f,100))
         assertTrue(ChatCapsuleMotionTracker(f).advance(f,0).isEmpty())
     }
-    @Test fun previewLatestStateWinsAndSupersededRecordsStayHidden(){
+    @Test fun previewLatestStateWinsAndEachActualFailedRecordStaysVisible(){
         val r=row(tool="companion_record").copy(kind=ChatToolActivity.WRITE)
         val old=r.copy(id="failed",state="failed")
         val f=chatCapsuleFrames(listOf(old,r,r.copy(state="success")),emptyList())
-        assertEquals(1,f.size);assertTrue(f.getValue(toolCapsuleKey(r)).startsWith("result|success:"))
-        assertFalse(f.containsKey(toolCapsuleKey(old)))
+        assertEquals(2,f.size);assertTrue(f.getValue(toolCapsuleKey(r)).startsWith("result|success:"))
+        assertTrue(f.getValue(toolCapsuleKey(old)).startsWith("result|failed:"))
     }
     @Test fun sameToolIdInDifferentTurnsNeverSharesMotion(){
         val r=row();val first=chatCapsuleFrames(listOf(r),emptyList(),"first-turn")
@@ -122,16 +122,17 @@ class ChatCapsuleMotionTest {
         assertEquals(0L,actual.startedAt);assertTrue(actual.ready);assertFalse(actual.loading(5000))
         assertEquals(.5f,actual.progress(5175),.0001f);assertEquals(1f,actual.progress(5350),0f)
     }
-    @Test fun fastIntermediateSuccessNeverBecomesVisibleBeforeMixedFailure(){
+    @Test fun separateCallsKeepIndependentNeutralTransitionsAndOutcomes(){
         val tracker=ChatCapsuleMotionTracker(emptyMap());val r=row()
         tracker.advance(frames(r),0)
         val success=tracker.advance(frames(r.copy(state="success")),10).values.single()
         assertEquals(0f,success.progress(10),0f)
         val hit=r.copy(state="success");val failure=row("failed","failed").copy(detail="失败")
-        val mixed=tracker.advance(frames(hit,failure),20).values.single()
-        assertEquals(0L,mixed.startedAt);assertEquals(0f,mixed.progress(1499),0f)
-        assertEquals("想起来了 · 部分失败",recallReceiptGroups(listOf(hit,failure)).getValue(hit.id).label())
-        assertEquals(1f,mixed.progress(1850),0f)
+        val mixed=tracker.advance(frames(hit,failure),20)
+        val hitEvent=mixed.getValue(toolCapsuleKey(hit));val failureEvent=mixed.getValue(toolCapsuleKey(failure))
+        assertEquals(0L,hitEvent.startedAt);assertEquals(20L,failureEvent.startedAt)
+        assertEquals(0f,hitEvent.progress(1499),0f);assertEquals(0f,failureEvent.progress(1519),0f)
+        assertEquals(1f,hitEvent.progress(1850),0f);assertEquals(1f,failureEvent.progress(1870),0f)
     }
     @Test fun aNewResultAfterPriorRevealGetsNeutralLoadingRatherThanOldSuccess(){
         val tracker=ChatCapsuleMotionTracker(emptyMap());val r=row(state="success")

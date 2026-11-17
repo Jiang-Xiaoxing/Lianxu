@@ -58,8 +58,10 @@ class MemoryPillExpandUiTest {
         assertEquals("暂存阶段应有回执",1,live.size)
         ui.waitUntil(15000){ui.onAllNodesWithTag("tool-result-${live[0].id}").fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithTag("tool-result-${live[0].id}").assertExists()
-        ui.onNodeWithTag("tool-receipt-toggle-${live[0].id}").assertDoesNotExist()
+        ui.onNodeWithTag("tool-receipt-toggle-${live[0].id}").assertExists().performClick()
+        ui.onNodeWithTag("memory-peek-${live[0].id}").assertDoesNotExist()
         assertTrue("暂存时不能显示已保存",ui.onAllNodesWithText("已保存").fetchSemanticsNodes().isEmpty())
+        ui.onNodeWithTag("tool-receipt-toggle-${live[0].id}").performClick()
         // 提交完成
         ui.waitUntil(30000){settled()}
         ui.waitForIdle()
