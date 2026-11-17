@@ -3,6 +3,8 @@ package app.lianxu.independent
 import android.content.ContentValues
 import android.database.sqlite.SQLiteDatabase
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
@@ -29,6 +31,7 @@ internal class ChatImageRoute(private val store:Store,private val vault:ModelVau
         request.messages.sumOf{ConservativeTokens.tokens(it.content)+it.images.sumOf{image->ConservativeTokens.tokens(image.description)+2048}+8}+request.outputLimit<=config.contextTokens
     private fun fits(config:ModelConfig,request:TextChatRequest)=ImageWire.fits(request)&&ImageWire.size(ImageWire.body(config,request,false),request)<=ImagePolicy.REQUEST_LIMIT&&capacity(config,request)
     private suspend fun <T> prepared(request:TextChatRequest,chatKey:String,send:suspend(TextChatRequest)->T):T=withContext(Dispatchers.IO){
+        try{
         requireCurrent()
         val refs=request.messages.flatMap{it.imageRefs}.distinct()
         if(refs.isEmpty())return@withContext send(request)
@@ -59,6 +62,11 @@ internal class ChatImageRoute(private val store:Store,private val vault:ModelVau
             val text=refs.joinToString("\n\n"){ref->"[辅助模型图片观察，非用户原话；来源消息${ref.messageId}；原件/保存文件SHA256 ${ref.hash}；问题消息${turn.userMessageId}]\n${observations.getValue(ref).text}"}
             val ready=request.copy(messages=messages+WireMessage("system",text));if(!capacity(chat,ready))throw CompanionModelFailure(ChatFailure.CONTEXT_CAPACITY)
             requireCurrent();send(ready)
+        }
+        }catch(e:Exception){
+            // A cancelled provider may return late. Preserve coroutine cancellation so the
+            // runner settles a user-stopped partial reply, rather than reporting source drift.
+            currentCoroutineContext().ensureActive();throw e
         }
     }
     override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult = prepared(request,key){

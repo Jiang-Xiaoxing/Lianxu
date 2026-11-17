@@ -137,7 +137,11 @@ class ChatReplyStreamingUiTest {
         ui.onNodeWithTag("cancel-turn-${turn.id}").performClick()
         ui.waitUntil(10000){!vm.chatSending}
         finish.complete(Unit)
-        ui.waitUntil(10000){owningJob.isCompleted&&vm.turns.single{it.id==turn.id}.state==TurnState.SUPERSEDED}
+        try{ui.waitUntil(10000){owningJob.isCompleted&&vm.turns.single{it.id==turn.id}.state==TurnState.SUPERSEDED}}
+        catch(e:Throwable){
+            val folder=File(InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null),"cancel-diagnostic").apply{mkdirs()}
+            val state=vm.turns.single{it.id==turn.id};File(folder,"state.json").writeText(org.json.JSONObject().put("state",state.state.name).put("failure",state.failure?.name).put("jobCompleted",owningJob.isCompleted).put("jobCancelled",owningJob.isCancelled).put("sending",vm.chatSending).put("messages",vm.messages.filter{it.friendId=="seed-lin"}.map{it.text}).toString(2));throw e
+        }
         ui.runOnIdle{vm.open("detail","seed-lin");vm.back()}
         ui.onNodeWithTag("reply-preview-$owner").assertDoesNotExist()
         ui.onNodeWithTag("retry-turn-${turn.id}").assertDoesNotExist()

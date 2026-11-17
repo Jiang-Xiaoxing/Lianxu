@@ -7,8 +7,10 @@ internal object ImmediateMemoryEvidence {
     fun base(old:StoredMemory?,proposed:StoredMemory?,alreadyResolved:Boolean=false):StoredMemory?=
         if(alreadyResolved)old?:throw ProcessingRejected("SOURCE_CHANGED")else proposed?:old
     fun visible(proof:MemoryEvidence,messages:List<WireMessage>,current:Boolean=false)=messages.any{m->
-        m.role=="user"&&if(current&&m.sourceMessageId.isEmpty())m.content.removeSuffix("\n\n"+CompanionPrompt.THINKING_REMINDER)==proof.snapshot
-        else m.sourceMessageId==proof.source.turnId.toString()&&m.sourcePrefix in 0..m.content.length&&m.content.substring(m.sourcePrefix)==proof.snapshot
+        fun matches(body:String)=if(current&&m.sourceMessageId.isEmpty())body==proof.snapshot
+            else m.sourceMessageId==proof.source.turnId.toString()&&m.sourcePrefix in 0..body.length&&body.substring(m.sourcePrefix)==proof.snapshot
+        // Match literal user text first; only the current message can carry this program suffix.
+        m.role=="user"&&(matches(m.content)||current&&matches(m.content.removeSuffix("\n\n"+CompanionPrompt.THINKING_REMINDER)))
     }
     fun aliases(current:MemoryEvidence,history:List<MemoryEvidence>,messages:List<WireMessage>):Map<String,MemoryEvidence> = buildMap{
         if(visible(current,messages,true))put("S1",current)

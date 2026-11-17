@@ -8,13 +8,11 @@ internal fun memoryCapsuleKey(pill:MemoryPill)="batch:${pill.friendId}:${pill.ba
 
 /** All actual chat capsules, using existing projections and labels without changing the journal. */
 internal fun chatCapsuleFrames(raw:List<ChatToolActivity>,pills:List<MemoryPill>,owner:String=""):Map<String,String> {
-    val items=mergeRecordPills(raw.associateBy{it.id}.values.toList()).filter{it.state!=ChatToolActivity.SUPERSEDED}
-    val groups=recallReceiptGroups(items)
+    val items=raw.associateBy{it.id}.values.toList().filter{it.state!=ChatToolActivity.SUPERSEDED}
     return buildMap{
         items.forEach{item->
-            val group=groups[item.id]
-            if(group==null)put(toolCapsuleKey(item,owner),(if(item.state in setOf("running","staged"))"pending|"else"result|")+"${item.state}:${item.label()}")
-            else if(group.id==item.id)put(toolCapsuleKey(item,owner),(if(group.items.any{it.state in setOf("running","staged")})"pending|"else"result|")+group.items.joinToString("|"){"${it.id}:${it.state}:${it.recallOutcome()}"})
+            val shown=if(item.tool in ChatToolActivity.RECALL_TOOLS)item.recallOutcome().label else item.label()
+            put(toolCapsuleKey(item,owner),(if(item.state in setOf("running","staged"))"pending|"else"result|")+"${item.state}:$shown")
         }
         pills.forEach{put(memoryCapsuleKey(it),it.text)}
     }

@@ -232,7 +232,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
                                     val shape=RoundedCornerShape(topStart=if(!group.mine)6.dp else 18.dp,topEnd=if(group.mine)6.dp else 18.dp,bottomStart=18.dp,bottomEnd=18.dp)
                                     if(!message.mine){
                                         val turn=vm.turns.firstOrNull{it.assistantMessageId==message.id}
-                                        val activities=mergeRecordPills(turn?.toolActivities.orEmpty())
+                                        val activities=turn?.toolActivities.orEmpty()
                                         // Receipts from the final attempt keep the thinking offset they were
                                         // first shown at; the stored reply carries the same accumulated text,
                                         // so the finished message shows thinking A, receipt, thinking B.
@@ -265,7 +265,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
                                 Avatar(friend,32);Spacer(Modifier.width(8.dp))
                                 CompositionLocalProvider(LocalChatCapsuleOwner provides turn.id){
                                 if(turn.state==TurnState.PENDING)ChatReplyDraft(preview,turn,Modifier.width(width),if(pacedTurn==turn.id)pacedShown else 0,viewport,loadRecall=recallReader){count->vm.replyShown(friend.id,turn.id,turn.attempt,count)}
-                                else Column(Modifier.width(width),verticalArrangement=Arrangement.spacedBy(8.dp)){if(turn.assistantMessageId==null)ChatToolActivities(mergeRecordPills(turn.toolActivities),loadRecall=recallReader);ChatTurnControls(vm,turn)}
+                                else Column(Modifier.width(width),verticalArrangement=Arrangement.spacedBy(8.dp)){if(turn.assistantMessageId==null)ChatToolActivities(turn.toolActivities,loadRecall=recallReader);ChatTurnControls(vm,turn)}
                                 }
                             }
                         }

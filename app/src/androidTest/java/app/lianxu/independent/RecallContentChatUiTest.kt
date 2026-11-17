@@ -58,8 +58,9 @@ class RecallContentChatUiTest {
             app.processing.tx{ChatToolJournal.put(it,turnId,hit.copy(id="recall-error",state="failed",detail="合成读取失败",recallRefs=null))}
             app.refreshProcessing()
         }
-        ui.waitUntil(10000){ui.onAllNodesWithText("想起来了 · 部分失败").fetchSemanticsNodes().isNotEmpty()}
-        ui.onNodeWithText(original).assertIsDisplayed();ui.onNodeWithText("回想出错").assertIsDisplayed();shot("chat-recalled-mixed.png")
+        ui.waitUntil(10000){ui.onAllNodesWithTag("tool-result-recall-error").fetchSemanticsNodes().isNotEmpty()}
+        ui.waitUntil(5000){ui.onAllNodesWithText("回想出错").fetchSemanticsNodes().isNotEmpty()}
+        ui.onNodeWithText(original).assertExists();ui.onNodeWithText("回想出错").performScrollTo().assertIsDisplayed();shot("chat-recalled-mixed.png")
         runBlocking{app.processing.manualSave("seed-lin",memoryId,"后来修改成的新内容",MemoryCategory.STATE_FACT,false,false,MemoryAbout.USER);app.refreshProcessing()}
         ui.waitUntil(10000){ui.onAllNodesWithText(original).fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithText("后来修改成的新内容").assertDoesNotExist()
