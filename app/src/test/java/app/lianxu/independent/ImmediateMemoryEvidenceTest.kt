@@ -17,6 +17,21 @@ class ImmediateMemoryEvidenceTest {
         }
     private fun aliases(vararg previous:MemoryEvidence)=ImmediateMemoryEvidence.aliases(confirmation,previous.toList(),previous.map{wire(it)}+WireMessage("user",confirmation.snapshot))
     private fun rejected(code:String,block:()->Unit){assertEquals(code,(runCatching(block).exceptionOrNull() as? ProcessingRejected)?.code)}
+    @Test fun currentMessageWithStoredIdStaysVisibleAfterProgramReminder(){
+        val request=TextChatRequest(listOf(wire(confirmation)))
+        val outgoing=CompanionPrompt.forSend(request,emptyList())
+        val sent=outgoing.messages.single();assertTrue(sent.content.endsWith(CompanionPrompt.THINKING_REMINDER));assertEquals(confirmation.source.turnId.toString(),sent.sourceMessageId)
+        assertEquals(confirmation,ImmediateMemoryEvidence.aliases(confirmation,emptyList(),outgoing.messages)["S1"])
+        assertTrue(ImmediateMemoryEvidence.visible(confirmation,outgoing.messages,true))
+        assertEquals(confirmation.snapshot+"\n\n"+CompanionPrompt.THINKING_REMINDER,sent.content)
+    }
+    @Test fun reminderHandlingKeepsIdentityVerbatimHistoryAndLiteralUserTextGuards(){
+        val sent=wire(confirmation).copy(content=confirmation.snapshot+"\n\n"+CompanionPrompt.THINKING_REMINDER)
+        assertFalse(ImmediateMemoryEvidence.visible(confirmation,listOf(sent),false))
+        for(other in listOf(sent.copy(sourceMessageId="999"),sent.copy(role="assistant"),sent.copy(content="另一句原话\n\n"+CompanionPrompt.THINKING_REMINDER),sent.copy(sourcePrefix=sent.content.length+1)))assertFalse(ImmediateMemoryEvidence.visible(confirmation,listOf(other),true))
+        val literal=proof(5,"用户逐字引用：\n\n"+CompanionPrompt.THINKING_REMINDER)
+        assertTrue(ImmediateMemoryEvidence.visible(literal,listOf(wire(literal)),true));assertTrue(ImmediateMemoryEvidence.visible(literal,listOf(wire(literal)),false))
+    }
     @Test fun previousBirthdayThenConfirmationSavesOriginalSourceWithoutInventedYear(){
         val available=aliases(birthday);val op=args();val source=ImmediateMemoryEvidence.select(op,available)
         val staged=ImmediateMemoryEvidence.stamp(source,op)
