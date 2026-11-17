@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
@@ -65,6 +66,9 @@ import kotlin.coroutines.coroutineContext
 ){
     var query by rememberSaveable(friend.id){mutableStateOf("")}
     var kind by rememberSaveable(friend.id){mutableStateOf("")}
+    val kinds=listOf("","viewpoint","interest","habit")
+    val lists=key(friend.id){listOf(rememberLazyListState(),rememberLazyListState(),rememberLazyListState(),rememberLazyListState())}
+    val selected=kinds.indexOf(kind).coerceAtLeast(0)
     var detailId by rememberSaveable(friend.id){mutableStateOf<String?>(null)}
     fun back(){if(detailId!=null)detailId=null else onBack()}
     BackHandler(detailId!=null){back()}
@@ -97,7 +101,7 @@ import kotlin.coroutines.coroutineContext
                     (kind.isEmpty()||record.state.kind==kind)&&
                         (search.isEmpty()||record.state.content.contains(search,true)||record.state.scope.contains(search,true))
                 }
-                LazyColumn(Modifier.fillMaxSize().background(Paper).testTag("learning-list"),contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(12.dp)){
+                key(kind){LazyColumn(Modifier.fillMaxSize().swipePageTabs(selected,kinds.size){kind=kinds[it]}.background(Paper).testTag("learning-list"),state=lists[selected],contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(12.dp)){
                     item("intro"){
                         Text("从相处中留下的看法、兴趣与习惯",style=MaterialTheme.typography.bodyMedium,color=Muted)
                     }
@@ -131,7 +135,7 @@ import kotlin.coroutines.coroutineContext
                         }
                         HorizontalDivider(color=Line,thickness=.5.dp)
                     }
-                }
+                }}
             }
         }
     }

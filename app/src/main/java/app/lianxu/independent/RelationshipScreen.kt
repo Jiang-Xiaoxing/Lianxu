@@ -57,6 +57,7 @@ private val Warm=Color(0xFFFA9D3B)
     var templates by remember(role){mutableStateOf(false)}
     var ignored by remember(role){mutableStateOf(false)}
     var tab by remember(role){mutableIntStateOf(0)}
+    val panelScrolls=key(role){listOf(rememberScrollState(),rememberScrollState(),rememberScrollState())}
     var all by remember(role){mutableStateOf(false)}
     var error by remember(role){mutableStateOf(false)}
     var refresh by remember(role){mutableIntStateOf(0)}
@@ -79,7 +80,7 @@ private val Warm=Color(0xFFFA9D3B)
     Column(Modifier.fillMaxSize().background(page).testTag("relationship-page")){
         MaterialTheme(colorScheme=MaterialTheme.colorScheme.copy(surfaceContainerLow=page)){AppTopBar("${friend.name} · 我们的相处",{vm.back()})}
         // 一屏装下：不整页滚动，下面三块用标签切换，每次最多 4 条。
-        Column(Modifier.fillMaxSize().padding(horizontal=16.dp).padding(bottom=12.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        Column(Modifier.fillMaxSize().swipePageTabs(tab,3){tab=it;all=false}.padding(horizontal=16.dp).padding(bottom=12.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
             if(error)Row(verticalAlignment=Alignment.CenterVertically){Text("暂时无法读取或保存，请重试。",Modifier.weight(1f),color=Muted);TextButton({refresh++}){Text("重试",color=GreenText)}}
             val current=view
             if(current==null){Box(Modifier.fillMaxWidth().padding(24.dp),contentAlignment=Alignment.Center){CircularProgressIndicator(color=GreenText)}}else{
@@ -105,7 +106,7 @@ private val Warm=Color(0xFFFA9D3B)
                 val promises=current.state.promises.sortedByDescending{it.at}
                 RelationTabs(listOf("点滴","心结 · ${knots.size}","约定 · ${promises.size}"),tab){tab=it;all=false}
                 val count=when(tab){0->moments.size;1->knots.size;else->promises.size}
-                RelationCard(Modifier.weight(1f,fill=false).testTag("relationship-tab-$tab")){Column{
+                RelationCard(Modifier.weight(1f,fill=false).testTag("relationship-tab-$tab")){Column(Modifier.verticalScroll(panelScrolls[tab])){
                     if(count==0)Text(when(tab){0->"还没有让她感觉变了的事";1->"她现在没有放不下的事";else->"你们还没有约好的事"},Modifier.padding(20.dp),color=Muted)
                     when(tab){
                         0->moments.take(4).forEachIndexed{i,m->if(i>0)RelationDivider();MomentRow(m,quote(m.source),date)}
@@ -200,7 +201,7 @@ private val Warm=Color(0xFFFA9D3B)
                 Text(title,Modifier.weight(1f),style=MaterialTheme.typography.titleMedium.copy(fontWeight=FontWeight.Bold),color=Ink)
                 TextButton(dismiss){Text("关闭",color=GreenText)}
             }
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom=12.dp),content=content)
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).testTag("relationship-detail-scroll").padding(bottom=12.dp),content=content)
         }}
     }
 }

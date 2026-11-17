@@ -15,9 +15,11 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.core.app.ActivityOptionsCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
@@ -59,6 +61,38 @@ class BackupUiTest {
     private fun exportAll(keys:Boolean){val n=saves.size;ui.onNodeWithTag("backup-export-all").performScrollTo().performClick();ui.onNodeWithText("是否包含 API 密钥？").assertExists();assertEquals(n,saves.size);ui.onNodeWithTag(if(keys)"backup-with-keys"else"backup-without-keys").performClick();if(keys){ui.onNodeWithTag("backup-password").performTextInput("synthetic-test-password");ui.onNodeWithTag("backup-password-again").performTextInput("synthetic-test-password");ui.onNodeWithTag("backup-password-ok").performClick()};waitSaved(n)}
     private fun open(mode:String){openUri=saves.last();ui.onNodeWithTag("archive-open").performScrollTo().performClick();returnFromPicker();ui.waitUntil(30000){ui.onAllNodesWithTag("archive-mode-add").fetchSemanticsNodes().isNotEmpty()};ui.onNodeWithTag(if(mode=="ADD")"archive-mode-add"else"archive-mode-replace").performClick();ui.onNodeWithTag("archive-preview").performScrollTo().performClick();ui.waitUntil(30000){ui.onAllNodesWithTag("archive-impact").fetchSemanticsNodes().isNotEmpty()}}
     private fun shot(label:String){ui.mainClock.advanceTimeBy(600);ui.waitForIdle();instrument.waitForIdleSync();SystemClock.sleep(350);val b=if(label=="replace-confirm"||label=="role-picker-in-page")instrument.uiAutomation.takeScreenshot()else ui.onNodeWithTag("backup-test-container").captureToImage().asAndroidBitmap();File(instrument.targetContext.filesDir,"backup-ui-$label.png").outputStream().use{b.compress(Bitmap.CompressFormat.PNG,100,it)};b.recycle()}
+    private fun swipeTab(left:Boolean){ui.onNodeWithTag("role-archive-page").performTouchInput{swipe(Offset(width*(if(left).8f else .2f),height*.5f),Offset(width*(if(left).2f else .8f),height*.5f),400)}}
+    @Test fun swipeDirectionsBoundariesAndClicksKeepSelectedTabAndPanelTogether(){
+        show()
+        fun data(){ui.onNodeWithTag("backup-tab-data").assertIsSelected();ui.onNodeWithTag("backup-role-entry").assertExists();ui.onNodeWithTag("backup-export-diagnostics").assertDoesNotExist()}
+        fun diagnostic(){ui.onNodeWithTag("backup-tab-diagnostics").assertIsSelected();ui.onNodeWithTag("backup-export-diagnostics").assertExists();ui.onNodeWithTag("backup-role-entry").assertDoesNotExist()}
+        data();swipeTab(false);data();swipeTab(true);diagnostic();swipeTab(true);diagnostic();shot("swipe-diagnostics")
+        repeat(3){swipeTab(false);data();ui.onNodeWithTag("backup-tab-diagnostics").performClick();diagnostic();ui.onNodeWithTag("backup-tab-data").performClick();data();swipeTab(true);diagnostic()}
+        ui.onNodeWithTag("backup-tab-data").performClick()
+        ui.onNodeWithTag("role-archive-page").performTouchInput{swipe(Offset(width-1f,height*.5f),Offset(width*.3f,height*.5f),400)};data()
+        ui.onNodeWithTag("backup-tab-diagnostics").performClick()
+        ui.onNodeWithTag("role-archive-page").performTouchInput{swipe(Offset(1f,height*.5f),Offset(width*.7f,height*.5f),400)};diagnostic()
+        assertEquals(0,calls.get())
+    }
+    @Test fun swipesKeepImportPreviewRoleChoiceAndIndependentVerticalScrolls(){
+        show(dark=true,big=true,small=true)
+        ui.onNodeWithTag("backup-role-entry").performScrollTo().performClick();ui.onNodeWithTag("archive-export-seed-lin").performClick();ui.onNodeWithText("取消").performClick()
+        exportAll(false)
+        val saved=ui.onNodeWithTag("archive-status").fetchSemanticsNode().config[SemanticsProperties.Text].single().text
+        swipeTab(true);ui.onNodeWithTag("backup-tab-diagnostics").assertIsSelected();ui.onNodeWithTag("archive-status").assertTextEquals(saved);swipeTab(false)
+        open("REPLACE")
+        ui.onNodeWithTag("archive-impact").performScrollTo()
+        val impact=ui.onNodeWithTag("archive-impact").fetchSemanticsNode().config[SemanticsProperties.Text].single().text
+        fun scroll()=ui.onNodeWithTag("role-archive-page").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+        val before=scroll();assertTrue(before>0);shot("swipe-import-preview-before")
+        swipeTab(true);ui.onNodeWithTag("backup-tab-diagnostics").assertIsSelected()
+        ui.onNodeWithTag("backup-detailed").performScrollTo().performClick();ui.waitUntil(15000){runBlocking{vm.processing.store.preference("diagnostic-detailed","0")}=="1"}
+        ui.onNodeWithTag("role-archive-page").performTouchInput{swipeUp()};ui.onNodeWithTag("backup-tab-diagnostics").assertIsSelected();shot("swipe-diagnostics-dark-large")
+        swipeTab(false);ui.onNodeWithTag("backup-tab-data").assertIsSelected();assertEquals(before,scroll(),2f)
+        ui.onNodeWithTag("archive-impact").assertTextEquals(impact);ui.onNodeWithTag("backup-choose-mode").assertTextEquals("导入方式：覆盖");shot("swipe-import-preview-returned")
+        ui.onNodeWithTag("backup-role-entry").performScrollTo().performClick();ui.onNodeWithTag("archive-export-seed-lin").assertIsSelected();ui.onNodeWithText("取消").performClick()
+        assertTrue(vm.diagnosticDetailed);assertEquals(0,calls.get())
+    }
     @Test fun diagnosticPreferenceTravelsWithFullBackupAndRestoresRuntimeAndRollbackBase(){
         show();exportAll(false);val old=BackupArchive.read(bytes().inputStream())
         ui.onNodeWithTag("backup-tab-diagnostics").performClick()
@@ -131,6 +165,7 @@ class BackupUiTest {
         ui.waitUntil(10000){ui.onAllNodesWithTag("backup-cancel").fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithTag("backup-progress").assertIsDisplayed()
         ui.onNodeWithTag("backup-tab-diagnostics").assertIsNotEnabled()
+        swipeTab(true);ui.onNodeWithTag("backup-tab-data").assertIsSelected();ui.onNodeWithTag("backup-export-diagnostics").assertDoesNotExist()
         ui.onNodeWithTag("backup-cancel").assertIsDisplayed().performClick()
         ui.waitUntil(15000){ui.onAllNodesWithText("已取消，已保存资料保留。").fetchSemanticsNodes().isNotEmpty()}
         assertEquals(before,vm.friends.map{it.id});assertEquals(0,calls.get())

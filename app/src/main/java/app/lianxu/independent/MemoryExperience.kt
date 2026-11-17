@@ -12,6 +12,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
@@ -28,7 +30,8 @@ import kotlinx.coroutines.launch
     var listMenu by remember{mutableStateOf(false)}
     var clarity by remember{mutableStateOf(emptyMap<String,Double>())}
     LaunchedEffect(memories){clarity=repo.memoryUiClarity(memories)}
-    val memoryList=rememberLazyListState()
+    val memoryLists=key(friend.id){listOf(rememberLazyListState(),rememberLazyListState())}
+    val memoryList=memoryLists[if(mine)1 else 0]
     var detailId by rememberSaveable(friend.id){mutableStateOf<String?>(null)};var mode by rememberSaveable(friend.id){mutableStateOf("browse")}
     var editing by remember(friend.id){mutableStateOf(false)};var busy by remember(friend.id){mutableStateOf(false)};var error by remember(friend.id){mutableStateOf("")}
     var versions by remember(friend.id){mutableStateOf<List<StoredMemory>?>(null)};var evidence by remember(friend.id){mutableStateOf<StoredMemory?>(null)}
@@ -130,18 +133,19 @@ import kotlinx.coroutines.launch
             }
         }else{
             val now=System.currentTimeMillis()
-            val shown=memories.filter{it.manual==mine}.sortedByDescending{it.createdAt}
-            Column(Modifier.fillMaxSize().padding(horizontal=UiSpace.page)){
+            val manual=mine
+            val shown=memories.filter{it.manual==manual}.sortedByDescending{it.createdAt}
+            Column(Modifier.fillMaxSize().swipePageTabs(if(mine)1 else 0,2){mine=it==1}.padding(horizontal=UiSpace.page).testTag("memory-browser")){
                 Row(Modifier.fillMaxWidth().padding(vertical=10.dp).background(Line.copy(alpha=.35f),androidx.compose.foundation.shape.RoundedCornerShape(14.dp)).padding(4.dp)){
                     listOf(false to "她记下的",true to "我写的").forEach{(value,label)->
-                        Box(Modifier.weight(1f).background(if(mine==value)Paper else androidx.compose.ui.graphics.Color.Transparent,androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).clickable{mine=value}.padding(vertical=12.dp),contentAlignment=Alignment.Center){Text(label,color=if(mine==value)MaterialTheme.colorScheme.onSurface else Muted)}
+                        Box(Modifier.weight(1f).background(if(mine==value)Paper else androidx.compose.ui.graphics.Color.Transparent,androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).clickable{mine=value}.testTag(if(value)"memory-tab-mine"else"memory-tab-hers").semantics{selected=mine==value}.padding(vertical=12.dp),contentAlignment=Alignment.Center){Text(label,color=if(mine==value)MaterialTheme.colorScheme.onSurface else Muted)}
                     }
                 }
                 if(failure!=null&&!summarizing)TextButton({mode="maintenance"},modifier=Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer.copy(alpha=.45f),androidx.compose.foundation.shape.RoundedCornerShape(14.dp)).testTag("memory-batch-failure")){Text("有一段聊天没总结成功　重试 ›",maxLines=1)}
-                LazyColumn(Modifier.weight(1f).fillMaxWidth().background(Paper,androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).testTag("memory-list"),state=memoryList,contentPadding=PaddingValues(18.dp)){
-                    if(mine)item{TextButton({editing=true},enabled=!summarizing,modifier=Modifier.testTag("memory-add")){Text("＋ 写一条想让她记住的事")}}
+                key(manual){LazyColumn(Modifier.weight(1f).fillMaxWidth().background(Paper,androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).testTag("memory-list"),state=memoryList,contentPadding=PaddingValues(18.dp)){
+                    if(manual)item{TextButton({editing=true},enabled=!summarizing,modifier=Modifier.testTag("memory-add")){Text("＋ 写一条想让她记住的事")}}
                     item{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End,verticalAlignment=Alignment.CenterVertically){MemoryClarityDot(0,7);Text(" 记得牢　",color=Muted,style=MaterialTheme.typography.bodySmall);MemoryClarityDot(3,7);Text(" 快忘了",color=Muted,style=MaterialTheme.typography.bodySmall)}}
-                    if(shown.isEmpty())item{Text(if(mine)"写下希望她记住的小事。" else "还没有记下什么，多聊聊吧",Modifier.padding(vertical=32.dp),color=Muted)}
+                    if(shown.isEmpty())item{Text(if(manual)"写下希望她记住的小事。" else "还没有记下什么，多聊聊吧",Modifier.padding(vertical=32.dp),color=Muted)}
                     shown.groupBy{memoryUiGroup(it.createdAt,now)}.forEach{(group,rows)->
                         item{Text(group,Modifier.padding(top=24.dp,bottom=8.dp),color=Muted,style=MaterialTheme.typography.bodySmall)}
                         items(rows,key={it.id}){m->
@@ -156,7 +160,7 @@ import kotlinx.coroutines.launch
                             }
                         }
                     }
-                }
+                }}
             }
         }
     }

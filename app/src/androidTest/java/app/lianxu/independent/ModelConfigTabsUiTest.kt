@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalDensity
@@ -72,6 +73,41 @@ class ModelConfigTabsUiTest {
     private fun back(){InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);ui.waitForIdle()}
     private fun services(){ui.onNodeWithTag("config-tab-services").performClick().assertIsSelected()}
     private fun purposes(){ui.onNodeWithTag("config-tab-purposes").performClick().assertIsSelected()}
+    private fun swipeTab(left:Boolean){ui.onNodeWithTag("config-overview").performTouchInput{swipe(Offset(width*(if(left).8f else .2f),height*.55f),Offset(width*(if(left).2f else .8f),height*.55f),400)}}
+    @Test fun swipesClicksEdgesAndVerticalListsKeepPurposeAndScrollState(){
+        seed()
+        repeat(10){vault.save(chat.copy(id="scroll-$it",name="滚动合成配置$it"),"synthetic-only")}
+        ui.runOnIdle{state.refresh()};ui.waitUntil(15000){state.configs.size==12}
+        ui.onNodeWithTag("config-tab-services").assertIsSelected();swipeTab(false);ui.onNodeWithTag("config-tab-services").assertIsSelected()
+        ui.onNodeWithTag("config-overview").performTouchInput{swipeUp()};ui.onNodeWithTag("config-tab-services").assertIsSelected()
+        ui.onNodeWithTag("config-add-embedding").performScrollTo()
+        fun scroll()=ui.onNodeWithTag("config-overview").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+        val before=scroll();assertTrue(before>0)
+        val beforeBounds=ui.onNodeWithTag("config-add-embedding").fetchSemanticsNode().boundsInRoot
+        shot("swipe-services-before",true)
+        swipeTab(true);ui.onNodeWithTag("config-tab-purposes").assertIsSelected();swipeTab(true);ui.onNodeWithTag("config-tab-purposes").assertIsSelected()
+        ui.onNodeWithTag("purpose-select-memory").performScrollTo().performClick();ui.onNodeWithTag("purpose-clear-memory").performClick()
+        ui.waitUntil(10000){!state.busy&&state.purposes[ModelPurpose.MEMORY].orEmpty().isEmpty()}
+        swipeTab(false);ui.onNodeWithTag("config-tab-services").assertIsSelected()
+        shot("swipe-services-return-diagnostic",true)
+        println("scroll_before=$before scroll_after=${scroll()}")
+        ui.onNodeWithTag("config-add-embedding").assertIsDisplayed();assertEquals(beforeBounds.top,ui.onNodeWithTag("config-add-embedding").fetchSemanticsNode().boundsInRoot.top,2f)
+        repeat(3){purposes();swipeTab(false);services();swipeTab(true)}
+        ui.onNodeWithTag("config-tab-purposes").assertIsSelected();assertEquals("",vault.purposeId(ModelPurpose.MEMORY))
+        ui.onNodeWithTag("config-overview").performTouchInput{swipe(Offset(1f,height*.5f),Offset(width*.7f,height*.5f),400)};ui.onNodeWithTag("config-tab-purposes").assertIsSelected()
+        services();ui.onNodeWithTag("config-overview").performTouchInput{swipe(Offset(width-1f,height*.5f),Offset(width*.3f,height*.5f),400)};ui.onNodeWithTag("config-tab-services").assertIsSelected()
+        shot("swipe-services-returned",true);purposes();shot("swipe-purposes",true)
+    }
+    @Test fun swipeOutsideOverviewDoesNotDiscardEditorDraft(){
+        seed();ui.onNodeWithTag("config-edit-${chat.id}").performClick()
+        ui.onNodeWithTag("config-name").performTextReplacement("切页不应丢失的编辑草稿")
+        ui.onRoot().performTouchInput{swipeLeft()}
+        ui.onNodeWithTag("config-name").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText,androidx.compose.ui.text.AnnotatedString("切页不应丢失的编辑草稿")))
+        ui.onNodeWithTag("config-tab-purposes").assertDoesNotExist()
+        ui.activityRule.scenario.onActivity{it.getSystemService(android.view.inputmethod.InputMethodManager::class.java).hideSoftInputFromWindow(it.window.decorView.windowToken,0)}
+        ui.waitForIdle();android.os.SystemClock.sleep(300)
+        back();ui.onNodeWithTag("config-tab-services").assertIsSelected();assertEquals(chat,vault.list().single{it.id==chat.id})
+    }
     @Test fun emptyTabsKeepBothTextAddEntrancesAndNativeTabSemantics(){
         ui.onNodeWithTag("config-services-empty").assertIsDisplayed()
         ui.onNodeWithTag("config-add-top").assertDoesNotExist()
@@ -175,7 +211,8 @@ class ModelConfigTabsUiTest {
     private fun shot(page:String,saved:Boolean){
         ui.mainClock.advanceTimeBy(500);ui.waitForIdle();android.os.SystemClock.sleep(250)
         val name="$page-${if(saved)"saved" else "empty"}-${if(dark)"dark" else "light"}-$width-font$scale.png"
-        val bitmap=ui.onNodeWithTag("model-tabs-viewport").captureToImage().asAndroidBitmap()
+        val viewport=if(ui.onAllNodesWithTag("model-tabs-viewport").fetchSemanticsNodes().isEmpty())ui.onRoot() else ui.onNodeWithTag("model-tabs-viewport")
+        val bitmap=viewport.captureToImage().asAndroidBitmap()
         File(evidence,name).outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}
     }
 }

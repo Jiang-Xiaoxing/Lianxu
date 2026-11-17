@@ -81,7 +81,7 @@ private class PendingBackup(val archive:BackupRepository.Export?=null,val bytes:
             if(error.isNotBlank())Text(error,color=MaterialTheme.colorScheme.error,modifier=Modifier.testTag("archive-error"))
             if(status.isNotBlank())Text(status,modifier=Modifier.testTag("archive-status"))
         }
-        Column(Modifier.fillMaxSize().verticalScroll(if(section==0)backupScroll else diagnosticScroll).padding(UiSpace.page).testTag("role-archive-page"),verticalArrangement=Arrangement.spacedBy(16.dp)){
+        Column(Modifier.fillMaxSize().swipePageTabs(section,2,!busy){section=it}.verticalScroll(if(section==0)backupScroll else diagnosticScroll).padding(UiSpace.page).testTag("role-archive-page"),verticalArrangement=Arrangement.spacedBy(16.dp)){
             if(section==0){
             BackupActionRow("person","备份单个角色","导出指定角色的数据","backup-role-entry",!busy){chooseRole=true}
             BackupActionRow("database","备份全部数据","导出全部角色、资料和软件设置","backup-export-all",!busy){chooseKeys=true}

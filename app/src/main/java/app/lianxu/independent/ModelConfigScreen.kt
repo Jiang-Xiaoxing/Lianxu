@@ -115,16 +115,19 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
                         selectedContentColor=ConfigInk,unselectedContentColor=ConfigGreen,text={Text(label,style=MaterialTheme.typography.labelLarge)})
                 }
             }
-            LazyColumn(Modifier.fillMaxSize().testTag("config-overview"),state=if(overviewTab==0)servicesScroll else purposesScroll,contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
-                if(state.status.isNotBlank())item{Notice(state.status,state.statusError)}
-                if(overviewTab==0){
-                if(state.configs.isEmpty())item{Column(Modifier.fillMaxWidth().heightIn(min=240.dp).testTag("config-services-empty"),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
+            // Lazy content can be measured again while the outgoing panel is being removed.
+            // Keep its item provider tied to that panel so it cannot clamp the other scroll state.
+            val panel=overviewTab
+            key(panel){LazyColumn(Modifier.fillMaxSize().swipePageTabs(panel,2){overviewTab=it}.testTag("config-overview"),state=if(panel==0)servicesScroll else purposesScroll,contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
+                if(state.status.isNotBlank())item("status"){Notice(state.status,state.statusError)}
+                if(panel==0){
+                if(state.configs.isEmpty())item("empty"){Column(Modifier.fillMaxWidth().heightIn(min=240.dp).testTag("config-services-empty"),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
                     ControlIcon("services",ConfigMuted,64.dp);Spacer(Modifier.height(20.dp))
                     Text("还没有保存的服务",style=MaterialTheme.typography.titleMedium,color=ConfigMuted)
                 }}
                 else {
-                item{SectionLabel("已保存的服务")}
-                item{Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
+                item("saved-label"){SectionLabel("已保存的服务")}
+                item("saved-services"){Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
                     state.configs.forEachIndexed {index,config->
                         val p=ProviderPresets.get(config.providerId)
                         Row(Modifier.fillMaxWidth().clickable(enabled=!state.busy&&!sharedWithOtherPurposes(config.id)){edit(config)}.testTag("config-edit-${config.id}").padding(18.dp),verticalAlignment=Alignment.CenterVertically){
@@ -145,11 +148,12 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
                     }
                 }}
                 }
-                item{OutlinedButton(onClick={add()},enabled=!state.saving,modifier=Modifier.fillMaxWidth().heightIn(min=UiSpace.action).testTag("config-add")){Text("添加服务商")}}
-                if(saveForPurpose==null)item{OutlinedButton(onClick={add(true)},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).testTag("config-add-embedding")){Text("添加向量模型")}}
+                item("add-service"){OutlinedButton(onClick={add()},enabled=!state.saving,modifier=Modifier.fillMaxWidth().heightIn(min=UiSpace.action).testTag("config-add")){Text("添加服务商")}}
+                if(saveForPurpose==null)item("add-embedding"){OutlinedButton(onClick={add(true)},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).testTag("config-add-embedding")){Text("添加向量模型")}}
                 }else{
-                item{PurposeSelection(state,only=saveForPurpose)}
+                item("purposes"){PurposeSelection(state,only=saveForPurpose)}
                 }
+            }
             }
         }else if(screen=="providers"){
             OutlinedTextField(query,{query=it.take(80)},placeholder={Text("搜索服务商")},singleLine=true,leadingIcon={ControlIcon("search")},modifier=Modifier.fillMaxWidth().padding(horizontal=UiSpace.page,vertical=12.dp).testTag("provider-search"),shape=RoundedCornerShape(16.dp),colors=OutlinedTextFieldDefaults.colors(unfocusedContainerColor=Paper,focusedContainerColor=Paper,unfocusedBorderColor=Color.Transparent))
