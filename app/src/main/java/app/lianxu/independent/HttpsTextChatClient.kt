@@ -55,7 +55,7 @@ class HttpsTextChatClient(
         }
         if(ConfigRules.validate(config,key)!=null||!ModelTokenPolicy.acceptsRequest(config,request.outputLimit)){continuation.resume(TextChatResult.Failure(ChatFailure.INVALID_CONFIG));return@suspendCancellableCoroutine}
         if(ProviderRequestMetadata.blockedGoPreset(config)){continuation.resume(TextChatResult.Failure(ChatFailure.GO_ENDPOINT_UNVERIFIED));return@suspendCancellableCoroutine}
-        if(!ImageWire.fits(request)){continuation.resume(TextChatResult.Failure(ChatFailure.IMAGE_LIMIT));return@suspendCancellableCoroutine}
+        if(!ImageWire.fits(request)){continuation.resume(TextChatResult.Failure(if(ImageWire.hasVideo(request))ChatFailure.VIDEO_PREPARATION else ChatFailure.IMAGE_LIMIT));return@suspendCancellableCoroutine}
         val connection=AtomicReference<HttpsURLConnection?>(null)
         val deadline=System.nanoTime()+budget*1_000_000L
         val task=workers.submit {
@@ -70,7 +70,7 @@ class HttpsTextChatClient(
                 val body=ImageWire.body(config,request,onEvent!=null)
                 val messages=body.getJSONArray("messages")
                 val requestBytes=ImageWire.size(body,request)
-                val requestLimit=if(request.messages.any{it.images.isNotEmpty()})ImagePolicy.REQUEST_LIMIT else 2*1024*1024
+                val requestLimit=ImageWire.requestLimit(request)
                 if(requestBytes>requestLimit)throw RequestTooLarge()
                 val active=factory.open(URL(config.baseUrl.trimEnd('/')+"/chat/completions"));c=active;connection.set(active)
                 if(!continuation.isActive)return@submit
@@ -79,8 +79,8 @@ class HttpsTextChatClient(
                 active.setRequestProperty(provider.authHeader,if(provider.authHeader=="Authorization")"Bearer $key" else key)
                 ProviderRequestMetadata.headers(config,request).forEach{(name,value)->active.setRequestProperty(name,value)}
                 active.setRequestProperty("Content-Type","application/json; charset=utf-8");active.setRequestProperty("Accept",if(onEvent==null)"application/json" else "text/event-stream, application/json")
-                val diagnosticBody=JSONObject();body.keys().forEach{k->if(k!="messages")diagnosticBody.put(k,body.get(k))};val diagnosticMessages=JSONArray();request.messages.forEachIndexed{i,m->diagnosticMessages.put((if(m.images.isEmpty())JSONObject(messages.getJSONObject(i).toString())else JSONObject()).put("role",m.role).put("content",ImageWire.content(m,true)))};diagnosticBody.put("messages",diagnosticMessages)
-                request.messages.forEachIndexed{i,m->if(m.images.isNotEmpty())diagnosticMessages.getJSONObject(i).put("content",ImageWire.content(m,true))}
+                val diagnosticBody=JSONObject();body.keys().forEach{k->if(k!="messages")diagnosticBody.put(k,body.get(k))};val diagnosticMessages=JSONArray();request.messages.forEachIndexed{i,m->diagnosticMessages.put((if(m.images.isEmpty()&&m.videos.isEmpty())JSONObject(messages.getJSONObject(i).toString())else JSONObject()).put("role",m.role).put("content",ImageWire.content(m,true)))};diagnosticBody.put("messages",diagnosticMessages)
+                request.messages.forEachIndexed{i,m->if(m.images.isNotEmpty()||m.videos.isNotEmpty())diagnosticMessages.getJSONObject(i).put("content",ImageWire.content(m,true))}
                 for(i in 0 until diagnosticMessages.length())diagnosticMessages.getJSONObject(i).remove("reasoning_content")
                 Diagnostics.event("http.request.body",mapOf("method" to "POST","endpoint" to config.baseUrl.trimEnd('/')+"/chat/completions","body" to Diagnostics.raw(diagnosticBody.toString())),trace=diagnosticTrace,secrets=listOf(key))
                 active.setFixedLengthStreamingMode(requestBytes)
@@ -90,7 +90,7 @@ class HttpsTextChatClient(
                 Diagnostics.event("http.response",mapOf("status" to status,"content_type" to active.contentType,"content_encoding" to active.contentEncoding,"content_length" to active.contentLengthLong,"stream" to (onEvent!=null)),trace=diagnosticTrace,secrets=listOf(key))
                 val error=if(status !in 200..299)diagnosticErrorBody(active,deadline,diagnosticTrace,key) else ErrorBody("",true)
                 val errorBody=error.text
-                if(status !in 200..299)TextChatResult.Failure(if(request.tools.isNotEmpty()&&status in setOf(400,422)&&explicitToolsUnsupported(errorBody))ChatFailure.UNSUPPORTED_TOOLS else when(status){401->ChatFailure.UNAUTHORIZED;402->ChatFailure.PAYMENT;403->ChatFailure.FORBIDDEN;413->ChatFailure.IMAGE_PROVIDER_LIMIT;429->ChatFailure.RATE_LIMIT;in 300..399->ChatFailure.REDIRECT;in 500..599->ChatFailure.SERVER;else->ChatFailure.REJECTED},status,
+                if(status !in 200..299)TextChatResult.Failure(if(request.tools.isNotEmpty()&&status in setOf(400,422)&&explicitToolsUnsupported(errorBody))ChatFailure.UNSUPPORTED_TOOLS else when(status){401->ChatFailure.UNAUTHORIZED;402->ChatFailure.PAYMENT;403->ChatFailure.FORBIDDEN;413->if(ImageWire.hasVideo(request))ChatFailure.VIDEO_PROVIDER_LIMIT else ChatFailure.IMAGE_PROVIDER_LIMIT;429->ChatFailure.RATE_LIMIT;in 300..399->ChatFailure.REDIRECT;in 500..599->ChatFailure.SERVER;else->ChatFailure.REJECTED},status,
                     shown(providerError(status,active.responseMessage,errorBody,error.complete)))
                 else if(onEvent!=null&&active.contentType.orEmpty().substringBefore(';').trim().equals("text/event-stream",true)){
                     (requestDiagnostics?.count(active.inputStream)?:active.inputStream).use{input->

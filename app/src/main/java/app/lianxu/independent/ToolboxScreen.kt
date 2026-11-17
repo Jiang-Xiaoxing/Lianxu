@@ -176,16 +176,15 @@ private val toolboxCards=mapOf(
 
 @Composable internal fun ToolboxVideoScreen(vm:AppState){
     var mode by remember{mutableStateOf(ToolboxPreferences.VideoMode.ORIGINAL)};var ready by remember{mutableStateOf(false)};var busy by remember{mutableStateOf(false)};var error by remember{mutableStateOf("")}
-    val scope=rememberCoroutineScope()
     LaunchedEffect(vm){try{mode=ToolboxPreferences.videoMode(vm.processing.store);ready=true}catch(e:CancellationException){throw e}catch(_:Exception){error="暂时读不到视频设置，请返回重试。"}}
     ToolboxPage("视频理解",{vm.back()},"toolbox-video-page"){
         Column(Modifier.fillMaxWidth().background(Paper,RoundedCornerShape(UiSpace.radius)).selectableGroup()){
-            ToolboxPreferences.VideoMode.entries.forEach{value->Row(Modifier.fillMaxWidth().selectable(mode==value,enabled=ready&&!busy,role=Role.RadioButton){busy=true;scope.launch{try{vm.processing.store.setPreference(ToolboxPreferences.VIDEO_KEY,value.name);mode=value;error=""}catch(e:CancellationException){throw e}catch(_:Exception){error="保存视频方式失败，请重试。"}finally{busy=false}}}.testTag("video-mode-${value.name.lowercase()}").padding(16.dp),verticalAlignment=Alignment.CenterVertically){
+            ToolboxPreferences.VideoMode.entries.forEach{value->Row(Modifier.fillMaxWidth().selectable(mode==value,enabled=ready&&!busy,role=Role.RadioButton){busy=true;vm.saveVideoMode(value){saved->if(saved){mode=value;error=""}else error="保存视频方式失败，请重试。";busy=false}}.testTag("video-mode-${value.name.lowercase()}").padding(16.dp),verticalAlignment=Alignment.CenterVertically){
                 RadioButton(mode==value,null,enabled=ready&&!busy);Spacer(Modifier.width(12.dp));Column{Text(if(value==ToolboxPreferences.VideoMode.ORIGINAL)"直传原视频"else"每秒抽取一帧",style=MaterialTheme.typography.titleSmall);Text(if(value==ToolboxPreferences.VideoMode.ORIGINAL)"完整原件，原有音轨也会一并发送"else"每秒一张画面，不发送音轨",style=MaterialTheme.typography.bodySmall,color=Muted)}
             }}
         }
         Text("单个视频最多 70 MB，原件不压缩、不静音、不转码。应用不单独提取或处理声音；直传时服务商可能理解原件中的声音。服务商也可能有更小上限。",style=MaterialTheme.typography.bodySmall,color=Muted)
-        Text("两种方式均使用当前聊天模型；服务商或模型不支持时会如实报错，不自动换模式、换模型、压缩、分批或减少画面。",style=MaterialTheme.typography.bodySmall,color=Muted)
+        Text("沿用图片理解中的接收方：辅助看图开启时交所选辅助模型，关闭时交聊天模型。服务商或模型不支持时如实报错，不自动换模式、换模型、压缩、分批或减少画面。",style=MaterialTheme.typography.bodySmall,color=Muted)
         if(error.isNotBlank())Text(error,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
     }
 }

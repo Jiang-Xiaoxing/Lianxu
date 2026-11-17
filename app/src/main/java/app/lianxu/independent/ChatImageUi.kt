@@ -40,16 +40,20 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 @Composable internal fun ChatPicture(bytes:ByteArray,modifier:Modifier=Modifier,description:String="图片",contentScale:ContentScale=ContentScale.Fit)=ChatSourcePicture(remember(bytes){ImageSource(bytes)},modifier,description,contentScale)
-@Composable internal fun ChatSourcePicture(source:ImageSource,modifier:Modifier=Modifier,description:String="图片",contentScale:ContentScale=ContentScale.Fit){
-    val bitmap by produceState<android.graphics.Bitmap?>(null,source){value=withContext(Dispatchers.IO){runCatching{ImagePixels.preview(source,512)}.getOrNull()}}
-    bitmap?.let{Image(it.asImageBitmap(),description,modifier,contentScale=contentScale)}
+@Composable internal fun ChatSourcePicture(source:ImageSource,modifier:Modifier=Modifier,description:String="图片",contentScale:ContentScale=ContentScale.Fit,video:Boolean=false){
+    val bitmap by produceState<android.graphics.Bitmap?>(null,source,video){value=withContext(Dispatchers.IO){runCatching{if(video)ChatVideos.thumbnail(source)else ImagePixels.preview(source,512)}.getOrNull()}}
+    if(video)Box(modifier,contentAlignment=Alignment.Center){
+        if(bitmap!=null)Image(bitmap!!.asImageBitmap(),description,Modifier.fillMaxSize(),contentScale=contentScale)
+        else Text("视频",style=MaterialTheme.typography.labelSmall,color=Muted)
+    }else bitmap?.let{Image(it.asImageBitmap(),description,modifier,contentScale=contentScale)}
 }
 
 @Composable internal fun PendingPicture(image:PendingChatImage,expanded:Boolean,onExpand:()->Unit,onView:()->Unit,onRemove:()->Unit){
+    val video=VideoPolicy.isVideo(image.mime);val kind=if(video)"视频"else"图片"
     val size by animateDpAsState(if(expanded)88.dp else 34.dp,tween(if(expanded)350 else 300,easing=CubicBezierEasing(.0f,.0f,.2f,1f)),label="pending-picture-size")
     Box(Modifier.fillMaxWidth().padding(start=56.dp,top=8.dp,bottom=4.dp).testTag(if(expanded)"pending-picture-expanded"else"pending-picture-collapsed")){
         Box(Modifier.sizeIn(minWidth=48.dp,minHeight=48.dp)){
-            ChatSourcePicture(image.source,Modifier.size(size).clip(RoundedCornerShape(8.dp)).border(1.dp,Paper,RoundedCornerShape(8.dp)).clickable(role=Role.Button){if(expanded)onView()else onExpand()}.testTag("pending-picture"),"待发送图片，点击${if(expanded)"放大"else"展开"}",ContentScale.Crop)
+            ChatSourcePicture(image.source,Modifier.size(size).clip(RoundedCornerShape(8.dp)).border(1.dp,Paper,RoundedCornerShape(8.dp)).clickable(role=Role.Button){if(expanded)onView()else onExpand()}.testTag("pending-picture"),"待发送$kind，点击${if(expanded)"放大"else"展开"}",ContentScale.Crop,video)
             if(expanded)IconButton(onClick=onRemove,modifier=Modifier.align(Alignment.TopEnd).offset(16.dp,(-16).dp).size(48.dp).testTag("remove-picture").semantics{contentDescription="移除待发送图片"}){
                 Box(Modifier.size(22.dp).clip(RoundedCornerShape(50)).background(Ink),contentAlignment=Alignment.Center){Text("×",color=Paper,style=MaterialTheme.typography.labelLarge)}
             }
@@ -59,7 +63,8 @@ import kotlin.math.roundToInt
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable internal fun MessagePicture(vm:AppState,ref:ChatImageRef,onControl:(()->Unit)?=null,onView:(ImageSource)->Unit){
-    val loaded by produceState<Result<android.graphics.Bitmap>?>(null,ref){value=runCatching{vm.processing.read{db->synchronized(ImagePixels.thumbnailGate){ImagePixels.preview(ChatImages.source(db,ref),512)}}}}
+    val video=VideoPolicy.isVideo(ref.mime);val kind=if(video)"视频"else"图片"
+    val loaded by produceState<Result<android.graphics.Bitmap>?>(null,ref){value=runCatching{vm.processing.read{db->synchronized(ImagePixels.thumbnailGate){val source=ChatImages.source(db,ref);if(video)ChatVideos.thumbnail(source)else ImagePixels.preview(source,512)}}}}
     val bitmap=loaded?.getOrNull();val scope=rememberCoroutineScope();var opening by remember(ref){mutableStateOf(false)};var failed by remember(ref){mutableStateOf(false)}
     // Size the placeholder from stored metadata, before IO. Avoid aspectRatio's unconstrained
     // fallback when a fixed width and a tall bitmap cannot both satisfy the parent's height.
@@ -67,8 +72,8 @@ import kotlin.math.roundToInt
         val sourceRatio=ref.width.coerceAtLeast(1).toFloat()/ref.height.coerceAtLeast(1)
         val ratio=sourceRatio.coerceIn(2f/3f,3f);val edge=minOf(maxWidth,180.dp)
         Box(Modifier.size(edge*minOf(1f,ratio),edge/maxOf(1f,ratio)).clip(RoundedCornerShape(12.dp)).testTag("message-image-frame-${ref.messageId}"),contentAlignment=Alignment.Center){
-            if(bitmap!=null)Image(bitmap.asImageBitmap(),"消息图片，点击放大，长按管理使用方式",Modifier.fillMaxSize().combinedClickable(role=Role.Button,onClick={if(!opening){opening=true;scope.launch{try{val result=runCatching{vm.processing.read{db->ChatImages.source(db,ref)}};result.onSuccess(onView).onFailure{failed=true}}finally{opening=false}}}},onLongClick=onControl).testTag("message-image-${ref.messageId}"),contentScale=if(sourceRatio==ratio)ContentScale.Fit else ContentScale.Crop,alignment=Alignment.TopStart)
-            else Text(if(loaded==null)"正在读取图片…"else"图片暂时无法读取",Modifier.testTag(if(loaded==null)"message-image-loading-${ref.messageId}"else"message-image-failed-${ref.messageId}"),style=MaterialTheme.typography.bodySmall,color=Muted,maxLines=3,overflow=TextOverflow.Ellipsis)
+            if(bitmap!=null)Image(bitmap.asImageBitmap(),"消息$kind，点击${if(video)"播放"else"放大"}，长按管理使用方式",Modifier.fillMaxSize().combinedClickable(role=Role.Button,onClick={if(!opening){opening=true;scope.launch{try{val result=runCatching{vm.processing.read{db->ChatImages.source(db,ref)}};result.onSuccess(onView).onFailure{failed=true}}finally{opening=false}}}},onLongClick=onControl).testTag("message-image-${ref.messageId}"),contentScale=if(sourceRatio==ratio)ContentScale.Fit else ContentScale.Crop,alignment=Alignment.TopStart)
+            else Text(if(loaded==null)"正在读取$kind…"else"${kind}暂时无法读取",Modifier.testTag(if(loaded==null)"message-image-loading-${ref.messageId}"else"message-image-failed-${ref.messageId}"),style=MaterialTheme.typography.bodySmall,color=Muted,maxLines=3,overflow=TextOverflow.Ellipsis)
             if(failed)Text("原图暂时无法读取，保存文件仍保留",Modifier.align(Alignment.BottomCenter),style=MaterialTheme.typography.bodySmall,color=Muted,maxLines=3,overflow=TextOverflow.Ellipsis)
         }
     }

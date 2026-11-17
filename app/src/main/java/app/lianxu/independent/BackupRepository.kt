@@ -20,7 +20,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
     private val companionTables=listOf("companion_state","companion_sources","companion_blocks","companion_uses","companion_opportunities","companion_receipts","companion_action_learning")
     private val order=base+extra+companionTables
     // One-off migration markers travel as global settings, so a full backup never stops on them and a restore never reruns the migration.
-    private val globalKeys=setOf("nickname","compact","diagnostic-detailed",MemoryRules.KEY,UserPersona.KEY,LocalUpdateReceipt.KEY,MemoryForgetting.RECALL_DEFAULT_MIGRATED,UserAvatarData.KEY,ChatImages.SWITCH,ChatImages.SWITCH_REVISION,ToolboxPreferences.ORDER_KEY,ToolboxPreferences.VIDEO_KEY)
+    private val globalKeys=setOf("nickname","compact","diagnostic-detailed",MemoryRules.KEY,UserPersona.KEY,LocalUpdateReceipt.KEY,MemoryForgetting.RECALL_DEFAULT_MIGRATED,UserAvatarData.KEY,ChatImages.SWITCH,ChatImages.SWITCH_REVISION,ToolboxPreferences.ORDER_KEY,ToolboxPreferences.VIDEO_KEY,ToolboxPreferences.VIDEO_REVISION)
     private val legacy=RoleArchiveRepository(store)
     private val repo=ProcessingRepository(store)
     private class Budget {
@@ -107,7 +107,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
     }
     private fun validate(db:SQLiteDatabase,root:JsonObject,files:Map<String,ByteArray>){
         require(root["preferences"].asJsonObject.keySet().all{it in globalKeys})
-        root["preferences"].asJsonObject.entrySet().forEach{(k,v)->require(v.isJsonPrimitive&&v.asJsonPrimitive.isString);when(k){ToolboxPreferences.ORDER_KEY->ToolboxPreferences.order(v.asString);ToolboxPreferences.VIDEO_KEY->ToolboxPreferences.VideoMode.valueOf(v.asString);"compact"->require(v.asString in setOf("true","false"));ChatImages.SWITCH->require(v.asString in setOf("0","1"));ChatImages.SWITCH_REVISION->require(v.asString.length<=80);"diagnostic-detailed"->require(v.asString in setOf("0","1"));"nickname"->require(v.asString.length in 1..80);MemoryRules.KEY->require(MemoryRules.from(JSONObject(v.asString)).valid());UserPersona.KEY->UserPersona.decode(v.asString);LocalUpdateReceipt.KEY->LocalUpdateReceipt.decode(v.asString);MemoryForgetting.RECALL_DEFAULT_MIGRATED->require(v.asString=="true");UserAvatarData.KEY->require(v.asString.length<=UserAvatarData.MAX_ENCODED){"本人头像资料过大"}}}
+        root["preferences"].asJsonObject.entrySet().forEach{(k,v)->require(v.isJsonPrimitive&&v.asJsonPrimitive.isString);when(k){ToolboxPreferences.ORDER_KEY->ToolboxPreferences.order(v.asString);ToolboxPreferences.VIDEO_KEY->ToolboxPreferences.VideoMode.valueOf(v.asString);"compact"->require(v.asString in setOf("true","false"));ChatImages.SWITCH->require(v.asString in setOf("0","1"));ChatImages.SWITCH_REVISION,ToolboxPreferences.VIDEO_REVISION->require(v.asString.length<=80);"diagnostic-detailed"->require(v.asString in setOf("0","1"));"nickname"->require(v.asString.length in 1..80);MemoryRules.KEY->require(MemoryRules.from(JSONObject(v.asString)).valid());UserPersona.KEY->UserPersona.decode(v.asString);LocalUpdateReceipt.KEY->LocalUpdateReceipt.decode(v.asString);MemoryForgetting.RECALL_DEFAULT_MIGRATED->require(v.asString=="true");UserAvatarData.KEY->require(v.asString.length<=UserAvatarData.MAX_ENCODED){"本人头像资料过大"}}}
         val configs=models(root);require(configs.map{it.config.id}.distinct().size==configs.size)
         root["selections"].asJsonObject.entrySet().forEach{(k,v)->require(ModelPurpose.entries.any{it.key==k}&&(v.asString.isEmpty()||configs.any{it.config.id==v.asString}))}
         val ids=hashSetOf<String>();val used=hashSetOf<String>();var total=0
@@ -175,7 +175,9 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
             require(image["friend_id"].asString==friend&&messages[image["message_id"].asLong]?.get("mine")?.asInt==1)
             val asset=assets[image["path"].asString]?:error("图片缺少对应资源")
             val bytes=files[asset["entry"].asString]?:error("图片文件不在备份中")
-            require(asset["kind"].asString=="attachment"&&image["mime"].asString in ImagePolicy.mimes)
+            val video=VideoPolicy.isVideo(image["mime"].asString)
+            require(asset["kind"].asString=="attachment"&&(video||image["mime"].asString in ImagePolicy.mimes))
+            require(!video||storage=="chunked-original")
             require(image["hash"].asString.matches(Regex("[a-f0-9]{64}"))&&image["revision"].asLong>0)
             val temporary=if(storage=="chunked-original")java.io.File.createTempFile("backup-image-",".image",ImageDisk.root())else null
             try{
@@ -185,9 +187,15 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
                     OriginalChunks.extract(manifest,temporary){part->val chunk=assets[part.path]?:error("备份缺少原件资源块");require(chunk["kind"].asString=="attachment"&&chunk["mime"].asString=="application/octet-stream");files[chunk["entry"].asString]?:error("备份缺少资源块内容")};ImageSource(temporary)
                 }else{require(bytes.size in 1..BackupArchive.MAX_FILE&&asset["mime"].asString==image["mime"].asString);ImageSource(bytes)}
                 require(source.hash()==image["hash"].asString){"原件哈希不符"}
-                val info=ChatImages.inspect(source);require(info.width==image["width"].asInt&&info.height==image["height"].asInt&&info.mime==image["mime"].asString){"图片尺寸与记录不一致"}
-                ImagePixels.preview(source,512).recycle()
-                if(storage=="legacy-normalized")require(bytes.size<=512*1024&&info.mime=="image/jpeg"&&info.width<=1600&&info.height<=1600&&UserAvatarData.withoutMetadata(bytes).contentEquals(bytes)){"旧版图片副本记录无效"}
+                if(video){
+                    val info=ChatVideos.inspect(requireNotNull(source.file))
+                    require(info.displayWidth==image["width"].asInt&&info.displayHeight==image["height"].asInt&&info.mime==image["mime"].asString){"视频尺寸与记录不一致"}
+                    ChatVideos.thumbnail(source).recycle()
+                }else{
+                    val info=ChatImages.inspect(source);require(info.width==image["width"].asInt&&info.height==image["height"].asInt&&info.mime==image["mime"].asString){"图片尺寸与记录不一致"}
+                    ImagePixels.preview(source,512).recycle()
+                    if(storage=="legacy-normalized")require(bytes.size<=512*1024&&info.mime=="image/jpeg"&&info.width<=1600&&info.height<=1600&&UserAvatarData.withoutMetadata(bytes).contentEquals(bytes)){"旧版图片副本记录无效"}
+                }
             }finally{temporary?.delete()}
 
         }

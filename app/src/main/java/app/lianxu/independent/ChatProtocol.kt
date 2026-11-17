@@ -14,8 +14,8 @@ class ProviderContinuation internal constructor(@Transient private val reasoning
 data class WireMessage(val role:String,val content:String,val toolCalls:List<ChatToolCall> = emptyList(),val toolCallId:String="",val name:String="",val memoryIds:List<String> = emptyList(),val sourceMessageId:String="",
     /** Length of the program-added time head in front of a history message; the original text starts after it. */
     val sourcePrefix:Int=0,val capabilityRange:IntRange?=null,val turnContext:Boolean=false,@Transient val continuation:ProviderContinuation?=null,
-    val imageRefs:List<ChatImageRef> = emptyList(),val images:List<WireImage> = emptyList()) {
-    init {require(role in setOf("system","user","assistant","tool"));require(content.isNotBlank()||(role=="assistant"&&toolCalls.isNotEmpty())||(role=="user"&&(imageRefs.isNotEmpty()||images.isNotEmpty())));require(role!="tool"||toolCallId.isNotBlank());require(role=="user"||(imageRefs.isEmpty()&&images.isEmpty()))}
+    val imageRefs:List<ChatImageRef> = emptyList(),val images:List<WireImage> = emptyList(),val videos:List<WireVideo> = emptyList()) {
+    init {require(role in setOf("system","user","assistant","tool"));require(content.isNotBlank()||(role=="assistant"&&toolCalls.isNotEmpty())||(role=="user"&&(imageRefs.isNotEmpty()||images.isNotEmpty()||videos.isNotEmpty())));require(role!="tool"||toolCallId.isNotBlank());require(role=="user"||(imageRefs.isEmpty()&&images.isEmpty()&&videos.isEmpty()))}
 }
 data class TextChatRequest(val messages:List<WireMessage>,val outputLimit:Int=2048,val timeoutMillis:Int=120000,val tools:List<Map<String,Any>> = emptyList(),val conversationId:String=java.util.UUID.randomUUID().toString(),val jsonObject:Boolean=false) {
     init {require(conversationId.matches(Regex("[A-Za-z0-9_-]{1,160}")));require(messages.isNotEmpty());require(outputLimit in 1..ModelTokenPolicy.MAX_OUTPUT);require(timeoutMillis in 1..300000)}
@@ -25,6 +25,8 @@ enum class ChatFailure(val display:String) {
     MISSING_VISION_MODEL("辅助看图已开启，请先选择辅助看图模型并保存密钥。"),
     IMAGE_LIMIT("图片超过本机单图、完整请求或整图处理上限；原消息保留，没有在报错后自动降质、删图或换模型。请核对错误后手动重试，已发出的请求可能重复计费。"),
     IMAGE_PROVIDER_LIMIT("服务商返回HTTP 413，拒绝了本次请求体大小；没有在报错后自动压图、删图、分批重发或换服务。请核对服务商限制后手动重试，已发请求可能计费。"),
+    VIDEO_PREPARATION("无法准备完整视频请求；没有压缩原件、跳帧、分批、改用其他方式或换模型。原消息保留，请核对具体原因后手动重试。"),
+    VIDEO_PROVIDER_LIMIT("服务商返回HTTP 413，拒绝了本次视频请求体大小；没有压缩原件、跳帧、分批重发、改方式或换模型。请核对实际限制后手动重试，已发请求可能计费。"),
     GO_ENDPOINT_UNVERIFIED(ProviderRequestMetadata.GO_UNVERIFIED_NOTICE),
     INVALID_CONFIG("模型配置不完整，请检查服务地址、模型和密钥。"),
     UNAUTHORIZED("认证失败，请检查服务商、地域和 API Key。"),

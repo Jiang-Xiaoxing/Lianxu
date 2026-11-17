@@ -29,7 +29,7 @@ public final class ArchiveFixtureProvider extends ContentProvider {
         } catch (IOException e) { throw new FileNotFoundException(e.toString()); }
         return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
     }
-    @Override public String getType(Uri uri) { return "application/zip"; }
+    @Override public String getType(Uri uri) { return "video".equals(uri.getQueryParameter("media")) ? "video/mp4" : "application/zip"; }
     @Override public Cursor query(Uri uri, String[] projection, String selection, String[] args, String order) { return null; }
     @Override public Uri insert(Uri uri, ContentValues values) { return null; }
     @Override public int delete(Uri uri, String selection, String[] args) { return 0; }

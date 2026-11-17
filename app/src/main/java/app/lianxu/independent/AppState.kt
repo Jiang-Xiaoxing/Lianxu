@@ -64,6 +64,10 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
         try{ToolboxPreferences.saveOrder(processing.store,order);done(true)}
         catch(e:CancellationException){throw e}catch(_:Exception){done(false)}
     }}
+    internal fun saveVideoMode(mode:ToolboxPreferences.VideoMode,done:(Boolean)->Unit){viewModelScope.launch{
+        try{ToolboxPreferences.saveVideoMode(processing.store,mode);done(true)}
+        catch(e:CancellationException){throw e}catch(_:Exception){error="保存视频方式失败，请重试。";done(false)}
+    }}
     internal fun companionRead(role:String,id:Long,stillVisible:()->Boolean){viewModelScope.launch{companion.markRead(role,id){page=="chat"&&activeId==role&&stillVisible()};companionReceipts=companion.receipts();companionNotifications.reconcile()}}
     internal fun sourceControl(messageId:Long,forget:Boolean){val role=activeId;viewModelScope.launch{
         val id=companion.sourceOfMessage(role,messageId)?:return@launch

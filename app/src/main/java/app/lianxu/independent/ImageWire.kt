@@ -8,12 +8,17 @@ import java.io.OutputStream
 internal object ImageWire {
     fun content(message:WireMessage,diagnostic:Boolean=false):Any {
         require(message.imageRefs.isEmpty()){"图片尚未建立发送快照"}
-        if(message.images.isEmpty())return message.content
+        if(message.images.isEmpty()&&message.videos.isEmpty())return message.content
         return JSONArray().apply{
             if(message.content.isNotBlank())put(JSONObject().put("type","text").put("text",message.content))
             message.images.forEach{image->
                 if(image.description.isNotBlank())put(JSONObject().put("type","text").put("text",image.description))
                 put(JSONObject().put("type","image_url").put("image_url",JSONObject().put("url",if(diagnostic)"[${image.mime}; ${image.size} bytes; 图片数据已省略]"else "data:${image.mime};base64,"+Base64.getEncoder().encodeToString(image.bytes))))
+            }
+            message.videos.forEach{video->
+                require(diagnostic){"视频原件必须流式发送"}
+                if(video.description.isNotBlank())put(JSONObject().put("type","text").put("text",video.description))
+                put(JSONObject().put("type","video_url").put("video_url",JSONObject().put("url","[${video.mime}; ${video.size} bytes; 视频数据已省略]")))
             }
         }
     }
@@ -35,32 +40,43 @@ internal object ImageWire {
     fun size(body:JSONObject,request:TextChatRequest):Long=Counter().also{write(body,request,it)}.size
     fun fits(request:TextChatRequest):Boolean {
         val images=request.messages.flatMap{it.images}
-        if(images.isEmpty())return true
-        if(images.size>ImagePolicy.MAX_IMAGES||images.any{it.size !in 1..ImagePolicy.ORIGINAL_LIMIT.toLong()||it.mime !in ImagePolicy.mimes})return false
+        val videos=request.messages.flatMap{it.videos}
+        if(images.isEmpty()&&videos.isEmpty())return true
+        if(images.count{!it.videoFrame}>ImagePolicy.MAX_IMAGES||images.any{it.size !in 1..ImagePolicy.ORIGINAL_LIMIT.toLong()||it.mime !in ImagePolicy.mimes})return false
+        if(videos.any{it.size !in 1..VideoPolicy.ORIGINAL_LIMIT||!VideoPolicy.isVideo(it.mime)||!it.mime.matches(Regex("video/[a-zA-Z0-9.+-]+"))})return false
+        if(hasVideo(request))return true
         val stub=JSONObject().put("messages",JSONArray(request.messages.map{JSONObject().put("role",it.role).put("content",content(it,true))})).put("tools",JSONArray(request.tools))
         return size(stub,request)+4096<=ImagePolicy.REQUEST_LIMIT
     }
+    fun hasVideo(request:TextChatRequest)=request.messages.any{it.videos.isNotEmpty()||it.images.any{image->image.videoFrame}}
+    fun requestLimit(request:TextChatRequest):Long=if(hasVideo(request))Long.MAX_VALUE else if(request.messages.any{it.images.isNotEmpty()})ImagePolicy.REQUEST_LIMIT.toLong() else 2L*1024*1024
     fun write(body:JSONObject,request:TextChatRequest,out:OutputStream){
         fun text(value:String){out.write(value.toByteArray(Charsets.UTF_8))}
         fun quoted(value:String)=text(JSONObject.quote(value))
         fun json(value:Any):String=JSONArray().put(value).toString().let{it.substring(1,it.length-1)}
+        fun encoded(size:Long,input:()->java.io.InputStream){
+            if(out is Counter){out.size+=ImagePolicy.encodedLength(size);return}
+            input().use{source->val buffer=ByteArray(12288);var total=0L
+                while(true){var n=0;while(n<buffer.size){val got=source.read(buffer,n,buffer.size-n);if(got<0)break;if(got==0)continue;n+=got};if(n==0)break
+                    out.write(Base64.getEncoder().encode(if(n==buffer.size)buffer else buffer.copyOf(n)));total+=n
+                };check(total==size){"附件原文件读取不完整"}
+            }
+        }
         fun content(m:WireMessage){
-            if(m.images.isEmpty()){quoted(m.content);return}
+            if(m.images.isEmpty()&&m.videos.isEmpty()){quoted(m.content);return}
             text("[");var comma=false
             fun caption(value:String){if(comma)text(",");text("{\"type\":\"text\",\"text\":");quoted(value);text("}");comma=true}
             if(m.content.isNotBlank())caption(m.content)
             for(image in m.images){
                 if(image.description.isNotBlank())caption(image.description)
                 if(comma)text(",");text("{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:${image.mime};base64,")
-                if(out is Counter)out.size+=ImagePolicy.encodedLength(image.size)
-                else image.input().use{input->
-                    val buffer=ByteArray(12288);var readTotal=0L
-                    while(true){var n=0;while(n<buffer.size){val got=input.read(buffer,n,buffer.size-n);if(got<0)break;if(got==0)continue;n+=got};if(n==0)break
-                        out.write(Base64.getEncoder().encode(if(n==buffer.size)buffer else buffer.copyOf(n)));readTotal+=n
-                    }
-                    check(readTotal==image.size){"图片文件读取不完整"}
-                }
+                encoded(image.size,image::input)
                 text("\"}}");comma=true
+            }
+            for(video in m.videos){
+                if(video.description.isNotBlank())caption(video.description)
+                if(comma)text(",");text("{\"type\":\"video_url\",\"video_url\":{\"url\":\"data:${video.mime};base64,")
+                encoded(video.size,video::input);text("\"}}");comma=true
             };text("]")
         }
         text("{");var first=true
