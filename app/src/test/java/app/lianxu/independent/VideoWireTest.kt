@@ -21,6 +21,17 @@ class VideoWireTest {
             assertFalse(ChatImages.redact(url).contains("base64"));assertEquals("[视频数据已省略]",ChatImages.redact(url))
         }finally{file.delete()}
     }
+    @Test fun jpegRequestBudgetIncludesBase64AndMetadata(){
+        val file=File.createTempFile("frame-budget-",".jpg")
+        try{
+            java.io.RandomAccessFile(file,"rw").use{it.setLength(13L*1024*1024)}
+            val frames=listOf(WireImage.videoFrame(file,"0 ms"),WireImage.videoFrame(file,"1000 ms"))
+            val request=TextChatRequest(listOf(WireMessage("user","",images=frames)))
+            val size=ImageWire.size(ImageWire.body(ModelConfig("id","test","custom","https://example.invalid","test"),request,false),request)
+            assertEquals(ImagePolicy.REQUEST_LIMIT.toLong(),ImageWire.requestLimit(request))
+            assertTrue(size>ImageWire.requestLimit(request))
+        }finally{file.delete()}
+    }
     @Test fun frameCountDoesNotInheritOrdinaryImageQuotaAndRolesStillApply(){
         val file=File.createTempFile("frame-wire-",".png");try{file.writeBytes(byteArrayOf(1,2,3))
             val frames=(0..64).map{WireImage.videoFrame(file,"${it*1000} ms")}

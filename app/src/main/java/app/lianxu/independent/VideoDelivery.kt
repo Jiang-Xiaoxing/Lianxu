@@ -20,23 +20,29 @@ internal class VideoDelivery private constructor(private val root:File):Closeabl
             val result=VideoDelivery(Files.createTempDirectory(parent.toPath(),"video-send-").toFile())
             try{
                 refs.forEach{ref->
-                    valid();val source=read(ref);val info=ChatVideos.inspect(requireNotNull(source.file))
+                    valid();val source=read(ref);if(!extract)VideoPolicy.requireSize(source.size);val info=ChatVideos.inspect(requireNotNull(source.file))
                     check(source.hash()==ref.hash&&info.mime==ref.mime){"视频来源已变化或文件已损坏"}
                     result.originals[ref]=Original(ref,source,info)
                 }
                 validateCapacity(result.originals.values.map{it.info})
                 if(extract)result.originals.forEach{(ref,original)->
                     val frames=mutableListOf<Frame>()
+                    var encodedBytes=0L
                     ChatVideos.withRetriever(requireNotNull(original.source.file)){retriever->
                         for(at in VideoPolicy.frameTimes(original.info.durationMillis)){
-                            valid();val pixels=Math.multiplyExact(original.info.width.toLong(),original.info.height.toLong())
-                            require(pixels<=Runtime.getRuntime().maxMemory()/8){"本机内存不足以读取完整视频画面，未缩图、跳帧或发送"}
-                            ImageDisk.space(result.root,Math.multiplyExact(pixels,4))
-                            val bitmap=requireNotNull(retriever.getFrameAtTime(at*1000,MediaMetadataRetriever.OPTION_CLOSEST)){"无法读取视频 ${at/1000} 秒的画面，未跳过或发送"}
+                            valid()
+                            val info=original.info
+                            val scale=minOf(1.0,1920.0/maxOf(info.displayWidth,info.displayHeight),1080.0/minOf(info.displayWidth,info.displayHeight))
+                            val width=maxOf(1,(info.displayWidth*scale).toInt())
+                            val height=maxOf(1,(info.displayHeight*scale).toInt())
+                            ImageDisk.space(result.root,width.toLong()*height*4)
+                            val bitmap=ChatVideos.frame(retriever,info,at,width,height)
                             try{
-                                val target=File(result.root,"${result.frames.size}-${frames.size}.png")
-                                target.outputStream().use{out->check(bitmap.compress(Bitmap.CompressFormat.PNG,100,out)){"视频画面写入失败，未发送"}}
+                                val target=File(result.root,"${result.frames.size}-${frames.size}.jpg")
+                                target.outputStream().use{out->check(bitmap.compress(Bitmap.CompressFormat.JPEG,90,out)){"视频画面写入失败，未发送"}}
                                 require(target.length() in 1..ImagePolicy.ORIGINAL_LIMIT.toLong()){"单帧画面超过可发送图片大小，未缩图、跳帧或发送"}
+                                encodedBytes+=ImagePolicy.encodedLength(target.length())
+                                require(encodedBytes<=ImagePolicy.REQUEST_LIMIT){"全部 JPEG 编码后超过本机单次图片请求的 32 MiB 上限"}
                                 frames+=Frame(target,at,original)
                             }finally{bitmap.recycle()}
                         }

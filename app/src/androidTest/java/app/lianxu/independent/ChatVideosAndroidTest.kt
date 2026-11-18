@@ -46,17 +46,63 @@ class ChatVideosAndroidTest {
             ChatVideos.withRetriever(original.file!!){assertEquals("yes",it.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO))};assertEquals(23000L,ChatVideos.inspect(original.file!!).durationMillis)
             VideoDelivery.prepare(context,listOf(ref),true,{original},{assertEquals(23L,it.single().frameCount)},{ }).use{d->
                 val frames=d.frames.getValue(ref);assertEquals((0L..22L).map{it*1000},frames.map{it.atMillis});assertEquals(23,frames.size)
-                assertTrue(frames.all{ChatImages.inspect(ImageSource(it.file)).mime=="image/png"});assertNotEquals(ImageSource(frames.first().file).hash(),ImageSource(frames.last().file).hash());assertEquals(p.hash,original.hash())
-                evidence("frames23",JSONObject().put("count",frames.size).put("timesMs",org.json.JSONArray(frames.map{it.atMillis})).put("originalHash",p.hash).put("originalHasAudio",true).put("frameMime","image/png"))
+                assertTrue(frames.all{ChatImages.inspect(ImageSource(it.file)).mime=="image/jpeg"});assertNotEquals(ImageSource(frames.first().file).hash(),ImageSource(frames.last().file).hash());assertEquals(p.hash,original.hash())
+                evidence("frames23",JSONObject().put("count",frames.size).put("timesMs",org.json.JSONArray(frames.map{it.atMillis})).put("originalHash",p.hash).put("originalHasAudio",true).put("frameMime","image/jpeg"))
             }
             val root=ImageDisk.root(context.cacheDir);val before=root.listFiles()!!.map{it.name}.toSet();var checks=0
             assertTrue(runCatching{VideoDelivery.prepare(context,listOf(ref),true,{original},{},{if(++checks==4)throw CancellationException("synthetic cancel")})}.exceptionOrNull() is CancellationException)
             assertEquals(before,root.listFiles()!!.map{it.name}.toSet());assertEquals(p.hash,original.hash());assertTrue(ledger.finish(t.id,1,"完成"))
         }
     }
+    @Test fun above70MbFramesAndModeChangePreserveOriginal():Unit=runBlocking{
+        ToolboxPreferences.saveVideoMode(store,ToolboxPreferences.VideoMode.FRAMES)
+        ChatVideos.prepare(padded(70_000_001),context.cacheDir,true).use{p->
+            val(t,ref)=begin(p)
+            fun source()=ChatImages.source(store.readableDatabase,ref)
+            TextTlsMock(maxRequests=1,responder={reply("合成回复")}).use{server->
+                models(server.base,false)
+                val cfg=config(base=server.base)
+                fun route()=ChatImageRoute(store,vault,server.client(15000),t,cfg,AppMutationGate.epoch()){true}
+                assertTrue(route().complete(cfg,"synthetic-key-only",request(t,listOf(ref))) is TextChatResult.Success)
+                val parts=JSONObject(server.body).getJSONArray("messages").getJSONObject(0).getJSONArray("content")
+                assertEquals(47,parts.length())
+                val times=mutableListOf<Long>()
+                for(i in 0 until 23){
+                    val label=parts.getJSONObject(1+2*i)
+                    assertEquals("text",label.getString("type"))
+                    assertTrue(label.getString("text").contains(" ${i*1000} ms / 23000 ms"))
+                    val part=parts.getJSONObject(2+2*i);assertEquals("image_url",part.getString("type"))
+                    val url=part.getJSONObject("image_url").getString("url")
+                    assertTrue(url.startsWith("data:image/jpeg;base64,"))
+                    val jpeg=Base64.getDecoder().decode(url.substringAfter(','))
+                    val info=ChatImages.inspect(ImageSource(jpeg))
+                    assertEquals("image/jpeg",info.mime);assertEquals(160,info.width);assertEquals(90,info.height)
+                    times+=i*1000L
+                }
+                ToolboxPreferences.saveVideoMode(store,ToolboxPreferences.VideoMode.ORIGINAL)
+                val error=runCatching{route().complete(cfg,"synthetic-key-only",request(t,listOf(ref)))}.exceptionOrNull() as CompanionModelFailure
+                assertEquals(VideoPolicy.TOO_LARGE,error.detail);assertEquals(1,server.calls.get())
+                evidence("over70-jpeg-wire",JSONObject().put("originalBytes",source().size).put("sha256",source().hash()).put("timestampsMs",org.json.JSONArray(times)).put("httpRequests",server.calls.get()).put("requestBytes",server.body.toByteArray().size))
+            }
+            assertEquals(70_000_001L,source().size);assertEquals(p.hash,source().hash());ledger.finish(t.id,1,"完成")
+        }
+    }
+    @Test fun fourKFrameRetainsAspectWithin1080p():Unit=runBlocking{
+        ChatVideos.prepare(instrument.context.assets.open("one-frame-4k.mp4"),context.cacheDir,true).use{p->
+            assertEquals(3840,p.width);val(t,ref)=begin(p)
+            VideoDelivery.prepare(context,listOf(ref),true,{p.source},{},{}).use{delivery->
+                val image=ChatImages.inspect(ImageSource(delivery.frames.getValue(ref).single().file))
+                assertEquals("image/jpeg",image.mime);assertEquals(1920,image.width);assertEquals(1080,image.height)
+            };ledger.finish(t.id,1,"完成")
+        }
+    }
     @Test fun rotatedVideoKeepsDisplayedOrientationInThumbnailAndEveryFrame():Unit=runBlocking{
         ChatVideos.prepare(instrument.context.assets.open("synthetic-video-rotated.mp4"),context.cacheDir).use{p->
             val info=ChatVideos.inspect(p.source.file!!);assertTrue(info.rotation==90||info.rotation==270);assertEquals(90,p.width);assertEquals(160,p.height)
+            ChatVideos.withRetriever(p.source.file!!){r->
+                val legacy=ChatVideos.legacyFrame(r,info,0,45,80)
+                try{assertEquals(45,legacy.width);assertEquals(80,legacy.height)}finally{legacy.recycle()}
+            }
             val preview=ChatVideos.thumbnail(p.source);assertTrue(preview.width<preview.height);preview.recycle()
             val(t,ref)=begin(p);VideoDelivery.prepare(context,listOf(ref),true,{ChatImages.source(store.readableDatabase,it)},{},{ }).use{d->
                 for(frame in d.frames.getValue(ref)){val size=ChatImages.inspect(ImageSource(frame.file));assertEquals(info.displayWidth,size.width);assertEquals(info.displayHeight,size.height)}
@@ -75,7 +121,7 @@ class ChatVideosAndroidTest {
                     val media=seen.first().second.getJSONArray("messages");val parts=buildList{for(i in 0 until media.length()){val a=media.getJSONObject(i).optJSONArray("content")?:continue;for(k in 0 until a.length())add(a.getJSONObject(k))}}
                     val videos=parts.filter{it.optString("type")=="video_url"};val images=parts.filter{it.optString("type")=="image_url"}
                     if(mode==ToolboxPreferences.VideoMode.ORIGINAL){assertEquals(1,videos.size);assertTrue(images.isEmpty());val bytes=Base64.getDecoder().decode(videos.single().getJSONObject("video_url").getString("url").substringAfter(','));assertEquals(p.hash,RoleArchive.hash(bytes))}
-                    else{assertTrue(videos.isEmpty());assertEquals(23,images.size);val labels=parts.filter{it.optString("type")=="text"}.map{it.getString("text")};for(at in 0..22)assertTrue(labels.any{it.contains("${at*1000} ms / 23000 ms")});assertTrue(images.all{it.getJSONObject("image_url").getString("url").startsWith("data:image/png;base64,")})}
+                    else{assertTrue(videos.isEmpty());assertEquals(23,images.size);val labels=parts.filter{it.optString("type")=="text"}.map{it.getString("text")};for(at in 0..22)assertTrue(labels.any{it.contains("${at*1000} ms / 23000 ms")});assertTrue(images.all{it.getJSONObject("image_url").getString("url").startsWith("data:image/jpeg;base64,")})}
                     if(aux){val text=seen.last().second.toString();assertFalse(text.contains("data:video/")||text.contains("data:image/"));assertTrue(text.contains("非用户原话"));assertTrue(text.contains("合成视频观察"))}
                     assertTrue(ledger.finishWithMemory(t.id,1,"合成回复",onCompleted={route.commit(it)}));assertEquals(p.hash,ChatImages.source(store.readableDatabase,ref).hash())
                     evidence("route-$aux-$mode",JSONObject().put("models",org.json.JSONArray(seen.map{it.first})).put("videoParts",videos.size).put("frameParts",images.size).put("calls",server.calls.get()).put("hash",p.hash))

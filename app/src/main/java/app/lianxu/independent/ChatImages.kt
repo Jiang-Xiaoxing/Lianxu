@@ -34,7 +34,7 @@ class WireImage private constructor(val mime:String,private val data:ByteArray?,
     internal fun input():InputStream=data?.inputStream()?:requireNotNull(file).inputStream()
     internal companion object {
         fun file(mime:String,file:java.io.File,description:String)=WireImage(mime,null,file,description)
-        fun videoFrame(file:java.io.File,description:String)=WireImage("image/png",null,file,description,true)
+        fun videoFrame(file:java.io.File,description:String)=WireImage("image/jpeg",null,file,description,true)
     }
     override fun toString()="WireImage($mime,$size bytes)"
 }
@@ -77,7 +77,7 @@ internal object ChatImages {
         require(image.source.size>0&&image.hash==image.source.hash())
         image.source.file?.parentFile?.let{ImageDisk.space(it,image.source.size*2)}
         val video=VideoPolicy.isVideo(image.mime)
-        if(video)VideoPolicy.requireSize(image.source.size)
+        if(video&&ToolboxPreferences.videoMode(db)==ToolboxPreferences.VideoMode.ORIGINAL)VideoPolicy.requireSize(image.source.size)
         val large=video||image.source.size>ImagePolicy.ORIGINAL_LIMIT
         val path="chat-images/${UUID.randomUUID()}/"+if(large)"original.json"else "original."+when(image.mime){"image/png"->"png";"image/webp"->"webp";else->"jpg"}
         if(large)OriginalChunks.put(db,friendId,path,image.source,image.hash)

@@ -49,7 +49,7 @@ internal object ImageWire {
         return size(stub,request)+4096<=ImagePolicy.REQUEST_LIMIT
     }
     fun hasVideo(request:TextChatRequest)=request.messages.any{it.videos.isNotEmpty()||it.images.any{image->image.videoFrame}}
-    fun requestLimit(request:TextChatRequest):Long=if(hasVideo(request))Long.MAX_VALUE else if(request.messages.any{it.images.isNotEmpty()})ImagePolicy.REQUEST_LIMIT.toLong() else 2L*1024*1024
+    fun requestLimit(request:TextChatRequest):Long=if(request.messages.any{it.videos.isNotEmpty()})Long.MAX_VALUE else if(request.messages.any{it.images.isNotEmpty()})ImagePolicy.REQUEST_LIMIT.toLong() else 2L*1024*1024
     fun write(body:JSONObject,request:TextChatRequest,out:OutputStream){
         fun text(value:String){out.write(value.toByteArray(Charsets.UTF_8))}
         fun quoted(value:String)=text(JSONObject.quote(value))

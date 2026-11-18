@@ -14,17 +14,17 @@ internal object ChatVideos {
         val displayHeight get()=if(rotation==90||rotation==270)width else height
         val frameCount get()=VideoPolicy.frameCount(durationMillis)
     }
-    fun prepare(input:InputStream,directory:File=ImageDisk.directory()):PendingChatImage {
+    fun prepare(input:InputStream,directory:File=ImageDisk.directory(),extract:Boolean=false,valid:()->Unit={}):PendingChatImage {
         val root=ImageDisk.root(directory);val file=File.createTempFile("import-",".video",root)
         try{
-            ImageDisk.copy(input,file,{if(file.length()>VideoPolicy.ORIGINAL_LIMIT)throw IllegalArgumentException(VideoPolicy.TOO_LARGE)})
-            VideoPolicy.requireSize(file.length())
+            ImageDisk.copy(input,file,{valid();require(file.length()<=OriginalChunks.CHUNK.toLong()*OriginalChunks.MAX_CHUNKS){"原视频超过本机附件存储容量"};if(!extract&&file.length()>VideoPolicy.ORIGINAL_LIMIT)throw IllegalArgumentException(VideoPolicy.TOO_LARGE)})
+            if(!extract)VideoPolicy.requireSize(file.length())
             val info=inspect(file)
             return PendingChatImage(info.mime,file,info.displayWidth,info.displayHeight)
         }catch(e:Throwable){file.delete();throw e}
     }
     fun inspect(file:File):Info=withRetriever(file){retriever->
-        VideoPolicy.requireSize(file.length())
+        require(file.length()>0){"视频文件为空"}
         val mime=retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE).orEmpty()
         require(VideoPolicy.isVideo(mime)){"这个文件不是可读取的视频"}
         val width=retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull()?:0
@@ -43,11 +43,25 @@ internal object ChatVideos {
     }
     fun thumbnail(source:ImageSource,edge:Int=512):Bitmap=withRetriever(requireNotNull(source.file)){retriever->
         val info=inspect(requireNotNull(source.file))
-        val bitmap=if(android.os.Build.VERSION.SDK_INT>=27){
-            val scale=minOf(1.0,edge.toDouble()/maxOf(info.displayWidth,info.displayHeight))
-            retriever.getScaledFrameAtTime(0,MediaMetadataRetriever.OPTION_CLOSEST,maxOf(1,(info.displayWidth*scale).toInt()),maxOf(1,(info.displayHeight*scale).toInt()))
-        }else retriever.getFrameAtTime(0,MediaMetadataRetriever.OPTION_CLOSEST)
-        requireNotNull(bitmap){"这个视频暂时无法预览画面"}
+        val scale=minOf(1.0,edge.toDouble()/maxOf(info.displayWidth,info.displayHeight))
+        frame(retriever,info,0,maxOf(1,(info.displayWidth*scale).toInt()),maxOf(1,(info.displayHeight*scale).toInt()))
+    }
+    fun frame(retriever:MediaMetadataRetriever,info:Info,at:Long,width:Int,height:Int):Bitmap {
+        if(android.os.Build.VERSION.SDK_INT<27)return legacyFrame(retriever,info,at,width,height)
+        val bitmap=retriever.getScaledFrameAtTime(at*1000,MediaMetadataRetriever.OPTION_CLOSEST,width,height)
+        return fitFrame(bitmap,at,width,height)
+    }
+    internal fun legacyFrame(retriever:MediaMetadataRetriever,info:Info,at:Long,width:Int,height:Int):Bitmap {
+        val runtime=Runtime.getRuntime()
+        val pixels=info.width.toLong()*info.height
+        require(pixels<=(runtime.maxMemory()-runtime.totalMemory()+runtime.freeMemory())/12){"本机内存不足以解码原视频画面"}
+        val bitmap=retriever.getFrameAtTime(at*1000,MediaMetadataRetriever.OPTION_CLOSEST)
+        return fitFrame(bitmap,at,width,height)
+    }
+    private fun fitFrame(bitmap:Bitmap?,at:Long,width:Int,height:Int):Bitmap {
+        requireNotNull(bitmap){"无法读取视频第 ${at/1000} 秒画面，已停止准备"}
+        if(bitmap.width==width&&bitmap.height==height)return bitmap
+        return try{Bitmap.createScaledBitmap(bitmap,width,height,true)}finally{bitmap.recycle()}
     }
     inline fun <T> withRetriever(file:File,read:(MediaMetadataRetriever)->T):T {
         val retriever=MediaMetadataRetriever()

@@ -183,7 +183,7 @@ private val toolboxCards=mapOf(
                 RadioButton(mode==value,null,enabled=ready&&!busy);Spacer(Modifier.width(12.dp));Column{Text(if(value==ToolboxPreferences.VideoMode.ORIGINAL)"直传原视频"else"每秒抽取一帧",style=MaterialTheme.typography.titleSmall);Text(if(value==ToolboxPreferences.VideoMode.ORIGINAL)"完整原件，原有音轨也会一并发送"else"每秒一张画面，不发送音轨",style=MaterialTheme.typography.bodySmall,color=Muted)}
             }}
         }
-        Text("单个视频最多 70 MB，原件不压缩、不静音、不转码。应用不单独提取或处理声音；直传时服务商可能理解原件中的声音。服务商也可能有更小上限。",style=MaterialTheme.typography.bodySmall,color=Muted)
+        Text("直传原视频最多 70 MB。抽帧按秒生成高质量 JPEG，大画面按比例缩至 1080p 范围。应用不单独提取或处理声音；直传时服务商可能理解原件中的声音。服务商也可能有更小上限。",style=MaterialTheme.typography.bodySmall,color=Muted)
         Text("沿用图片理解中的接收方：辅助看图开启时交所选辅助模型，关闭时交聊天模型。服务商或模型不支持时如实报错，不自动换模式、换模型、压缩、分批或减少画面。",style=MaterialTheme.typography.bodySmall,color=Muted)
         if(error.isNotBlank())Text(error,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
     }

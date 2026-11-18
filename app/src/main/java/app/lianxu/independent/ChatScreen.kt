@@ -140,7 +140,9 @@ private suspend fun LazyListState.showEndOf(index:Int){
             imageScope.launch{var candidate:PendingChatImage?=null;try{
                 withContext(kotlinx.coroutines.Dispatchers.IO){
                     val video=VideoPolicy.isVideo(context.contentResolver.getType(uri).orEmpty())
-                    candidate=context.contentResolver.openInputStream(uri)?.let{if(video)ChatVideos.prepare(it,context.cacheDir)else ChatImages.prepare(it,context.cacheDir)}?:error("无法打开图片或视频")
+                    val extract=video&&ToolboxPreferences.videoMode(vm.processing.store)==ToolboxPreferences.VideoMode.FRAMES
+                    val jobContext=kotlinx.coroutines.currentCoroutineContext()
+                    candidate=context.contentResolver.openInputStream(uri)?.let{if(video)ChatVideos.prepare(it,context.cacheDir,extract){jobContext.ensureActive()}else ChatImages.prepare(it,context.cacheDir)}?:error("无法打开图片或视频")
                 }
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 selectedImage?.close();selectedImage=requireNotNull(candidate);candidate=null;draftVersion++;imageError=""
