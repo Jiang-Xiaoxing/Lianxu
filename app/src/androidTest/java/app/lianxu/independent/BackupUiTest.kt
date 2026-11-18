@@ -38,7 +38,7 @@ class BackupUiTest {
     private val saves=mutableListOf<Uri>();private var openUri:Uri?=null;private val calls=AtomicInteger()
     private val pickerResults=ConcurrentLinkedQueue<()->Unit>()
     @get:Rule(order=0)val fixture=object:ExternalResource(){
-        override fun before(){oldDb=AppServices.databaseName;oldVault=AppServices.vaultNamespace;name="backup-ui-${System.nanoTime()}";AppServices.databaseName="$name.db";AppServices.vaultNamespace=name;seedLegacyTestRoles(instrument.targetContext,"$name.db")}
+        override fun before(){oldDb=AppServices.databaseName;oldVault=AppServices.vaultNamespace;name="backup-ui-${System.nanoTime()}";AppServices.databaseName="$name.db";AppServices.vaultNamespace=name;seedLegacyTestRoles(instrument.targetContext,"$name.db");Store(instrument.targetContext,"$name.db").use { store -> runBlocking { store.savePreference(EXPORT_DETAIL_PREF,"0") } }}
         override fun after(){if(::vault.isInitialized)vault.list().forEach{vault.delete(it.id)};instrument.targetContext.deleteDatabase("$name.db");File(instrument.targetContext.noBackupFilesDir,name).deleteRecursively();AppServices.databaseName=oldDb;AppServices.vaultNamespace=oldVault}
     }
     @get:Rule(order=1)val ui=createAndroidComposeRule<ComponentActivity>()
@@ -118,7 +118,7 @@ class BackupUiTest {
         fun scroll()=ui.onNodeWithTag("role-archive-page").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
         val before=scroll();assertTrue(before>0);shot("swipe-import-preview-before")
         swipeTab(true);ui.onNodeWithTag("backup-tab-diagnostics").assertIsSelected()
-        ui.onNodeWithTag("backup-detailed").performScrollTo().performClick();ui.waitUntil(15000){runBlocking{vm.processing.store.preference("diagnostic-detailed","0")}=="1"}
+        ui.onNodeWithTag("backup-detailed").performScrollTo().performClick();ui.waitUntil(15000){runBlocking{vm.processing.store.preference(EXPORT_DETAIL_PREF,"0")}=="1"}
         ui.onNodeWithTag("role-archive-page").performTouchInput{swipeUp()};ui.onNodeWithTag("backup-tab-diagnostics").assertIsSelected();shot("swipe-diagnostics-dark-large")
         swipeTab(false);ui.onNodeWithTag("backup-tab-data").assertIsSelected();assertEquals(before,scroll(),2f)
         ui.onNodeWithTag("archive-impact").assertTextEquals(impact);ui.onNodeWithTag("backup-choose-mode").assertTextEquals("导入方式：覆盖");shot("swipe-import-preview-returned")
@@ -129,17 +129,17 @@ class BackupUiTest {
         show();exportAll(false);val old=BackupArchive.read(bytes().inputStream())
         ui.onNodeWithTag("backup-tab-diagnostics").performClick()
         ui.onNodeWithTag("backup-detailed").performClick()
-        ui.waitUntil(15000){runBlocking{vm.processing.store.preference("diagnostic-detailed","0")}=="1"}
+        ui.waitUntil(15000){runBlocking{vm.processing.store.preference(EXPORT_DETAIL_PREF,"0")}=="1"}
         ui.onNodeWithTag("backup-tab-data").performClick();exportAll(false)
-        val detailed=BackupArchive.read(bytes().inputStream());assertEquals("1",detailed.root["preferences"].asJsonObject["diagnostic-detailed"].asString)
+        val detailed=BackupArchive.read(bytes().inputStream());assertEquals("1",detailed.root["preferences"].asJsonObject[EXPORT_DETAIL_PREF].asString)
         runBlocking{vm.importBackup(vm.backup.preview(old,"REPLACE"),true,ChatAttemptLease())}
-        assertFalse(vm.diagnosticDetailed);assertFalse(Diagnostics.detailed)
+        assertFalse(vm.diagnosticDetailed);assertTrue(Diagnostics.detailed)
         runBlocking{vm.importBackup(vm.backup.preview(detailed,"REPLACE"),true,ChatAttemptLease())}
         assertTrue(vm.diagnosticDetailed);assertTrue(Diagnostics.detailed)
         ui.onNodeWithTag("backup-tab-diagnostics").performClick()
         vm.diagnosticPersist={throw java.io.IOException("synthetic fail after restore")}
         ui.onNodeWithTag("backup-detailed").performClick();ui.waitUntil(15000){vm.diagnosticDetailed}
-        assertEquals("1",runBlocking{vm.processing.store.preference("diagnostic-detailed","0")});vm.diagnosticPersist=null
+        assertEquals("1",runBlocking{vm.processing.store.preference(EXPORT_DETAIL_PREF,"0")});vm.diagnosticPersist=null
     }
     @Test fun smallDarkLargeTextKeepsActionsTabsAndHelpReachable(){
         show(dark=true,big=true,small=true)
@@ -230,7 +230,7 @@ class BackupUiTest {
         ui.onNodeWithTag("backup-detailed").performScrollTo().performClick()
         ui.waitUntil(15000){!vm.diagnosticDetailed}
         vm.diagnosticPersist=null
-        assertEquals("没有存上就不能留成开","0",runBlocking{vm.processing.store.preference("diagnostic-detailed","0")})
+        assertEquals("没有存上就不能留成开","0",runBlocking{vm.processing.store.preference(EXPORT_DETAIL_PREF,"0")})
     }
 
     @Test fun simpleExportCannotUpgradeWhileItsWorkerStarts() {
@@ -309,7 +309,7 @@ class BackupUiTest {
         assertEquals(n+1,saves.size)
         assertEquals(beforeConfirm+1,detailedExports())
         val detailed=bytes().toString(Charsets.UTF_8)
-        assertTrue(detailed.contains("开启期间合成诊断正文"));assertFalse(detailed.contains("关闭期间合成诊断正文"));assertFalse(detailed.contains("synthetic-ui-key-only"))
+        assertTrue(detailed.contains("开启期间合成诊断正文"));assertTrue(detailed.contains("关闭期间合成诊断正文"));assertFalse(detailed.contains("synthetic-ui-key-only"))
         assertEquals(0,calls.get());shot("diagnostic-switch")
     }
     /** 快速开关不能让较早的一次保存盖掉最后一次选择：落盘的必须等于最后的状态。 */
@@ -317,7 +317,7 @@ class BackupUiTest {
         show()
         ui.onNodeWithTag("backup-tab-diagnostics").performClick()
         fun toggle()=ui.onNodeWithTag("backup-detailed").performScrollTo().performClick()
-        fun stored():String{instrument.waitForIdleSync();Thread.sleep(600);return runBlocking{vm.processing.store.preference("diagnostic-detailed","0")}}
+        fun stored():String{instrument.waitForIdleSync();Thread.sleep(600);return runBlocking{vm.processing.store.preference(EXPORT_DETAIL_PREF,"0")}}
         toggle();toggle();toggle()   // 关 → 开 → 关 → 开
         assertEquals("最后选择是开，落盘也必须是开","1",stored())
         assertTrue(vm.diagnosticDetailed)

@@ -48,6 +48,19 @@ class DiagnosticJournalTest {
             val export=j.export(true).toString(Charsets.UTF_8);assertTrue(export.contains("trace-99"));assertTrue(export.contains("truncated"))
         }finally{j.close();cleanup(dir)}
     }
+    @Test fun oldFirstEventExpiresEvenWhenTheSegmentWasRecentlyTouched() {
+        val dir=directory()
+        val old=System.currentTimeMillis()-8L*24*60*60*1000
+        File(dir,"events-0.jsonl").writeText("""{"event":"expired-marker","at":$old}"""+"\n")
+        val journal=DiagnosticJournal(dir,"bounded")
+        try {
+            journal.record("fresh-marker")
+            val result=journal.export(true).decodeToString()
+            assertTrue(result.contains("fresh-marker"));assertFalse(result.contains("expired-marker"))
+            assertFalse(File(dir,"events-0.jsonl").readText().contains("expired-marker"))
+        }finally{journal.close();cleanup(dir)}
+    }
+
     @Test fun oversizeDropIsExplicitAndDoesNotGrowDisk(){
         val dir=directory();val j=DiagnosticJournal(dir,"test",queueCapacity=1)
         try{j.record("oversize","trace-a",mapOf("body" to "x".repeat(1024*1024+10)));val result=rows(j.export(true));assertEquals(1L,result.first().get("dropped_events").asLong);assertTrue(result.first().get("flush_complete").asBoolean);assertFalse(result.any{it.get("event")?.asString=="oversize"})}

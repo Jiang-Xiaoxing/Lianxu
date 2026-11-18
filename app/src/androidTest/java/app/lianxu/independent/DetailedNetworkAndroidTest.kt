@@ -22,7 +22,7 @@ class DetailedNetworkAndroidTest {
         lateinit var vm:AppState
         ui.activityRule.scenario.onActivity{vm=ViewModelProvider(it)[AppState::class.java]}
         ui.waitUntil(20000){vm.ready}
-        ui.runOnIdle{vm.setDiagnosticDetailed(true)}
+        assertTrue(Diagnostics.detailed)
         return vm
     }
     private fun rows():List<JsonObject> = runBlocking{Diagnostics.export(true)}.toString(Charsets.UTF_8)
@@ -30,7 +30,7 @@ class DetailedNetworkAndroidTest {
     private fun name(row:JsonObject)=row["event"].asString
     private fun data(row:JsonObject)=row.getAsJsonObject("data")
 
-    @Test fun backgroundNetworkAndInstalledBuildFollowSwitch(){
+    @Test fun backgroundNetworkAndInstalledBuildContinueWithSimpleExport(){
         val vm=enable()
         ui.waitUntil(15000){rows().any{name(it)=="diagnostic.build" && data(it)["apk_sha256"]?.asString?.length==64}}
         ui.waitUntil(10000){rows().any{name(it)=="diagnostic.network"}}
@@ -48,7 +48,7 @@ class DetailedNetworkAndroidTest {
         val atOff=rows().count{name(it) in setOf("diagnostic.network","diagnostic.lifecycle","diagnostic.build")}
         ui.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         ui.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
-        assertEquals(atOff,rows().count{name(it) in setOf("diagnostic.network","diagnostic.lifecycle","diagnostic.build")})
+        assertTrue(rows().count{name(it) in setOf("diagnostic.network","diagnostic.lifecycle","diagnostic.build")}>atOff)
     }
 
     @Test fun recreatedActivityAndLateNetworkCallbacksRespectTheCurrentSession() {
@@ -74,7 +74,7 @@ class DetailedNetworkAndroidTest {
         }
         val observed=rows().filter { it["trace"].asString==trace && name(it)=="diagnostic.network" && data(it).has("network_event") }
             .map { data(it)["network_event"].asString }.filter { it!="snapshot" }
-        assertEquals(listOf("available","capabilities","lost"),observed)
+        assertEquals(listOf("available","capabilities","lost","available","lost"),observed)
     }
 
     @Test fun completedWritesAndPartialReadsMatchSyntheticPeer() {

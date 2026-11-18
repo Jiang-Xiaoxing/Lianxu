@@ -25,11 +25,13 @@ internal object DiagnosticEnvironment {
     @Volatile private var fields=emptyMap<String,Any?>()
     @Volatile private var apkHash:String?=null
 
-    fun attach(activity:MainActivity){
-        activities[activity]=null
-        val app=activity.applicationContext
+    fun start(app:Context){
         Diagnostics.modeChanged={if(Looper.myLooper()==Looper.getMainLooper())refresh(app) else main.post{refresh(app)}}
         refresh(app)
+    }
+    fun attach(activity:MainActivity){
+        activities[activity]=null
+        refresh(activity.applicationContext)
     }
     fun detach(activity:MainActivity){
         activities.remove(activity)?.let{activity.lifecycle.removeObserver(it)}

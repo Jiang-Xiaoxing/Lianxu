@@ -7,6 +7,26 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 class StableTestUpgradeTest {
+    @Test fun continuousJournalAcrossProcessStarts() = runBlocking {
+        val args=InstrumentationRegistry.getArguments()
+        val run=args.getString("journalProbe")
+        assumeTrue(run in listOf("fresh","upgraded","restarted"))
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        check(context.packageName=="app.lianxu.independent.testing")
+        check(android.os.Build.HARDWARE in listOf("ranchu","goldfish"))
+        assertTrue(Diagnostics.detailed)
+        Store(context).use { store ->
+            if(run=="fresh") assertTrue(store.friends().isEmpty())
+            else assertEquals("0",store.preference("diagnostic-detailed","missing"))
+        }
+        val incoming=Diagnostics.export(true).decodeToString()
+        if(run=="restarted") assertTrue(incoming.contains("升级后合成诊断正文"))
+        val text=if(run=="fresh") "初装合成诊断正文" else "升级后合成诊断正文"
+        Diagnostics.event("synthetic.cold.start",mapOf("text" to Diagnostics.raw(text)))
+        assertTrue(Diagnostics.export(true).decodeToString().contains(text))
+        assertFalse(Diagnostics.export(false).decodeToString().contains(text))
+    }
+
     @Test fun syntheticRecordsSurvivePackageReplacement() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val mode = InstrumentationRegistry.getArguments().getString("upgradeProbe")

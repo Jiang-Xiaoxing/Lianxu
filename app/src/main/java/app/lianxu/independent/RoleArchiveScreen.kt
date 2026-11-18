@@ -73,11 +73,11 @@ private class PendingBackup(val archive:BackupRepository.Export?=null,val bytes:
         chooseMode=true;status="第 1 步：文件已读取，尚未导入。建议选择新增，保留现有角色。"
     }}
     fun exportDiagnostics(session: Any?) {
-        if (busy || output != null || session != null && session !== Diagnostics.detailSession) return
+        if (busy || output != null || session != null && session !== vm.detailedExportSession) return
         val detailed = session != null
         work { active ->
             val bytes = Diagnostics.export(detailed)
-            if (!active.isActive() || detailed && session !== Diagnostics.detailSession) {
+            if (!active.isActive() || detailed && session !== vm.detailedExportSession) {
                 bytes.fill(0)
                 return@work
             }
@@ -121,11 +121,11 @@ private class PendingBackup(val archive:BackupRepository.Export?=null,val bytes:
                 }
                 }else{
                 BackupActionRow("document","导出诊断日志","生成并导出诊断日志文件","backup-export-diagnostics",!busy && output == null){
-                    val session = Diagnostics.detailSession
+                    val session = vm.detailedExportSession
                     if (session == null) exportDiagnostics(null) else exportConfirmation = session
                 }
                 BackupDiagnosticToggle(vm.diagnosticDetailed,!busy){vm.setDiagnosticDetailed(it)}
-                Text("详细日志可能包含聊天等私密原文，请谨慎开启和分享。",style=MaterialTheme.typography.bodySmall,color=Muted)
+                Text("应用运行时会自动在本机记录详细日志。遇到问题后可直接导出，不会自动上传。",style=MaterialTheme.typography.bodySmall,color=Muted)
                 }
         }}
     }

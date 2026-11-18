@@ -102,9 +102,9 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     internal suspend fun exportBackup(id:String?,includeKeys:Boolean,password:CharArray?=null)=Diagnostics.span("backup.export",mapOf("scope" to if(id==null)"all" else "role","include_keys" to includeKeys)) {backup.export(id,includeKeys,password)}
     internal suspend fun importBackup(plan:BackupRepository.Preview,confirmed:Boolean,lease:ChatAttemptLease,password:CharArray?=null):List<String> = withContext(NonCancellable){Diagnostics.span("backup.import",mapOf("mode" to plan.mode,"scope" to if(plan.pack.all)"all" else "role")) {
         val ids=if(plan.mode=="REPLACE"&&plan.pack.all)diagnosticSave.withLock{
-            val detailed=plan.pack.root["preferences"].asJsonObject["diagnostic-detailed"]?.asString=="1"
+            val detailed=plan.pack.root["preferences"].asJsonObject[EXPORT_DETAIL_PREF]?.asString!="0"
             val restored=backup.commit(plan,confirmed,lease,password=password)
-            diagnosticChoice++;diagnosticDetailed=detailed;savedDiagnosticDetailed=detailed;Diagnostics.detailed=detailed
+            diagnosticChoice++;selectDetailedExport(detailed);savedDiagnosticDetailed=detailed
             restored
         }else backup.commit(plan,confirmed,lease,password=password)
         if(plan.mode=="REPLACE"){
@@ -148,16 +148,20 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     var persona by mutableStateOf(UserPersona());private set
     val nickname get()=persona.displayName
     var ready by mutableStateOf(false); private set
-    /** One switch: detailed journal mode records reasoning text and exports detailed rows. */
-    internal var diagnosticDetailed by mutableStateOf(false); private set
-    private var savedDiagnosticDetailed=false
+    /** Changing format invalidates a pending detailed export, even after switching back. */
+    internal var detailedExportSession: Any? by mutableStateOf(Any()); private set
+    internal val diagnosticDetailed get() = detailedExportSession != null
+    private var savedDiagnosticDetailed=true
+    private fun selectDetailedExport(value:Boolean) {
+        if(value != diagnosticDetailed) detailedExportSession = if(value) Any() else null
+    }
     private var diagnosticChoice=0L
     private val diagnosticSave=Mutex()
     /** Test seam: lets device tests inject a slow or failing save without touching real preferences. */
     internal var diagnosticPersist: (suspend (String)->Unit)?=null
     internal fun setDiagnosticDetailed(value:Boolean){
         val choice=++diagnosticChoice
-        diagnosticDetailed=value;Diagnostics.detailed=value
+        selectDetailedExport(value)
         viewModelScope.launch{
             // Saves are serialized and write the value current at write time, so a fast on→off cannot
             // resurrect "on" after restart; a failed save rolls the switch back to what is really stored.
@@ -165,19 +169,21 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
                 val current=diagnosticDetailed
                 val raw=if(current)"1" else "0"
                 diagnosticPersist?.invoke(raw)
-                store.savePreference("diagnostic-detailed",raw)
+                store.savePreference(EXPORT_DETAIL_PREF,raw)
                 current
             }}.getOrNull()}
             // The disk always reflects the newest completed write, whatever the switch shows now.
             if(written!=null)savedDiagnosticDetailed=written
             // A newer choice owns the switch now: an older save may not roll it back.
             if(choice!=diagnosticChoice)return@launch
-            if(written==null){Diagnostics.event("diagnostic.preference.failed");diagnosticDetailed=savedDiagnosticDetailed;Diagnostics.detailed=savedDiagnosticDetailed}
+            if(written==null){Diagnostics.event("diagnostic.preference.failed");selectDetailedExport(savedDiagnosticDetailed)}
         }
     }
     init { viewModelScope.launch { runCatching { val savedDetailed=withContext(Dispatchers.IO){
-        val saved=runCatching{store.preference("diagnostic-detailed","0")}.getOrDefault("0")=="1";saved
-    };diagnosticDetailed=savedDetailed;savedDiagnosticDetailed=savedDetailed;withContext(Dispatchers.IO){Diagnostics.configure(java.io.File(application.filesDir,"diagnostics/$vaultNamespace"),application.packageManager.getPackageInfo(application.packageName,0).versionName.orEmpty())};Diagnostics.detailed=savedDetailed;ledger.recoverInterrupted();companion.checkContinuity(CompanionRuntime.owner);reload();  persona=store.persona();refreshUserAvatar(); ready=true;settleCompanion();recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
+        Diagnostics.startLocalRecording(application, vaultNamespace)
+        modelVault.list() // Register persisted model credentials before accepting user input.
+        store.preference(EXPORT_DETAIL_PREF,"1")=="1"
+    };selectDetailedExport(savedDetailed);savedDiagnosticDetailed=savedDetailed;ledger.recoverInterrupted();companion.checkContinuity(CompanionRuntime.owner);reload();  persona=store.persona();refreshUserAvatar(); ready=true;settleCompanion();recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
     private var reloadSerial=0L
     private val avatarCache=RoleAvatarCache()
     private var messagePrints=emptyMap<String,MessageFingerprint>()

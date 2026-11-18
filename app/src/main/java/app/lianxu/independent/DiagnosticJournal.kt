@@ -111,6 +111,8 @@ internal class DiagnosticJournal(private val directory:File,private val version:
     private val queue=ArrayBlockingQueue<Pending>(queueCapacity)
     private val pendingBytes=AtomicLong();val dropped=AtomicLong();private var reportedDrops=0L
     private val rotations=AtomicLong();private val expired=AtomicLong();private val started=System.currentTimeMillis()
+    private var currentStartedAt = 0L
+    @Volatile private var nextExpiry = Long.MAX_VALUE
     private val lock=Any();@Volatile private var closed=false
     private val gson=GsonBuilder().registerTypeAdapter(DiagnosticPayload::class.java,JsonSerializer<DiagnosticPayload>{field,_,context->context.serialize(field.current())}).registerTypeAdapter(ByteArray::class.java,JsonSerializer<ByteArray>{bytes,_,_->JsonPrimitive("[二进制数据已省略，共${bytes.size}字节]")}).create();private val worker:Thread
     init{require(segmentBytes>=1024&&segments in 2..10&&queueCapacity>0);worker=Thread({consume()},"lianxu-diagnostics").apply{isDaemon=true;start()}}
@@ -128,7 +130,12 @@ internal class DiagnosticJournal(private val directory:File,private val version:
         directory.mkdirs()
         synchronized(lock){prune()}
         while(!closed||queue.isNotEmpty()){
-            val p=try{queue.poll(200,TimeUnit.MILLISECONDS)}catch(_:InterruptedException){null}?:continue
+            val untilExpiry = nextExpiry
+            val p=try {
+                if (untilExpiry == Long.MAX_VALUE) queue.take()
+                else queue.poll((untilExpiry-System.currentTimeMillis()).coerceAtLeast(1),TimeUnit.MILLISECONDS)
+            }catch(_:InterruptedException){continue}
+            if (p == null) { synchronized(lock){prune()}; continue }
             if(p.barrier!=null){p.barrier.countDown();continue}
             try {
                 val now=System.currentTimeMillis();val lost=dropped.get()
@@ -147,13 +154,29 @@ internal class DiagnosticJournal(private val directory:File,private val version:
         }
     }
     private fun prune(){
-        directory.listFiles().orEmpty().filter{f->val match=Regex("""events-([0-9]+)\.jsonl""").matchEntire(f.name);match!=null&&(match.groupValues[1].toIntOrNull()?.let{it>=segments}==true||System.currentTimeMillis()-f.lastModified()>keepMillis)}.forEach{if(it.delete())expired.incrementAndGet()}
+        val now=System.currentTimeMillis()
+        var next=Long.MAX_VALUE
+        currentStartedAt=0
+        directory.listFiles().orEmpty().forEach { file ->
+            val index=Regex("""events-([0-9]+)\.jsonl""").matchEntire(file.name)?.groupValues?.get(1)?.toIntOrNull() ?: return@forEach
+            val first=runCatching { file.bufferedReader().use { JsonParser.parseString(it.readLine()).asJsonObject["at"].asLong } }.getOrNull()
+            val start=minOf(first ?: file.lastModified(), file.lastModified(), now)
+            if(index>=segments || now-start>=keepMillis) {
+                if(file.delete()) expired.incrementAndGet() else next=minOf(next,now+60000)
+            } else {
+                if(index==0) currentStartedAt=start
+                next=minOf(next,start+keepMillis)
+            }
+        }
+        nextExpiry=next
     }
     private fun write(row:JsonObject)=synchronized(lock){
-        prune()
+        val now=System.currentTimeMillis()
+        if(now>=nextExpiry) prune()
         val current=File(directory,"events-0.jsonl");val text=row.toString()+"\n"
         check(text.toByteArray(Charsets.UTF_8).size<=segmentBytes)
-        if(current.length()+text.toByteArray().size>segmentBytes){File(directory,"events-${segments-1}.jsonl").delete();for(i in segments-2 downTo 0){val f=File(directory,"events-$i.jsonl");if(f.exists())check(f.renameTo(File(directory,"events-${i+1}.jsonl")))};rotations.incrementAndGet()}
+        if(current.length()+text.toByteArray().size>segmentBytes || currentStartedAt>0 && now-currentStartedAt>=keepMillis/segments){File(directory,"events-${segments-1}.jsonl").delete();for(i in segments-2 downTo 0){val f=File(directory,"events-$i.jsonl");if(f.exists())check(f.renameTo(File(directory,"events-${i+1}.jsonl")))};rotations.incrementAndGet();currentStartedAt=0}
+        if(currentStartedAt==0L) { currentStartedAt=minOf(now,row["at"].asLong); nextExpiry=minOf(nextExpiry,currentStartedAt+keepMillis) }
         current.appendText(text,Charsets.UTF_8)
     }
     fun flush():Boolean {if(closed)return queue.isEmpty();val latch=CountDownLatch(1);return queue.offer(Pending("","",JsonObject(),0,null,barrier=latch),2,TimeUnit.SECONDS)&&latch.await(3,TimeUnit.SECONDS)}
@@ -174,5 +197,5 @@ internal class DiagnosticJournal(private val directory:File,private val version:
             }
         }.toByteArray(Charsets.UTF_8)}
     }
-    override fun close(){flush();closed=true;worker.join(4000)}
+    override fun close(){flush();closed=true;worker.interrupt();worker.join(4000)}
 }

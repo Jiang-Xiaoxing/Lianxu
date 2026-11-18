@@ -6,6 +6,8 @@ import java.util.UUID
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
+internal const val EXPORT_DETAIL_PREF = "diagnostic-export-detailed"
+
 internal data class DiagnosticTraceState(val trace:String,val span:String,val parent:String?,val purpose:String?,val request:NetworkDiagnosticState?=null,val links:Map<String,Any?> = emptyMap())
 internal class DiagnosticTrace(private val value:DiagnosticTraceState):ThreadContextElement<DiagnosticTraceState?>,AbstractCoroutineContextElement(Key){
     companion object Key:CoroutineContext.Key<DiagnosticTrace>
@@ -24,7 +26,7 @@ internal object Diagnostics {
     internal val traceState=ThreadLocal<DiagnosticTraceState?>()
     @Volatile private var journal:DiagnosticJournal?=null
     private var identity=""
-    /** Detailed journal mode. Off by default; only then is the visible reasoning text recorded. */
+    /** A recording session is established at process startup, independent of export format. */
     @Volatile internal var detailSession:Any?=null
         private set
     internal var detailed:Boolean
@@ -60,7 +62,14 @@ internal object Diagnostics {
         return mapOf("reasoning_status" to status,"reasoning_chars" to received,
             "reasoning_text" to raw(safe),"reasoning_truncated" to truncated)
     }
-    /** Invoke on Dispatchers.IO during application setup; directory is app-private. */
+    @Synchronized fun startLocalRecording(context:android.content.Context, namespace:String) {
+        val directory = File(context.filesDir, "diagnostics/$namespace")
+        if (identity == directory.absolutePath && detailed) return
+        if (identity != directory.absolutePath && detailed) detailed = false
+        configure(directory, context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty())
+        detailed = true
+    }
+
     @Synchronized fun configure(directory:File,version:String){
         val key=directory.absolutePath
         if(journal!=null&&identity==key)return
