@@ -23,7 +23,7 @@ import java.io.FilterOutputStream
 import java.io.OutputStream
 
 private class PendingBackup(val archive:BackupRepository.Export?=null,val bytes:ByteArray?=null){
-    fun clear(){bytes?.fill(0);archive?.files?.values?.forEach{it.fill(0)}}
+    fun clear(){bytes?.fill(0);archive?.close()}
     override fun toString()="PendingBackup(redacted)"
 }
 
@@ -43,10 +43,10 @@ private class PendingBackup(val archive:BackupRepository.Export?=null,val bytes:
     val impact=preview?.impact?:legacyPreview?.impact
     fun clearPreview(){preview=null;legacyPreview=null;confirm=false}
     fun work(block:suspend(ChatAttemptLease)->Unit){if(busy)return;busy=true;error="";status="";val active=ChatAttemptLease();lease=active
-        job=scope.launch(Diagnostics.context("backup.page")){try{block(active)}catch(e:CancellationException){status=if(active.wasCommitted())"导入已完成，资料已刷新；取消到达时事务已经提交。"else"已取消，已保存资料保留。";throw e}catch(e:Exception){Diagnostics.failure("backup.page.failed",e);error=if(e is BackupKeySeal.WrongPassword||e is BackupKeySeal.NeedsPassword)e.message.orEmpty() else if(e.message?.contains("重新预览")==true)"资料、配置或备份内容已变化，请重新预览。"else"处理未完成，请检查文件格式、文件权限与可用空间后重试。"}finally{busy=false;lease=null}}
+        job=scope.launch(Diagnostics.context("backup.page")){try{block(active)}catch(e:CancellationException){status=if(active.wasCommitted())"导入已完成，资料已刷新；取消到达时事务已经提交。"else"已取消，已保存资料保留。";throw e}catch(e:OutOfMemoryError){error="本机内存不足，处理未完成；请保留原文件重试。"}catch(e:Exception){Diagnostics.failure("backup.page.failed",e);error=if(e is BackupKeySeal.WrongPassword||e is BackupKeySeal.NeedsPassword)e.message.orEmpty() else if(e.message?.contains("重新预览")==true)"资料、配置或备份内容已变化，请重新预览。"else"处理未完成，请检查文件格式、文件权限与可用空间后重试。"}finally{busy=false;lease=null}}
     }
     BackHandler(busy){lease?.cancel();job?.cancel()}
-    DisposableEffect(Unit){onDispose{lease?.cancel();output?.clear()}}
+    DisposableEffect(Unit){onDispose{lease?.cancel();output?.clear();incoming?.close()}}
     val save=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")){uri->
         val pending=output;output=null
         if(uri==null){pending?.clear();status="已取消保存"}else if(pending==null){error="导出资料已过期，请重新导出"}else work{active->
@@ -55,23 +55,25 @@ private class PendingBackup(val archive:BackupRepository.Export?=null,val bytes:
                     override fun write(b:Int){check(active.isActive()){ "保存已取消" };out.write(b)}
                     override fun write(b:ByteArray,off:Int,len:Int){check(active.isActive()){ "保存已取消" };out.write(b,off,len)}
                 }
-                pending.archive?.let{BackupArchive.write(it.root,it.files,checked)}?:checked.write(requireNotNull(pending.bytes))
+                val current=currentCoroutineContext()
+                pending.archive?.let{BackupArchive.write(it.root,it.files,checked){current.ensureActive();check(active.isActive()){ "保存已取消" }}}?:checked.write(requireNotNull(pending.bytes))
             }};status="已保存。备份和详细日志可能含私密资料，请妥善保管。"}finally{pending.clear()}
         }
     }
     fun export(id:String?,keys:Boolean,password:CharArray?=null){work{active->val snapshot=try{vm.exportBackup(id,keys,password)}finally{password?.fill('\u0000')}
-        if(!active.isActive()){snapshot.files.values.forEach{it.fill(0)};return@work};output=PendingBackup(archive=snapshot)
+        if(!active.isActive()){snapshot.close();return@work};output=PendingBackup(archive=snapshot)
         save.launch(if(id!=null)"恋叙角色完整备份.lianxu.zip"else if(keys)"恋叙全部备份-含密钥请勿分享.lianxu.zip"else"恋叙全部备份.lianxu.zip")
     }}
-    val open=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null)work{
-        incoming=null;clearPreview();mode="";target=""
-        incoming=withContext(Dispatchers.IO){requireNotNull(context.contentResolver.openInputStream(uri)).use(BackupArchive::read)}
+    val open=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null)work{active->
+        incoming?.close();incoming=null;clearPreview();mode="";target=""
+        var loaded:BackupArchive.Package?=null
+        try{withContext(Dispatchers.IO){val current=currentCoroutineContext();loaded=requireNotNull(context.contentResolver.openInputStream(uri)).use{BackupArchive.read(it,context.cacheDir){current.ensureActive();check(active.isActive()){ "读取已取消" }}}};incoming=loaded;loaded=null}finally{loaded?.close()}
         chooseMode=true;status="第 1 步：文件已读取，尚未导入。建议选择新增，保留现有角色。"
     }}
     fun plan(){val pack=incoming?:return;work{clearPreview();if(pack.legacy!=null)legacyPreview=vm.roleArchive.preview(pack.legacy,if(mode=="REPLACE")target else null)else preview=vm.backup.preview(pack,mode,if(mode=="REPLACE"&&!pack.all)target else null)}}
     fun apply(confirmed:Boolean,password:CharArray?=null){val p=preview;val old=legacyPreview;work{active->
         if(p!=null)try{vm.importBackup(p,confirmed,active,password)}finally{password?.fill('\u0000')}else if(old!=null)vm.importRoleArchive(old,confirmed,active)else error("预览已过期")
-        incoming=null;clearPreview();mode="";status=if(confirmed)"已按预览范围恢复，未自动请求模型。"else"已新增包内角色，当前角色和模型设置保留。"
+        incoming?.close();incoming=null;clearPreview();mode="";status=if(confirmed)"已按预览范围恢复，未自动请求模型。"else"已新增包内角色，当前角色和模型设置保留。"
     }}
     Column(Modifier.fillMaxSize()){
         AppTopBar("备份与诊断",{if(!busy)vm.back()},enabled=!busy,extra={IconButton({help=true},enabled=!busy,modifier=Modifier.size(UiSpace.action).testTag("backup-page-help").semantics{contentDescription=if(section==0)"备份与恢复说明"else"诊断日志说明"}){ControlIcon("info")}})

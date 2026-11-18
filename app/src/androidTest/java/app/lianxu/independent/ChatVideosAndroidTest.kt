@@ -148,7 +148,7 @@ class ChatVideosAndroidTest {
             assertTrue(repo.memories("r").single().locked);assertFalse(repo.memories("r").single().valid);assertTrue(repo.candidates("r").isNotEmpty());assertEquals(ref.hash,ChatImages.source(store.readableDatabase,ref).hash())
         }
     }
-    @Test fun exact70MbStreamsOriginalHashWithAudioAndBackupFailsExplicitly():Unit=runBlocking{
+    @Test fun exact70MbStreamsOriginalHashWithAudioAndBackupRoundTrips():Unit=runBlocking{
         ChatVideos.prepare(padded(70_000_000),context.cacheDir).use{p->val(t,ref)=begin(p);val original=ChatImages.source(store.readableDatabase,ref);var received=0L;var receivedHash="";var requestBytes=0
             ChatVideos.withRetriever(original.file!!){assertEquals("yes",it.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO))}
             TextTlsMock(maxBodyBytes=100_000_000,requestSink={raw,size->
@@ -163,7 +163,13 @@ class ChatVideosAndroidTest {
                 assertTrue(server.client(45000).complete(cfg,"synthetic-key-only",req) is TextChatResult.Success);assertEquals(1,server.calls.get());assertEquals(70_000_000L,received);assertEquals(ref.hash,receivedHash);assertEquals(ImageWire.size(ImageWire.body(cfg,req,false),req),requestBytes.toLong())
                 evidence("original70-http",JSONObject().put("sourceBytes",received).put("requestBytes",requestBytes).put("sourceHash",ref.hash).put("receivedHash",receivedHash).put("audioPreserved",true).put("calls",server.calls.get()))
             }
-            ledger.finish(t.id,1,"完成");val error=runCatching{BackupRepository(store,vault).export("r")}.exceptionOrNull();assertTrue(error?.message.orEmpty().contains("48 MiB"));assertEquals(ref.hash,original.hash())
+            ledger.finish(t.id,1,"完成");val backup=BackupRepository(store,vault)
+            backup.export("r").use{exported->val file=File.createTempFile("video-backup-",".zip",context.cacheDir)
+                try{file.outputStream().use{BackupArchive.write(exported.root,exported.files,it)};file.inputStream().use{BackupArchive.read(it,context.cacheDir)}.use{pack->
+                    assertTrue(pack.files is ZipBackupAssets);val restored=backup.commit(backup.preview(pack,"ADD"),true).single();val restoredRef=store.messages().single{it.friendId==restored&&it.mine}.image!!
+                    ImageDisk.clearReadCache();assertEquals(ref.hash,ChatImages.source(store.readableDatabase,restoredRef).hash())
+                }}finally{file.delete()}
+            };assertEquals(ref.hash,ChatImages.source(store.readableDatabase,ref).hash())
         }
     }
 }

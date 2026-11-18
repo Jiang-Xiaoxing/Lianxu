@@ -15,7 +15,7 @@ internal class ImageSource private constructor(private val data:ByteArray?,val f
     fun decode(options:BitmapFactory.Options)=if(data!=null)BitmapFactory.decodeByteArray(data,0,data.size,options)else BitmapFactory.decodeFile(requireNotNull(file).path,options)
     fun region():BitmapRegionDecoder=if(data!=null)BitmapRegionDecoder.newInstance(data,0,data.size,false)else BitmapRegionDecoder.newInstance(requireNotNull(file).path,false)
     fun hash():String=input().use{stream->val digest=MessageDigest.getInstance("SHA-256");val buffer=ByteArray(64*1024);while(true){val n=stream.read(buffer);if(n<0)break;digest.update(buffer,0,n)};digest.digest().joinToString(""){"%02x".format(it)}}
-    fun bytes():ByteArray {require(size<=BackupArchive.MAX_EXPANDED){"原件过大，需要磁盘读取"};return input().use{it.readBytes()}}
+    fun bytes():ByteArray {require(size<=48L*1024*1024){"原件过大，需要磁盘读取"};return input().use{it.readBytes()}} // Image materialization guard, not a backup total.
     override fun toString()="ImageSource($size bytes)"
 }
 
