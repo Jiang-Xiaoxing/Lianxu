@@ -19,6 +19,7 @@ class RelationshipUiAndroidTest {
         ui.waitUntil(10000){ui.onAllNodesWithTag("relationship-tab-0").fetchSemanticsNodes().isNotEmpty()}
         val before=runBlocking{vm.companion.relationshipAudit("seed-lin")}
         fun selected(index:Int){ui.onNodeWithTag("relationship-tab-$index").assertIsDisplayed();(0..2).filter{it!=index}.forEach{ui.onNodeWithTag("relationship-tab-$it").assertDoesNotExist()}}
+        ui.capturePagerDrag("relationship")
         selected(0);swipeTab(false);selected(0);swipeTab(true);selected(1);shot("swipe-knots");swipeTab(true);selected(2);swipeTab(true);selected(2);shot("swipe-promises")
         repeat(3){swipeTab(false);selected(1);ui.onNodeWithTag("relationship-tab-button-0").performClick();selected(0);ui.onNodeWithTag("relationship-tab-button-2").performClick();selected(2)}
         ui.onNodeWithTag("relationship-tab-button-0").performClick()

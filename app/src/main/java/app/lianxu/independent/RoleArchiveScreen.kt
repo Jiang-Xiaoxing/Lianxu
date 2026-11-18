@@ -34,7 +34,8 @@ private class PendingBackup(val archive:BackupRepository.Export?=null,val bytes:
     var status by remember{mutableStateOf("")};var error by remember{mutableStateOf("")};var output by remember{mutableStateOf<PendingBackup?>(null)}
     var incoming by remember{mutableStateOf<BackupArchive.Package?>(null)};var mode by remember{mutableStateOf("")};var target by remember{mutableStateOf("")}
     var chooseKeys by remember{mutableStateOf(false)};var chooseMode by remember{mutableStateOf(false)};var confirm by remember{mutableStateOf(false)}
-    var section by rememberSaveable{mutableIntStateOf(0)}
+    val tabs=rememberPageTabs(2)
+    val section=tabs.selected
     var chooseRole by remember{mutableStateOf(false)};var help by remember{mutableStateOf(false)}
     val backupScroll=rememberScrollState();val diagnosticScroll=rememberScrollState()
     // Backup password: set twice when keys are exported, asked again when a sealed backup replaces everything.
@@ -77,32 +78,33 @@ private class PendingBackup(val archive:BackupRepository.Export?=null,val bytes:
     }}
     Column(Modifier.fillMaxSize()){
         AppTopBar("备份与诊断",{if(!busy)vm.back()},enabled=!busy,extra={IconButton({help=true},enabled=!busy,modifier=Modifier.size(UiSpace.action).testTag("backup-page-help").semantics{contentDescription=if(section==0)"备份与恢复说明"else"诊断日志说明"}){ControlIcon("info")}})
-        BackupTabs(section,!busy){section=it}
+        BackupTabs(section,!busy,tabs::select)
         if(busy||error.isNotBlank()||status.isNotBlank())Column(Modifier.fillMaxWidth().padding(horizontal=UiSpace.page),verticalArrangement=Arrangement.spacedBy(8.dp)){
             if(busy){LinearProgressIndicator(Modifier.fillMaxWidth().testTag("backup-progress"));TextButton({lease?.cancel();job?.cancel()},modifier=Modifier.heightIn(min=UiSpace.action).testTag("backup-cancel")){Text("取消本次处理")}}
             if(error.isNotBlank())Text(error,color=MaterialTheme.colorScheme.error,modifier=Modifier.testTag("archive-error"))
             if(status.isNotBlank())Text(status,modifier=Modifier.testTag("archive-status"))
         }
-        Column(Modifier.fillMaxSize().swipePageTabs(section,2,!busy){section=it}.verticalScroll(if(section==0)backupScroll else diagnosticScroll).padding(UiSpace.page).testTag("role-archive-page"),verticalArrangement=Arrangement.spacedBy(16.dp)){
-            if(section==0){
-            BackupActionRow("person","备份单个角色","导出指定角色的数据","backup-role-entry",!busy){chooseRole=true}
-            BackupActionRow("database","备份全部数据","导出全部角色、资料和软件设置","backup-export-all",!busy){chooseKeys=true}
-            BackupActionRow("import-file","从文件导入","从备份文件恢复数据","archive-open",!busy){open.launch(arrayOf("application/zip","application/octet-stream"))}
-            Text("备份可能包含私密资料，请妥善保管。",style=MaterialTheme.typography.bodySmall,color=Muted)
-            incoming?.let{pack->
-                Text(if(pack.legacy!=null)"旧格式：${pack.legacy.name}。${pack.legacy.summary}"else if(pack.all)"全部备份：${pack.roles.size()} 个角色；${if(pack.includesKeys&&BackupKeySeal.sealed(pack.root))"包含密钥（已用备份密码加密）"else if(pack.includesKeys)"包含未加密的密钥，请勿分享"else"不包含密钥"}"else"单角色完整备份")
-                Text("导入不自动调用模型，不恢复在途任务。旧格式缺少的资料无法凭空补齐。",style=MaterialTheme.typography.bodySmall,color=Muted)
-                TextButton({chooseMode=true},enabled=!busy,modifier=Modifier.testTag("backup-choose-mode")){Text(if(mode.isBlank())"选择新增或覆盖"else if(mode=="ADD")"导入方式：新增"else"导入方式：覆盖")}
-                if(mode=="REPLACE"&&!pack.all)vm.friends.forEach{f->TextButton({target=f.id;clearPreview()},enabled=!busy,modifier=Modifier.testTag("archive-target-${f.id}")){Text((if(target==f.id)"● "else"○ ")+"覆盖：${f.name}")}}
-                if(mode.isNotBlank())Button({plan()},enabled=!busy&&(mode=="ADD"||pack.all||target.isNotBlank()),modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).testTag("archive-preview")){Text("下一步：查看导入范围")}
-                if(impact!=null){Text("第 2 步：核对以下范围，确认后才会导入。",style=MaterialTheme.typography.titleSmall);Text(impact,modifier=Modifier.testTag("archive-impact"));Button({if(mode=="REPLACE")confirm=true else apply(false)},enabled=!busy,modifier=Modifier.testTag("archive-import")){Text(if(mode=="REPLACE")"继续确认覆盖"else"确认新增角色")}}
-            }
-            }else{
-            BackupActionRow("document","导出诊断日志","生成并导出诊断日志文件","backup-export-diagnostics",!busy){work{output=PendingBackup(bytes=Diagnostics.export(vm.diagnosticDetailed));save.launch("恋叙诊断-${if(vm.diagnosticDetailed)"详细"else"简版"}.jsonl")}}
-            BackupDiagnosticToggle(vm.diagnosticDetailed,!busy){vm.setDiagnosticDetailed(it)}
-            Text("详细日志可能包含聊天等私密原文，请谨慎开启和分享。",style=MaterialTheme.typography.bodySmall,color=Muted)
-            }
-        }
+        PageTabContent(tabs,enabled=!busy){page->
+            Column(Modifier.fillMaxSize().verticalScroll(if(page==0)backupScroll else diagnosticScroll).padding(UiSpace.page).testTag("role-archive-page"),verticalArrangement=Arrangement.spacedBy(16.dp)){
+                if(page==0){
+                BackupActionRow("person","备份单个角色","导出指定角色的数据","backup-role-entry",!busy){chooseRole=true}
+                BackupActionRow("database","备份全部数据","导出全部角色、资料和软件设置","backup-export-all",!busy){chooseKeys=true}
+                BackupActionRow("import-file","从文件导入","从备份文件恢复数据","archive-open",!busy){open.launch(arrayOf("application/zip","application/octet-stream"))}
+                Text("备份可能包含私密资料，请妥善保管。",style=MaterialTheme.typography.bodySmall,color=Muted)
+                incoming?.let{pack->
+                    Text(if(pack.legacy!=null)"旧格式：${pack.legacy.name}。${pack.legacy.summary}"else if(pack.all)"全部备份：${pack.roles.size()} 个角色；${if(pack.includesKeys&&BackupKeySeal.sealed(pack.root))"包含密钥（已用备份密码加密）"else if(pack.includesKeys)"包含未加密的密钥，请勿分享"else"不包含密钥"}"else"单角色完整备份")
+                    Text("导入不自动调用模型，不恢复在途任务。旧格式缺少的资料无法凭空补齐。",style=MaterialTheme.typography.bodySmall,color=Muted)
+                    TextButton({chooseMode=true},enabled=!busy,modifier=Modifier.testTag("backup-choose-mode")){Text(if(mode.isBlank())"选择新增或覆盖"else if(mode=="ADD")"导入方式：新增"else"导入方式：覆盖")}
+                    if(mode=="REPLACE"&&!pack.all)vm.friends.forEach{f->TextButton({target=f.id;clearPreview()},enabled=!busy,modifier=Modifier.testTag("archive-target-${f.id}")){Text((if(target==f.id)"● "else"○ ")+"覆盖：${f.name}")}}
+                    if(mode.isNotBlank())Button({plan()},enabled=!busy&&(mode=="ADD"||pack.all||target.isNotBlank()),modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).testTag("archive-preview")){Text("下一步：查看导入范围")}
+                    if(impact!=null){Text("第 2 步：核对以下范围，确认后才会导入。",style=MaterialTheme.typography.titleSmall);Text(impact,modifier=Modifier.testTag("archive-impact"));Button({if(mode=="REPLACE")confirm=true else apply(false)},enabled=!busy,modifier=Modifier.testTag("archive-import")){Text(if(mode=="REPLACE")"继续确认覆盖"else"确认新增角色")}}
+                }
+                }else{
+                BackupActionRow("document","导出诊断日志","生成并导出诊断日志文件","backup-export-diagnostics",!busy){work{output=PendingBackup(bytes=Diagnostics.export(vm.diagnosticDetailed));save.launch("恋叙诊断-${if(vm.diagnosticDetailed)"详细"else"简版"}.jsonl")}}
+                BackupDiagnosticToggle(vm.diagnosticDetailed,!busy){vm.setDiagnosticDetailed(it)}
+                Text("详细日志可能包含聊天等私密原文，请谨慎开启和分享。",style=MaterialTheme.typography.bodySmall,color=Muted)
+                }
+        }}
     }
     if(help)BackupHelpDialog(section==1){help=false}
     if(chooseRole)BackupRoleDialog(vm.friends,selected,{selected=it},{chooseRole=false}){chooseRole=false;export(selected,false)}

@@ -49,6 +49,7 @@ class LearningRecordsUiTest {
         ui.runOnIdle{WindowInsetsControllerCompat(ui.activity.window,ui.activity.window.decorView).hide(WindowInsetsCompat.Type.ime())}
         fun swipe(left:Boolean){ui.onNodeWithTag("learning-list").performTouchInput{swipe(Offset(width*(if(left).8f else .2f),height*.7f),Offset(width*(if(left).2f else .8f),height*.7f),400)}}
         fun scroll()=ui.onNodeWithTag("learning-list").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+        ui.capturePagerDrag("learning")
         ui.onNodeWithTag("learning-filter-all").assertIsSelected();swipe(false);ui.onNodeWithTag("learning-filter-all").assertIsSelected();shot("swipe-all-chips")
         ui.onNodeWithTag("learning-list").performScrollToIndex(7);val allPosition=scroll();assertTrue(allPosition>0)
         swipe(true);ui.onNodeWithTag("learning-filter-viewpoint").assertIsSelected();ui.onNodeWithTag("learning-list").performScrollToIndex(6);val viewPosition=scroll()

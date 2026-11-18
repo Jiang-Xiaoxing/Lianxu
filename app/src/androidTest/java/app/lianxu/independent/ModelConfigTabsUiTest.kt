@@ -78,6 +78,7 @@ class ModelConfigTabsUiTest {
         seed()
         repeat(10){vault.save(chat.copy(id="scroll-$it",name="滚动合成配置$it"),"synthetic-only")}
         ui.runOnIdle{state.refresh()};ui.waitUntil(15000){state.configs.size==12}
+        ui.capturePagerDrag("models")
         ui.onNodeWithTag("config-tab-services").assertIsSelected();swipeTab(false);ui.onNodeWithTag("config-tab-services").assertIsSelected()
         ui.onNodeWithTag("config-overview").performTouchInput{swipeUp()};ui.onNodeWithTag("config-tab-services").assertIsSelected()
         ui.onNodeWithTag("config-add-embedding").performScrollTo()

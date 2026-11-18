@@ -28,6 +28,7 @@ class MemoryV2UiTest {
         ui.runOnIdle{v.open("processing-role","seed-lin")};ui.waitUntil(15000){ui.onAllNodesWithTag("memory-tab-hers").fetchSemanticsNodes().isNotEmpty()}
         fun swipe(left:Boolean){ui.onNodeWithTag("memory-browser").performTouchInput{swipe(Offset(width*(if(left).8f else .2f),height*.65f),Offset(width*(if(left).2f else .8f),height*.65f),400)}}
         fun scroll()=ui.onNodeWithTag("memory-list").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+        ui.capturePagerDrag("memory")
         ui.onNodeWithTag("memory-tab-hers").assertIsSelected();swipe(false);ui.onNodeWithTag("memory-tab-hers").assertIsSelected();shot("swipe-hers")
         ui.onNodeWithTag("memory-list").performTouchInput{swipeUp()};val hers=scroll();assertTrue(hers>0)
         swipe(true);ui.onNodeWithTag("memory-tab-mine").assertIsSelected();swipe(true);ui.onNodeWithTag("memory-tab-mine").assertIsSelected();ui.onNodeWithTag("memory-list").performScrollToIndex(7);val mine=scroll();assertTrue(mine>0);shot("swipe-mine-scrolled")

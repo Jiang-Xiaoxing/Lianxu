@@ -44,7 +44,8 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
 @Composable fun ModelConfigScreen(onBack:()->Unit,state:ModelConfigState=viewModel(),saveForPurpose:ModelPurpose?=null) {
     LaunchedEffect(state.vaultVersion){state.refresh()}
     var screen by remember {mutableStateOf("overview")}
-    var overviewTab by rememberSaveable {mutableIntStateOf(0)}
+    val tabs=rememberPageTabs(2)
+    val overviewTab=tabs.selected
     val servicesScroll=rememberLazyListState()
     val purposesScroll=rememberLazyListState()
     var embeddingEditor by remember {mutableStateOf(false)}
@@ -110,15 +111,13 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
         if(screen=="overview"){
             Row(Modifier.padding(horizontal=UiSpace.page,vertical=12.dp).fillMaxWidth().selectableGroup().clip(RoundedCornerShape(28.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(4.dp)){
                 listOf("服务商","模型用途").forEachIndexed{index,label->
-                    Tab(selected=overviewTab==index,onClick={overviewTab=index},
+                    Tab(selected=overviewTab==index,onClick={tabs.select(index)},
                         modifier=Modifier.weight(1f).heightIn(min=UiSpace.action).clip(RoundedCornerShape(24.dp)).background(if(overviewTab==index)Paper else Color.Transparent).testTag(if(index==0)"config-tab-services" else "config-tab-purposes"),
                         selectedContentColor=ConfigInk,unselectedContentColor=ConfigGreen,text={Text(label,style=MaterialTheme.typography.labelLarge)})
                 }
             }
-            // Lazy content can be measured again while the outgoing panel is being removed.
-            // Keep its item provider tied to that panel so it cannot clamp the other scroll state.
-            val panel=overviewTab
-            key(panel){LazyColumn(Modifier.fillMaxSize().swipePageTabs(panel,2){overviewTab=it}.testTag("config-overview"),state=if(panel==0)servicesScroll else purposesScroll,contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
+            // The visible panels have different lists and independent scroll positions.
+            PageTabContent(tabs){panel->LazyColumn(Modifier.fillMaxSize().testTag("config-overview"),state=if(panel==0)servicesScroll else purposesScroll,contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
                 if(state.status.isNotBlank())item("status"){Notice(state.status,state.statusError)}
                 if(panel==0){
                 if(state.configs.isEmpty())item("empty"){Column(Modifier.fillMaxWidth().heightIn(min=240.dp).testTag("config-services-empty"),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){

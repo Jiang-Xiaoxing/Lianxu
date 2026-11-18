@@ -66,6 +66,7 @@ class BackupUiTest {
         show()
         fun data(){ui.onNodeWithTag("backup-tab-data").assertIsSelected();ui.onNodeWithTag("backup-role-entry").assertExists();ui.onNodeWithTag("backup-export-diagnostics").assertDoesNotExist()}
         fun diagnostic(){ui.onNodeWithTag("backup-tab-diagnostics").assertIsSelected();ui.onNodeWithTag("backup-export-diagnostics").assertExists();ui.onNodeWithTag("backup-role-entry").assertDoesNotExist()}
+        ui.capturePagerDrag("backup")
         data();swipeTab(false);data();swipeTab(true);diagnostic();swipeTab(true);diagnostic();shot("swipe-diagnostics")
         repeat(3){swipeTab(false);data();ui.onNodeWithTag("backup-tab-diagnostics").performClick();diagnostic();ui.onNodeWithTag("backup-tab-data").performClick();data();swipeTab(true);diagnostic()}
         ui.onNodeWithTag("backup-tab-data").performClick()
@@ -73,6 +74,37 @@ class BackupUiTest {
         ui.onNodeWithTag("backup-tab-diagnostics").performClick()
         ui.onNodeWithTag("role-archive-page").performTouchInput{swipe(Offset(1f,height*.5f),Offset(width*.7f,height*.5f),400)};diagnostic()
         assertEquals(0,calls.get())
+    }
+    @Test fun shortDragSnapsByReleaseSpeed(){
+        show()
+        fun shortDrag(duration:Long){
+            ui.onNodeWithTag("role-archive-page").performTouchInput{
+                swipe(Offset(width*.70f,height*.55f),Offset(width*.45f,height*.55f),duration)
+            }
+        }
+        shortDrag(900)
+        ui.onNodeWithTag("backup-tab-data").assertIsSelected()
+        shortDrag(75)
+        ui.onNodeWithTag("backup-tab-diagnostics").assertIsSelected()
+    }
+    @Test fun interruptedTabAnimationsFollowLastAccessibleClick(){
+        show()
+        ui.mainClock.autoAdvance=false
+        try{
+            val data=ui.onNodeWithTag("backup-tab-data")
+            val logs=ui.onNodeWithTag("backup-tab-diagnostics")
+            val width=ui.onNodeWithTag("tab-panel-0",useUnmergedTree=true).fetchSemanticsNode().boundsInRoot.width
+            logs.performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+            ui.mainClock.advanceTimeBy(64)
+            val entering=ui.onNodeWithTag("tab-panel-1",useUnmergedTree=true).fetchSemanticsNode().boundsInRoot.width
+            assertTrue("页宽=$width 动画中=$entering",entering>0 && entering<width)
+            data.performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+            ui.mainClock.advanceTimeByFrame()
+            logs.performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        }finally{ui.mainClock.autoAdvance=true}
+        ui.waitForIdle()
+        ui.onNodeWithTag("backup-tab-diagnostics").assertIsSelected()
+        ui.onNodeWithTag("backup-export-diagnostics").assertIsDisplayed()
     }
     @Test fun swipesKeepImportPreviewRoleChoiceAndIndependentVerticalScrolls(){
         show(dark=true,big=true,small=true)

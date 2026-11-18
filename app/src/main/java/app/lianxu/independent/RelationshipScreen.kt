@@ -2,6 +2,9 @@ package app.lianxu.independent
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -56,7 +59,8 @@ private val Warm=Color(0xFFFA9D3B)
     var audit by remember(role){mutableStateOf<List<RelationAudit>>(emptyList())}
     var templates by remember(role){mutableStateOf(false)}
     var ignored by remember(role){mutableStateOf(false)}
-    var tab by remember(role){mutableIntStateOf(0)}
+    val tabs=key(role){rememberPageTabs(3)}
+    val tab=tabs.selected
     val panelScrolls=key(role){listOf(rememberScrollState(),rememberScrollState(),rememberScrollState())}
     var all by remember(role){mutableStateOf(false)}
     var error by remember(role){mutableStateOf(false)}
@@ -80,7 +84,7 @@ private val Warm=Color(0xFFFA9D3B)
     Column(Modifier.fillMaxSize().background(page).testTag("relationship-page")){
         MaterialTheme(colorScheme=MaterialTheme.colorScheme.copy(surfaceContainerLow=page)){AppTopBar("${friend.name} · 我们的相处",{vm.back()})}
         // 一屏装下：不整页滚动，下面三块用标签切换，每次最多 4 条。
-        Column(Modifier.fillMaxSize().swipePageTabs(tab,3){tab=it;all=false}.padding(horizontal=16.dp).padding(bottom=12.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        Column(Modifier.fillMaxSize().padding(horizontal=16.dp).padding(bottom=12.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
             if(error)Row(verticalAlignment=Alignment.CenterVertically){Text("暂时无法读取或保存，请重试。",Modifier.weight(1f),color=Muted);TextButton({refresh++}){Text("重试",color=GreenText)}}
             val current=view
             if(current==null){Box(Modifier.fillMaxWidth().padding(24.dp),contentAlignment=Alignment.Center){CircularProgressIndicator(color=GreenText)}}else{
@@ -104,25 +108,28 @@ private val Warm=Color(0xFFFA9D3B)
                 val knots=RelationshipQuery.knots(current.state,::quote)
                 val moments=current.state.moments
                 val promises=current.state.promises.sortedByDescending{it.at}
-                RelationTabs(listOf("点滴","心结 · ${knots.size}","约定 · ${promises.size}"),tab){tab=it;all=false}
-                val count=when(tab){0->moments.size;1->knots.size;else->promises.size}
-                RelationCard(Modifier.weight(1f,fill=false).testTag("relationship-tab-$tab")){Column(Modifier.verticalScroll(panelScrolls[tab])){
-                    if(count==0)Text(when(tab){0->"还没有让她感觉变了的事";1->"她现在没有放不下的事";else->"你们还没有约好的事"},Modifier.padding(20.dp),color=Muted)
-                    when(tab){
-                        0->moments.take(4).forEachIndexed{i,m->if(i>0)RelationDivider();MomentRow(m,quote(m.source),date)}
-                        1->knots.take(4).forEachIndexed{i,ref->if(i>0)RelationDivider();KnotRow(quote(ref),current.inputs.firstOrNull{it.source==ref}?.at,date)}
-                        else->promises.take(4).forEachIndexed{i,p->if(i>0)RelationDivider();PromiseRow(p,quote(p.source),current.inputs.firstOrNull{it.source==p.fulfilledBy}?.at,date)}
-                    }
-                    val corrected=audit.filter{it.status=="已改正"}
-                    if(count>4||tab==0&&(count>0||corrected.isNotEmpty())){
-                        HorizontalDivider(thickness=.5.dp,color=Line)
-                        Text("查看全部",Modifier.fillMaxWidth().clickable{all=true}.padding(vertical=14.dp).testTag("relationship-all"),color=Muted,style=MaterialTheme.typography.bodySmall,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
-                    }
+                RelationTabs(listOf("点滴","心结 · ${knots.size}","约定 · ${promises.size}"),tab){all=false;tabs.select(it)}
+                PageTabContent(tabs){panel->
+                    Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(12.dp)){
+                    val count=when(panel){0->moments.size;1->knots.size;else->promises.size}
+                    RelationCard(Modifier.weight(1f,fill=false).testTag("relationship-tab-$panel")){Column(Modifier.verticalScroll(panelScrolls[panel])){
+                        if(count==0)Text(when(panel){0->"还没有让她感觉变了的事";1->"她现在没有放不下的事";else->"你们还没有约好的事"},Modifier.padding(20.dp),color=Muted)
+                        when(panel){
+                            0->moments.take(4).forEachIndexed{i,m->if(i>0)RelationDivider();MomentRow(m,quote(m.source),date)}
+                            1->knots.take(4).forEachIndexed{i,ref->if(i>0)RelationDivider();KnotRow(quote(ref),current.inputs.firstOrNull{it.source==ref}?.at,date)}
+                            else->promises.take(4).forEachIndexed{i,p->if(i>0)RelationDivider();PromiseRow(p,quote(p.source),current.inputs.firstOrNull{it.source==p.fulfilledBy}?.at,date)}
+                        }
+                        val corrected=audit.filter{it.status=="已改正"}
+                        if(count>4||panel==0&&(count>0||corrected.isNotEmpty())){
+                            HorizontalDivider(thickness=.5.dp,color=Line)
+                            Text("查看全部",Modifier.fillMaxWidth().clickable{all=true}.padding(vertical=14.dp).testTag("relationship-all"),color=Muted,style=MaterialTheme.typography.bodySmall,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
+                        }
                 }}
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.Center,verticalAlignment=Alignment.CenterVertically){
                     Text(if(current.attributionIncomplete)"旧分值仅作历史查看，不提供给模型"else"数值帮助她理解当前感受，不规定表达",color=Muted,style=MaterialTheme.typography.bodySmall)
                     recording?.takeIf{it.failed>0}?.let{report->Text(" · 最近${report.failed}轮没算进",Modifier.clickable{ignored=true}.padding(vertical=8.dp),color=GreenText,style=MaterialTheme.typography.bodySmall)}
                 }
+                }}
                 if(all)RelationAllDialog(when(tab){0->"点滴";1->"心结";else->"约定"},{all=false}){
                     when(tab){
                         0->{
@@ -157,10 +164,10 @@ private val Warm=Color(0xFFFA9D3B)
 }
 @Composable private fun RelationDivider(){HorizontalDivider(Modifier.padding(horizontal=20.dp),thickness=.5.dp,color=Line)}
 @Composable private fun RelationTabs(labels:List<String>,selected:Int,onSelect:(Int)->Unit){
-    Surface(Modifier.fillMaxWidth(),color=MaterialTheme.colorScheme.surfaceContainerHigh,shape=RoundedCornerShape(12.dp)){Row(Modifier.padding(3.dp)){
+    Surface(Modifier.fillMaxWidth(),color=MaterialTheme.colorScheme.surfaceContainerHigh,shape=RoundedCornerShape(12.dp)){Row(Modifier.padding(3.dp).selectableGroup()){
         labels.forEachIndexed{i,label->
             val on=i==selected
-            Surface(Modifier.weight(1f).clickable{onSelect(i)}.testTag("relationship-tab-button-$i"),color=if(on)Paper else Color.Transparent,shape=RoundedCornerShape(10.dp)){
+            Surface(Modifier.weight(1f).selectable(on,role=Role.Tab){onSelect(i)}.testTag("relationship-tab-button-$i"),color=if(on)Paper else Color.Transparent,shape=RoundedCornerShape(10.dp)){
                 Text(label,Modifier.padding(vertical=9.dp),color=Ink,style=MaterialTheme.typography.bodyMedium.copy(fontWeight=if(on)FontWeight.Bold else FontWeight.Normal),textAlign=androidx.compose.ui.text.style.TextAlign.Center)
             }
         }
