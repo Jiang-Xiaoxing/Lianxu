@@ -10,10 +10,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -77,7 +81,9 @@ class RoleCreationPolishUiTest {
                 }
             }}
             runBlocking{Store(context,"$namespace.db").use{store->
-                LocalUpdateRepository(store).acknowledge(InstalledBuild.read(context).versionCode)
+                val updates = LocalUpdateRepository(store)
+                val installed = InstalledBuild.read(context).versionCode
+                if (updates.pending(installed) != null) updates.acknowledge(installed)
                 val local=ModelVault(context,namespace,store)
                 local.save(memory,memoryKey);local.setPurpose(ModelPurpose.MEMORY,memory.id)
                 local.save(vision,visionKey);local.setPurpose(ModelPurpose.AUX_VISION,vision.id)
@@ -124,15 +130,32 @@ class RoleCreationPolishUiTest {
         ui.waitUntil(15000){app.ready};ui.waitForIdle();vault=ModelVault(context,namespace,app.processing.store)
     }
     private fun editable(){ui.waitUntil(10000){ui.onAllNodes(hasTestTag("create-card") and hasStateDescription("可填写")).fetchSemanticsNodes().isNotEmpty()}}
-    private fun next(){editable();ui.onNodeWithTag("create-next").performScrollTo().assertIsEnabled().performClick();ui.waitForIdle();editable()}
-    private fun model(){
+    private fun next() {
+        editable()
+        val heading = SemanticsMatcher("creation step heading") { it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("create-step-") == true }
+        val previous = ui.onNode(heading).fetchSemanticsNode().config[SemanticsProperties.TestTag]
+        ui.onNodeWithTag("create-next").performScrollTo().assertIsEnabled().performClick()
+        ui.waitUntil(10000) { ui.onAllNodesWithTag(previous).fetchSemanticsNodes().isEmpty() }
+        editable()
+    }
+    private fun model(withKeyboard: Boolean = false){
         ui.onNodeWithTag("first-encounter").performClick();ui.onNodeWithTag("first-encounter-create").performClick()
         editable()
         ui.onNodeWithTag("friend-name").performTextInput(source.name);next()
         ui.onNodeWithTag("friend-bio").performTextInput(source.definition);next()
         ui.onNodeWithTag("friend-relationship").performTextInput(source.relationship);next()
         ui.onNodeWithTag("friend-expression").performTextInput(source.expression)
-        ui.onNodeWithTag("friend-prompt").performScrollTo().performTextInput(source.extra);next()
+        val extra = ui.onNodeWithTag("friend-prompt").performScrollTo()
+        extra.performTextInput(source.extra)
+        fun imeVisible() = ViewCompat.getRootWindowInsets(ui.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        if (withKeyboard) {
+            extra.performClick()
+            ui.runOnUiThread { WindowInsetsControllerCompat(ui.activity.window, ui.activity.window.decorView).show(WindowInsetsCompat.Type.ime()) }
+            ui.waitUntil(5000) { imeVisible() }
+            shot("previous-step-keyboard")
+        }
+        next()
+        if (withKeyboard) ui.waitUntil(5000) { !imeVisible() }
         ui.onNodeWithTag("create-step-model").assertExists();ui.waitUntil(10000){app.creationPolisher.checked}
     }
     private fun polish(){ui.onNodeWithTag("create-polish").performScrollTo().performClick();ui.waitUntil(15000){ui.onAllNodesWithTag("polish-definition").fetchSemanticsNodes().isNotEmpty()};ui.onNodeWithTag("polish-definition").assertExists()}
@@ -173,7 +196,11 @@ class RoleCreationPolishUiTest {
         assertEquals(source.definition,runBlocking{app.rolePrompts(app.friends.single().id)}.characterDefinition);assertEquals(1,calls.get());otherPurposes()
     }
     @Test fun missingChatModelCanStillCreateFromOriginal(){
-        model();ui.onNodeWithText("尚未配置全局聊天模型").assertExists();original();create()
+        model(withKeyboard = true)
+        ui.onNodeWithTag("create-global-model").assertTextEquals("尚未配置")
+        ui.onNodeWithTag("create-use-original").assertIsDisplayed().assertIsEnabled()
+        shot("unconfigured")
+        original();create()
         assertEquals(source.definition,runBlocking{app.rolePrompts(app.friends.single().id)}.characterDefinition);assertEquals(0,calls.get());otherPurposes()
     }
     @Test fun configurationReturnKeepsDraftAndOnlySelectsGlobalChat(){
@@ -206,6 +233,7 @@ class RoleCreationPolishUiTest {
     @Test fun cancelAndOriginalContinuationIgnoreALateResponse(){
         model();val gate=pending()
         ui.onNodeWithTag("create-polish").performScrollTo().performClick();ui.waitUntil(10000){calls.get()==1}
+        shot("request-running")
         ui.onNodeWithTag("create-polish-cancel").performScrollTo().performClick();original()
         gate.complete(TextChatResult.Success(Gson().toJson(polished)));SystemClock.sleep(150);ui.waitForIdle()
         ui.onNodeWithTag("polish-definition").assertDoesNotExist();ui.onNodeWithText(source.definition).assertExists();create()
@@ -225,6 +253,7 @@ class RoleCreationPolishUiTest {
         model();pending().complete(TextChatResult.Failure(ChatFailure.NETWORK,detail="synthetic-private-detail"))
         ui.onNodeWithTag("create-polish").performScrollTo().performClick();ui.waitUntil(10000){!app.creationPolisher.running&&app.creationPolisher.message.isNotBlank()}
         ui.onNodeWithTag("create-polish-message").assertTextContains("原文",substring=true);assertFalse(app.creationPolisher.message.contains("synthetic-private-detail"));assertTrue(app.friends.isEmpty())
+        shot("request-failed")
         success();polish();assertTrue(app.friends.isEmpty());assertEquals(2,calls.get());shot("retry-preview")
     }
     @Test fun changedGlobalChatRejectsAnInFlightOldModel(){
@@ -446,7 +475,8 @@ class RoleCreationPolishUiTest {
     @Test fun damagedModelSelectionsStillAllowCreatingFromOriginal(){
         model();assertTrue(app.creationPolisher.modelReadFailed)
         ui.onNodeWithText("全局模型配置暂时无法读取").assertExists()
-        ui.onNodeWithText("尚未配置全局聊天模型").assertDoesNotExist()
+        ui.onNodeWithText("尚未配置").assertDoesNotExist()
+        shot("read-failed")
         ui.onNodeWithTag("create-polish").assertDoesNotExist()
         original();create();assertEquals(1,app.friends.size);assertEquals(0,calls.get())
         assertEquals("{damaged synthetic selections",File(context.noBackupFilesDir,"$namespace/purpose-selections").readText())
@@ -504,6 +534,56 @@ class RoleCreationPolishUiTest {
         ui.onNodeWithTag("create-select-original").performScrollTo().performClick();ui.onNodeWithText(source.definition).assertExists()
         ui.onNodeWithTag("create-select-polished").performScrollTo().performClick();ui.onNodeWithTag("polish-definition").assertTextContains("重建前的自由编辑。")
         assertEquals(1,calls.get());assertTrue(app.friends.isEmpty());otherPurposes()
+    }
+    @Test fun originalDuringPolishIgnoresLateReply() {
+        model()
+        val reply = pending()
+        ui.onNodeWithTag("create-polish").performScrollTo().performClick()
+        ui.waitUntil(10000) { calls.get() == 1 }
+        original()
+        reply.complete(TextChatResult.Success(Gson().toJson(polished)))
+        editable()
+        ui.onNodeWithTag("polish-definition").assertDoesNotExist()
+        ui.onNodeWithText(source.definition).assertExists()
+        assertTrue(app.friends.isEmpty())
+    }
+    @Test fun existingPolishCanBeReopenedAndOriginalEditsInvalidateIt() {
+        model();success();polish();editable()
+        ui.onNodeWithTag("create-back").performClick();editable()
+        ui.onNodeWithText("重新润色").assertExists()
+        shot("existing-preview")
+        ui.onNodeWithTag("create-view-polished").performScrollTo().performClick();editable()
+        ui.onNodeWithTag("polish-definition").assertTextContains(polished.definition)
+        ui.onNodeWithTag("create-back").performClick();editable()
+        ui.onNodeWithTag("create-back").performClick();editable()
+        ui.onNodeWithTag("friend-expression").performTextReplacement("这次说慢一点。")
+        next()
+        ui.onNodeWithTag("create-view-polished").assertDoesNotExist()
+        assertEquals(1, calls.get())
+    }
+    @Test fun smallLargeFontLongModelKeepsControlsReachable() {
+        val longName = "合成聊天模型名称较长用于验证自然换行"
+        vault.save(chat.copy(name = longName, modelId = "long-synthetic-model-2026-preview"), key)
+        var draft by mutableStateOf(RoleCreationDraft(step = RoleCreationStep.MODEL, name = source.name, definition = source.definition))
+        ui.activity.setContent { LianxuTheme {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 1.6f)) {
+                Box(Modifier.size(320.dp, 520.dp)) {
+                    RoleCreationGuide(draft, { draft = it }, false, polisher = app.creationPolisher, onExit = {}, onCreate = {})
+                }
+            }
+        } }
+        editable()
+        ui.waitUntil(10000) { app.creationPolisher.modelLabel?.contains(longName) == true }
+        val config = ui.onNodeWithTag("create-model-config").performScrollTo().assertIsDisplayed()
+        config.assertHeightIsAtLeast(48.dp).assertWidthIsAtLeast(48.dp)
+        val status = ui.onNodeWithTag("create-global-model").assertTextContains(longName, substring = true)
+        assertTrue(status.getUnclippedBoundsInRoot().right <= config.getUnclippedBoundsInRoot().left)
+        shot("small-large-text-model")
+        ui.onNodeWithTag("create-use-original").performScrollTo().assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        shot("small-large-text-original")
+        original()
+        assertEquals(0, calls.get())
     }
     @Test fun reducedMotionDarkSmallPreviewRemainsEditableAndReachable(){
         var local by mutableStateOf(RoleCreationDraft(step=RoleCreationStep.CONFIRM,name=source.name,definition=source.definition,polished=polished,usePolished=true))

@@ -9,6 +9,8 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,6 +32,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -128,7 +131,11 @@ import kotlinx.coroutines.flow.first
         dismissButton={TextButton(onClick={if(!locked())exitDialog=false}){Text("继续填写")}}
     )
     Box(Modifier.fillMaxSize().testTag("role-creation-guide")){
-        EncounterWarmLight(Modifier.fillMaxSize())
+        if (draft.step == RoleCreationStep.MODEL) {
+            Spacer(Modifier.matchParentSize().background(Color(0xFFFAF6ED)))
+        } else {
+            EncounterWarmLight(Modifier.fillMaxSize())
+        }
         Column(Modifier.fillMaxSize()){
             Row(Modifier.fillMaxWidth().heightIn(min=64.dp).padding(horizontal=UiSpace.small),verticalAlignment=Alignment.CenterVertically){
                 IconButton(onClick={previous()},enabled=enabled&&!saved,modifier=Modifier.size(UiSpace.action).testTag("create-back").semantics{contentDescription="返回"}){ControlIcon("back",Ink)}
@@ -137,6 +144,30 @@ import kotlinx.coroutines.flow.first
             }
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(horizontal=UiSpace.page,vertical=UiSpace.small).clipToBounds()){
                 val travel=with(LocalDensity.current){maxHeight.toPx()*2f}
+                if (draft.step == RoleCreationStep.MODEL) {
+                    ModelPolishStep(
+                        modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 480.dp)
+                            .fillMaxWidth().graphicsLayer { translationY = position.value * travel }
+                            .testTag("create-card").semantics { stateDescription = if (moving) "切换中" else "可填写" },
+                        draft = draft, polisher = polisher, enabled = enabled && !saved,
+                        onConfigure = {
+                            if (canNavigate()) {
+                                polisher?.cancel()
+                                focus.clearFocus()
+                                keyboard?.hide()
+                                onConfigure()
+                            }
+                        },
+                        onPolish = { if (canNavigate()) polisher?.start(draft) },
+                        onPreview = { usePolished ->
+                            if (canNavigate()) {
+                                onDraft(draft.copy(usePolished = usePolished))
+                                moveTo(RoleCreationStep.CONFIRM)
+                            }
+                        }
+                    )
+                    return@BoxWithConstraints
+                }
                 Card(
                     modifier=Modifier.align(Alignment.Center).widthIn(max=480.dp).fillMaxWidth().heightIn(max=maxHeight)
                         .graphicsLayer{translationY=position.value*travel}
@@ -151,7 +182,7 @@ import kotlinx.coroutines.flow.first
                                 RoleCreationStep.DEFINITION->"这是一位怎样的角色？"
                                 RoleCreationStep.RELATIONSHIP->"你们之间是什么关系？"
                                 RoleCreationStep.MORE->"还有想补充的吗？"
-                                RoleCreationStep.MODEL->"用全局模型帮你润色吗？"
+                                RoleCreationStep.MODEL->"润色角色资料"
                                 RoleCreationStep.CONFIRM->"准备好开始相遇了吗？"
                             },Modifier.testTag("create-step-${draft.step.name.lowercase()}").semantics{liveRegion=LiveRegionMode.Polite},style=MaterialTheme.typography.titleLarge)
                             when(draft.step){
@@ -174,24 +205,7 @@ import kotlinx.coroutines.flow.first
                                     CreationField(draft.extra,{onDraft(draft.copy(extra=creationText(it,4000)))},"自定义提示词（可选）","friend-prompt",minLines=3,enabled=enabled&&!saved)
                                     Text("模型仍在设置中选择；未配置聊天模型时不会生成演示回复。",style=MaterialTheme.typography.bodySmall,color=Muted)
                                 }
-                                RoleCreationStep.MODEL->{
-                                    Text("只整理你填写的内容，不补写设定。润色后先预览，可自由修改，也可以使用原文。",style=MaterialTheme.typography.bodyMedium,color=Muted)
-                                    Text(polisher?.modelLabel?.let{"全局聊天模型：$it"}?:if(polisher?.modelReadFailed==true)"全局模型配置暂时无法读取"else if(polisher?.checked==true)"尚未配置全局聊天模型"else"正在读取全局聊天模型…",Modifier.testTag("create-global-model"),style=MaterialTheme.typography.bodyMedium)
-                                    Text("润色会将当前填写的角色资料发送给所选服务商，使用已保存的全局配置；不会发送聊天或记忆。",style=MaterialTheme.typography.bodySmall,color=Muted)
-                                    Text("从这里保存的聊天配置会用于全局聊天；记忆整理和识图仍保留各自的用途选择。",style=MaterialTheme.typography.bodySmall,color=Muted)
-                                    if(polisher?.running==true){
-                                        Text("正在润色，可以取消或使用原文继续。",Modifier.testTag("create-polish-running"),style=MaterialTheme.typography.bodyMedium)
-                                        TextButton(onClick={polisher.cancel()},enabled=enabled,modifier=Modifier.testTag("create-polish-cancel")){Text("取消润色")}
-                                    }else if(polisher?.modelLabel!=null){
-                                        PrimaryAction(if(draft.polished==null)"润色并预览"else"重新润色",enabled=enabled&&polisher.checked,modifier=Modifier.fillMaxWidth().testTag("create-polish")){if(canNavigate())polisher.start(draft)}
-                                    }
-                                    if(polisher?.message?.isNotBlank()==true)Text(polisher.message,Modifier.testTag("create-polish-message"),style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.error)
-                                    TextButton(onClick={if(canNavigate()){polisher?.cancel();focus.clearFocus();keyboard?.hide();onConfigure()}},enabled=enabled,modifier=Modifier.testTag("create-model-config")){Text(if(polisher?.modelLabel==null)"配置全局聊天模型"else"管理全局模型配置")}
-                                    if(draft.polished!=null)TextButton(onClick={if(canNavigate()){onDraft(draft.copy(usePolished=true));moveTo(RoleCreationStep.CONFIRM)}},enabled=enabled,modifier=Modifier.testTag("create-view-polished")){Text("查看已有润色稿")}
-                                    PrimaryAction("使用原文继续",enabled=enabled,modifier=Modifier.fillMaxWidth().testTag("create-use-original")){
-                                        if(canNavigate()){onDraft(draft.copy(usePolished=false));moveTo(RoleCreationStep.CONFIRM)}
-                                    }
-                                }
+                                RoleCreationStep.MODEL -> Unit // Rendered separately above.
                                 RoleCreationStep.CONFIRM->{
                                     if(draft.polished!=null)Row{
                                         TextButton(onClick={if(canNavigate()){focus.clearFocus();keyboard?.hide();onDraft(draft.copy(usePolished=true))}},enabled=enabled&&!saved,modifier=Modifier.testTag("create-select-polished")){Text(if(draft.usePolished)"已选润色稿"else"使用润色稿")}
@@ -236,6 +250,83 @@ import kotlinx.coroutines.flow.first
     }
 }
 
+}
+
+@Composable private fun ModelPolishStep(
+    modifier: Modifier,
+    draft: RoleCreationDraft,
+    polisher: RoleCreationPolish?,
+    enabled: Boolean,
+    onConfigure: () -> Unit,
+    onPolish: () -> Unit,
+    onPreview: (Boolean) -> Unit
+) {
+    val type = MaterialTheme.typography
+    val rule = Color(0xFFE7DECE)
+    val status = polisher?.modelLabel ?: when {
+        polisher?.modelReadFailed == true -> "全局模型配置暂时无法读取"
+        polisher?.checked == true -> "尚未配置"
+        else -> "正在读取…"
+    }
+    Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = UiSpace.small, vertical = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            val step = draft.step.ordinal + 1
+            val total = RoleCreationStep.entries.size
+            Text("$step / $total", style = type.bodySmall, color = Muted)
+            Box(Modifier.weight(1f).height(2.dp).background(rule)) {
+                Spacer(Modifier.fillMaxWidth(step.toFloat() / total).fillMaxHeight().background(Color(0xFFA78D6D)))
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+        Text("润色角色资料", Modifier.testTag("create-step-model").semantics { liveRegion = LiveRegionMode.Polite }, style = type.titleLarge)
+        Spacer(Modifier.height(UiSpace.small))
+        Text("只整理你填写的内容，不补写设定。\n润色后先预览，可自由修改，也可使用原文。", style = type.bodyMedium, color = Muted)
+        Spacer(Modifier.height(24.dp))
+        HorizontalDivider(color = rule)
+        BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = 14.dp)) {
+            val buttonMaxWidth = maxWidth * .48f
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(UiSpace.cluster)) {
+                    Text("全局聊天模型", style = type.labelLarge)
+                    Text(status, Modifier.testTag("create-global-model"), style = type.bodySmall, color = Muted)
+                }
+                OutlinedButton(
+                    onClick = onConfigure, enabled = enabled,
+                    modifier = Modifier.widthIn(max = buttonMaxWidth).heightIn(min = UiSpace.action).testTag("create-model-config"),
+                    shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Color(0xFFCFBEA6)),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = UiSpace.small)
+                ) { Text(if (polisher?.modelLabel == null) "配置模型" else "管理模型", textAlign = TextAlign.Center) }
+            }
+        }
+        HorizontalDivider(color = rule)
+        Spacer(Modifier.height(UiSpace.group))
+        Text("润色时会将当前填写的角色资料发送给所选服务商，使用已保存的全局配置，不会发送聊天或记忆。", style = type.bodySmall, color = Muted)
+        Spacer(Modifier.height(UiSpace.small))
+        Text("在此保存的模型配置会用于全局聊天，不影响记忆整理和识图的用途选择。", style = type.bodySmall, color = Muted)
+        Spacer(Modifier.height(24.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(UiSpace.small)) {
+            if (polisher?.running == true) {
+                Text("正在润色，可以取消或使用原文继续。", Modifier.testTag("create-polish-running"), style = type.bodyMedium)
+                TextButton(onClick = { polisher.cancel() }, enabled = enabled, modifier = Modifier.heightIn(min = UiSpace.action).testTag("create-polish-cancel")) { Text("取消润色") }
+            } else if (polisher?.modelLabel != null) {
+                PrimaryAction(if (draft.polished == null) "润色并预览" else "重新润色", enabled = enabled && polisher.checked,
+                    modifier = Modifier.fillMaxWidth().testTag("create-polish"), onClick = onPolish)
+            }
+            polisher?.message?.takeIf { it.isNotBlank() }?.let {
+                Text(it, Modifier.testTag("create-polish-message"), style = type.bodyMedium, color = MaterialTheme.colorScheme.error)
+            }
+            if (draft.polished != null) {
+                TextButton(onClick = { onPreview(true) }, enabled = enabled, modifier = Modifier.heightIn(min = UiSpace.action).testTag("create-view-polished")) { Text("查看已有润色稿") }
+            }
+            Button(
+                onClick = { onPreview(false) }, enabled = enabled,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("create-use-original"),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE8D8BF), contentColor = Ink)
+            ) { Text("使用原文继续") }
+            Text("下一步核对资料，确认后才创建", Modifier.fillMaxWidth(), style = type.bodySmall, color = Muted, textAlign = TextAlign.Center)
+        }
+    }
 }
 
 /** Share the warm card surface with floating-label cutouts in both system themes. */
