@@ -39,19 +39,47 @@ class RoleDeletionUiTest {
     @Test fun cancelPreservesRoleAndConfirmedDeletionRefreshesChatsAndContacts(){
         val a=Friend("a","合成甲","测试角色甲");val b=Friend("b","合成乙","测试角色乙");add(a,b)
         runBlocking{vm.processing.store.exchange(a,"合成原话","合成回答");vm.refreshProcessing()}
-        ui.onNodeWithTag("role-actions-a").performClick();ui.onNodeWithTag("role-delete-a").performClick();ui.onNodeWithText("删除「合成甲」？").assertIsDisplayed()
+        ui.onNodeWithTag("friend-row-a").performTouchInput { longClick() };ui.onNodeWithTag("role-delete-a").performClick();ui.onNodeWithText("删除「合成甲」？").assertIsDisplayed()
         ui.onNodeWithText("将从聊天和通讯录同时移除",substring=true).assertExists()
         ui.onNodeWithTag("role-delete-cancel").performClick();assertEquals(2,vm.friends.size)
         ui.onNodeWithTag("tab-1").performClick();ui.onNodeWithText("合成甲").assertExists()
-        ui.onNodeWithTag("tab-0").performClick();ui.onNodeWithTag("role-actions-a").performClick();ui.onNodeWithTag("role-delete-a").performClick();ui.onNodeWithTag("role-delete-confirm").performClick()
+        ui.onNodeWithTag("tab-0").performClick();ui.onNodeWithTag("friend-row-a").performTouchInput { longClick() };ui.onNodeWithTag("role-delete-a").performClick();ui.onNodeWithTag("role-delete-confirm").performClick()
         ui.waitUntil(15000){vm.friends.none{it.id==a.id}}
         ui.onNodeWithText("合成甲").assertDoesNotExist();ui.onNodeWithText("合成乙").assertExists()
         ui.onNodeWithTag("tab-1").performClick();ui.onNodeWithText("合成甲").assertDoesNotExist();ui.onNodeWithText("合成乙").assertExists()
         runBlocking{Store(context,name).use{assertEquals(listOf(b),it.friends());assertTrue(it.messages().none{m->m.friendId==a.id})}}
     }
+    @Test fun shortTapScrollKeyboardAndAccessibilityKeepTheChosenContact() {
+        add(*(1..24).map { Friend("row-$it","合成联系人$it","列表滚动") }.toTypedArray())
+        ui.onNodeWithTag("tab-1").performClick()
+        val list=ui.onNodeWithTag("contacts-list")
+        list.performTouchInput { swipeUp() }
+        ui.onAllNodesWithText("删除角色").assertCountEquals(0)
+        list.performScrollToNode(hasTestTag("friend-row-row-13"))
+        val row=ui.onNodeWithTag("friend-row-row-13")
+        row.performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnLongClick)
+        ui.onNodeWithTag("role-delete-row-13").assertIsDisplayed()
+        ui.onNodeWithTag("role-delete-row-13").performClick()
+        ui.onNodeWithText("删除「合成联系人13」？").assertIsDisplayed()
+        ui.onNodeWithTag("role-delete-cancel").performClick()
+        ui.waitUntil(5000) { ui.activity.hasWindowFocus() }
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_TAB)
+        row.performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.RequestFocus)
+        row.assertIsFocused()
+        row.performKeyInput {
+            keyDown(androidx.compose.ui.input.key.Key.ShiftLeft)
+            pressKey(androidx.compose.ui.input.key.Key.F10)
+            keyUp(androidx.compose.ui.input.key.Key.ShiftLeft)
+        }
+        ui.onNodeWithTag("role-delete-row-13").performClick()
+        ui.onNodeWithTag("role-delete-cancel").performClick()
+        row.performClick()
+        ui.runOnIdle { assertEquals("detail",vm.page); assertEquals("row-13",vm.activeId) }
+    }
+
     @Test fun deletingLastRoleShowsBothEmptyStatesWithoutRecreatingIt(){
         add(Friend("only","合成唯一角色","仅测试"))
-        ui.onNodeWithTag("role-actions-only").performClick();ui.onNodeWithTag("role-delete-only").performClick();ui.onNodeWithTag("role-delete-confirm").performClick()
+        ui.onNodeWithTag("friend-row-only").performTouchInput { longClick() };ui.onNodeWithTag("role-delete-only").performClick();ui.onNodeWithTag("role-delete-confirm").performClick()
         ui.waitUntil(15000){vm.friends.isEmpty()};ui.onNodeWithTag("roles-empty-chat").assertIsDisplayed()
         ui.onNodeWithTag("tab-1").performClick();ui.onNodeWithTag("roles-empty-contacts").assertIsDisplayed()
         runBlocking{Store(context,name).use{assertTrue(it.friends().isEmpty())}}

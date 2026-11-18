@@ -1,6 +1,7 @@
 package app.lianxu.independent
 
 import android.graphics.Bitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
@@ -21,6 +22,7 @@ class ChatReplyStreamingUiTest {
     private val finish=CompletableDeferred<Unit>()
     private val calls=AtomicInteger()
     private var emitReasoning=true
+    private var failReply=false
     private var toolMode=false
     private var toolReasoning=false
     private val reply="那今晚先休息一下\n\n我陪你聊点轻松的。"
@@ -50,6 +52,7 @@ class ChatReplyStreamingUiTest {
             if(emitReasoning)onEvent(TextStreamEvent.Reasoning(reasoning))
             allowBody.await()
             // Plain-text answer: no JSON envelope to decode.
+            if (failReply) return TextChatResult.Failure(ChatFailure.NETWORK)
             onEvent(TextStreamEvent.Content(firstPart+"\n\n"))
             // A cancelled provider can finish late; the attempt guard must still reject it.
             withContext(NonCancellable){finish.await()}
@@ -85,6 +88,74 @@ class ChatReplyStreamingUiTest {
         bitmap.recycle()
     }
     @After fun release(){allowBody.complete(Unit);finish.complete(Unit)}
+    private fun returnToList() {
+        ui.onNodeWithTag("back").performClick()
+        ui.onNodeWithTag("friend-row-seed-lin").assert(hasAnyDescendant(hasText("对方正在输入")) or hasText("对方正在输入"))
+        ui.onAllNodesWithTag("replying-label",useUnmergedTree=true).assertCountEquals(1)
+    }
+
+    @Test fun listTypingStaysInPlaceAndCompletesAfterReentry() {
+        start()
+        // Infinite animations started under autoAdvance are cancelled by Compose's test policy.
+        ui.mainClock.autoAdvance=false
+        val label=ui.onNodeWithTag("replying-label",useUnmergedTree=true)
+        try {
+            ui.runOnUiThread { vm.back() }
+            ui.mainClock.advanceTimeBy(64)
+            val bounds=label.getUnclippedBoundsInRoot()
+            val glyphSamples=mutableSetOf<Int>()
+            for (i in 0..16) {
+                ui.mainClock.advanceTimeBy(160)
+                assertEquals(bounds,label.getUnclippedBoundsInRoot())
+                screenshot("typing-frame-"+i.toString().padStart(2,'0'))
+                val region=label.fetchSemanticsNode().boundsInWindow
+                val file=File(InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null),
+                    "evidence-chat-stream/ui/typing-frame-"+i.toString().padStart(2,'0')+".png")
+                val bitmap=android.graphics.BitmapFactory.decodeFile(file.path)
+                val width=region.width.toInt();val height=region.height.toInt()
+                val pixels=IntArray(width*height)
+                bitmap.getPixels(pixels,0,width,region.left.toInt(),region.top.toInt(),width,height)
+                bitmap.recycle()
+                glyphSamples += pixels.contentHashCode()
+            }
+            assertTrue("字形内需要多个真实中间帧",glyphSamples.size>=6)
+        } finally { ui.mainClock.autoAdvance=true }
+        ui.onNodeWithTag("friend-row-seed-lin").performClick()
+        ui.onNodeWithTag("chat-title").assertTextContains("对方正在输入",substring=true)
+        allowBody.complete(Unit);finish.complete(Unit)
+        ui.waitUntil(20000){!vm.chatSending}
+        ui.onNodeWithTag("back").performClick()
+        label.assertDoesNotExist()
+        ui.onNodeWithTag("friend-row-seed-lin").assertTextContains(vm.friends.first{it.id=="seed-lin"}.name)
+    }
+
+    @Test fun listTypingRestoresNameOnFailure() {
+        failReply=true; start(); returnToList(); allowBody.complete(Unit)
+        ui.waitUntil(20000){!vm.isReplying("seed-lin")}
+        ui.onNodeWithTag("replying-label",useUnmergedTree=true).assertDoesNotExist()
+    }
+
+    @Test fun concurrentConversationsOwnTheirTypingLabel() {
+        start()
+        val other=vm.friends.first{it.id!="seed-lin"}.id
+        ui.runOnIdle { vm.open("chat",other); assertTrue(vm.send("第二段合成对话")) }
+        ui.onNodeWithTag("back").performClick()
+        ui.onAllNodesWithTag("replying-label",useUnmergedTree=true).assertCountEquals(2)
+        ui.runOnIdle { vm.stopReply("seed-lin") }
+        ui.onNodeWithTag("friend-row-$other").assertTextContains("对方正在输入")
+        ui.onAllNodesWithTag("replying-label",useUnmergedTree=true).assertCountEquals(1)
+        ui.runOnIdle { vm.stopReply(other) }
+        ui.onAllNodesWithTag("replying-label",useUnmergedTree=true).assertCountEquals(0)
+    }
+
+    @Test fun listTypingRestoresNameOnStop() {
+        start(); returnToList()
+        ui.onNodeWithTag("friend-row-seed-lin").performClick()
+        ui.runOnIdle { vm.stopReply("seed-lin") }
+        ui.onNodeWithTag("back").performClick()
+        ui.onNodeWithTag("replying-label",useUnmergedTree=true).assertDoesNotExist()
+    }
+
     @Test fun streamingNavigationRecreationAndSavedReasoningKeepTheirOwner(){
         start()
         ui.waitUntil(10000){vm.chatPreview?.reasoning==reasoning}

@@ -118,7 +118,8 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     private val runner=ConversationRunner(viewModelScope,store,modelVault,diagnosticClient,processing,memory,{reload()},{error=it},{settleCompanion()},displayReplies=true)
     var processingRevision by mutableIntStateOf(0);private set
     var turns by mutableStateOf(emptyList<ChatTurn>());private set
-    val chatSending get()=activeId in runner.sending
+    internal fun isReplying(role: String) = role in runner.sending
+    val chatSending get()=isReplying(activeId)
     internal val chatPreview get()=runner.previews[activeId]
     val busy get()=saving||chatSending
     val chatInputAvailable get()=!saving

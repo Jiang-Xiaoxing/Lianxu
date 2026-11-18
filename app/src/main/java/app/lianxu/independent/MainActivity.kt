@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.*
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -147,7 +148,7 @@ class MainActivity:ComponentActivity(){
             0->LazyColumn(Modifier.fillMaxSize().testTag("chat-list")){
                 item{SectionLabel("最近对话",Modifier.padding(horizontal=UiSpace.page,vertical=8.dp))}
                 if(vm.friends.isEmpty())item{EmptyRoles("roles-empty-chat"){vm.open("create")}}
-                items(vm.friends,key={it.id}){friend->val message=vm.messages.lastOrNull{it.friendId==friend.id};FriendRow(friend,message?.text?:"开始聊天",message?.let{time.format(Date(it.created))}.orEmpty(),!removing,{askDelete(friend)}){vm.open("chat",friend.id)}}
+                items(vm.friends,key={it.id}){friend->val message=vm.messages.lastOrNull{it.friendId==friend.id};FriendRow(friend,message?.text?:"开始聊天",message?.let{time.format(Date(it.created))}.orEmpty(),!removing,{askDelete(friend)},typing=vm.isReplying(friend.id)){vm.open("chat",friend.id)}}
             }
             1->LazyColumn(Modifier.fillMaxSize().testTag("contacts-list")){
                 item{SectionLabel("全部角色 · ${vm.friends.size} 位",Modifier.padding(horizontal=UiSpace.page,vertical=8.dp))}
@@ -170,15 +171,32 @@ class MainActivity:ComponentActivity(){
         PrimaryAction("创建角色",onClick=onCreate)
     }
 }
-@Composable private fun FriendRow(friend:Friend,subtitle:String,meta:String,deleteEnabled:Boolean,onDelete:()->Unit,subtitleLines:Int=1,onClick:()->Unit){
+@Composable private fun FriendRow(friend:Friend,subtitle:String,meta:String,deleteEnabled:Boolean,onDelete:()->Unit,subtitleLines:Int=1,typing:Boolean=false,onClick:()->Unit){
     var actions by remember(friend.id){mutableStateOf(false)}
-    Row(Modifier.fillMaxWidth().clickable(onClick=onClick).padding(horizontal=UiSpace.page,vertical=16.dp),verticalAlignment=Alignment.CenterVertically){
+    val more = "${friend.name}的更多操作（Shift+F10）"
+    val openMenu: (() -> Unit)? = if (deleteEnabled) ({ actions = true }) else null
+    Row(Modifier.fillMaxWidth().testTag("friend-row-${friend.id}")
+        .onPreviewKeyEvent { event ->
+            val native = event.nativeKeyEvent
+            val menuKey = native.keyCode == android.view.KeyEvent.KEYCODE_MENU ||
+                (native.keyCode == android.view.KeyEvent.KEYCODE_F10 && native.isShiftPressed)
+            if (menuKey && openMenu != null) {
+                if (native.action == android.view.KeyEvent.ACTION_UP && !native.isCanceled) openMenu()
+                true
+            } else false
+        }.combinedClickable(onLongClickLabel=more,onLongClick=openMenu,onClick=onClick)
+        .padding(horizontal=UiSpace.page,vertical=16.dp),verticalAlignment=Alignment.CenterVertically){
         Avatar(friend,52);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){
-            Row(verticalAlignment=Alignment.CenterVertically){Text(friend.name,Modifier.weight(1f),style=MaterialTheme.typography.titleSmall,maxLines=1,overflow=TextOverflow.Ellipsis);if(meta.isNotEmpty())Text(meta,style=MaterialTheme.typography.labelSmall,color=Muted)}
+            Row(verticalAlignment=Alignment.CenterVertically){
+                Box(Modifier.weight(1f)) {
+                    if (typing) TypingLabel() else Text(friend.name,style=MaterialTheme.typography.titleSmall,maxLines=1,overflow=TextOverflow.Ellipsis)
+                }
+                if(meta.isNotEmpty())Text(meta,style=MaterialTheme.typography.labelSmall,color=Muted)
+            }
             Text(subtitle,style=MaterialTheme.typography.bodyMedium,color=Muted,maxLines=subtitleLines,overflow=TextOverflow.Ellipsis)
         }
         Box{
-            IconButton(onClick={actions=true},enabled=deleteEnabled,modifier=Modifier.size(UiSpace.action).testTag("role-actions-${friend.id}").semantics{contentDescription="${friend.name}的更多操作"}){ControlIcon("more")}
+            // The zero-width anchor keeps the menu aligned to the end of this particular row.
             DropdownMenu(actions,{actions=false}){DropdownMenuItem(text={Text("删除角色",color=MaterialTheme.colorScheme.error)},onClick={actions=false;onDelete()},modifier=Modifier.testTag("role-delete-${friend.id}"))}
         }
     };HorizontalDivider(Modifier.padding(start=86.dp,end=UiSpace.page),color=Line,thickness=.5.dp)
