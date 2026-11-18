@@ -233,6 +233,25 @@ class BackupUiTest {
         assertEquals("没有存上就不能留成开","0",runBlocking{vm.processing.store.preference("diagnostic-detailed","0")})
     }
 
+    @Test fun simpleExportCannotUpgradeWhileItsWorkerStarts() {
+        show()
+        ui.onNodeWithTag("backup-tab-diagnostics").performClick()
+        ui.runOnIdle {
+            vm.setDiagnosticDetailed(true)
+            Diagnostics.event("synthetic.sample",mapOf("text" to Diagnostics.raw("只许在确认后的详细文件出现")))
+            vm.setDiagnosticDetailed(false)
+        }
+        val click=ui.onNodeWithTag("backup-export-diagnostics").fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsActions.OnClick].action!!
+        val before=saves.size
+        ui.runOnIdle { click(); vm.setDiagnosticDetailed(true) }
+        waitSaved(before)
+        val file=bytes().decodeToString()
+        assertFalse(com.google.gson.JsonParser.parseString(file.lineSequence().first()).asJsonObject["detailed"].asBoolean)
+        assertFalse(file.contains("只许在确认后的详细文件出现"))
+        assertEquals(before+1,saves.size)
+    }
+
     @Test fun oneDetailedSwitchControlsExportAndSecretsNeverAppear(){
         show();ui.onNodeWithTag("backup-tab-diagnostics").performClick()
         // Exercise the production request/response logging entry, with a local client and no network.
@@ -244,6 +263,17 @@ class BackupUiTest {
         ui.onNodeWithTag("backup-detailed").performClick();ui.onAllNodesWithTag("backup-detailed").assertCountEquals(1)
         record("开启期间合成诊断正文")
         n=saves.size
+        fun detailedExports(): Int {
+            runBlocking { Diagnostics.export(false) } // Drain the writer, then inspect only this synthetic namespace.
+            val dir=File(instrument.targetContext.filesDir,"diagnostics/$name")
+            return dir.listFiles().orEmpty().filter { it.extension=="jsonl" }.sumOf { file ->
+                file.readLines().count { line ->
+                    val row=com.google.gson.JsonParser.parseString(line).asJsonObject
+                    row["event"]?.asString=="diagnostic.export" && row.getAsJsonObject("data")["detailed"]?.asBoolean==true
+                }
+            }
+        }
+        val beforeConfirm=detailedExports()
         val export=ui.onNodeWithTag("backup-export-diagnostics")
         export.performClick()
         ui.onNodeWithText("取消").performClick()
@@ -266,14 +296,18 @@ class BackupUiTest {
         assertEquals(n,saves.size)
         export.performClick()
         ui.onNodeWithText("密钥和登录凭据不会写入日志。").assertIsDisplayed()
+        ui.waitForIdle()
+        SystemClock.sleep(500) // Let the native dialog window finish fading in before capturing it.
         instrument.uiAutomation.takeScreenshot().let { bitmap ->
             File(instrument.targetContext.filesDir,"detailed-export.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) }
             bitmap.recycle()
         }
+        assertEquals(beforeConfirm,detailedExports())
         val action=ui.onNodeWithTag("confirm-detailed-export").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsActions.OnClick].action!!
         ui.runOnIdle { action(); action() }
         waitSaved(n)
         assertEquals(n+1,saves.size)
+        assertEquals(beforeConfirm+1,detailedExports())
         val detailed=bytes().toString(Charsets.UTF_8)
         assertTrue(detailed.contains("开启期间合成诊断正文"));assertFalse(detailed.contains("关闭期间合成诊断正文"));assertFalse(detailed.contains("synthetic-ui-key-only"))
         assertEquals(0,calls.get());shot("diagnostic-switch")

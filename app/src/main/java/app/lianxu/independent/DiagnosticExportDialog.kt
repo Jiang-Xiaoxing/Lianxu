@@ -17,6 +17,8 @@ internal fun DiagnosticExportDialog(dismiss: () -> Unit, confirm: () -> Unit) {
     val red = Color(0xFFA83D38)
     AlertDialog(
         onDismissRequest = dismiss,
+        modifier = Modifier.fillMaxWidth(.88f).widthIn(max=560.dp),
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth=false),
         containerColor = Color(0xFFFFFCFA),
         titleContentColor = ink,
         textContentColor = ink,
@@ -24,7 +26,7 @@ internal fun DiagnosticExportDialog(dismiss: () -> Unit, confirm: () -> Unit) {
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("日志可能包含以下隐私信息：")
-                Text("聊天内容、模型请求与回复、设备信息及运行记录。")
+                Text("聊天内容、模型请求与回复、\n设备信息及运行记录。")
                 Text("密钥和登录凭据不会写入日志。", color = red)
                 Text("分享给他人前，请先检查导出内容。日志仅保存在本机，不会自动上传或发送。")
             }
