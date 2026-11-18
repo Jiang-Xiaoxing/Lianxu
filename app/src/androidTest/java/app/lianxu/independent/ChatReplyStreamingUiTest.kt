@@ -1,6 +1,9 @@
 package app.lianxu.independent
 
 import android.graphics.Bitmap
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -13,6 +16,8 @@ import org.junit.*
 import org.junit.Assert.*
 import org.junit.rules.ExternalResource
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Native synthetic chunks through the real runner/UI. No network or provider credentials.
@@ -130,21 +135,117 @@ class ChatReplyStreamingUiTest {
     }
 
     @Test fun listTypingRestoresNameOnFailure() {
-        failReply=true; start(); returnToList(); allowBody.complete(Unit)
+        failReply=true; start(); returnToList()
+        ui.onNodeWithTag("friend-row-seed-lin").performClick()
+        ui.onNodeWithTag("chat-title").assertTextEquals("对方正在输入…")
+        allowBody.complete(Unit)
         ui.waitUntil(20000){!vm.isReplying("seed-lin")}
+        assertRoleTitle("seed-lin")
+        ui.onNodeWithTag("back").performClick()
         ui.onNodeWithTag("replying-label",useUnmergedTree=true).assertDoesNotExist()
+    }
+
+    private fun verifyTextSize(node: SemanticsNodeInteraction, size: Int) {
+        val layouts = mutableListOf<TextLayoutResult>()
+        node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val layout = layouts.single()
+        assertEquals(size.sp, layout.layoutInput.style.fontSize)
+        assertEquals(1, layout.lineCount)
+        assertFalse("文字不应出现省略裁切", layout.isLineEllipsized(0))
+        assertEquals(layout.layoutInput.text.length, layout.getLineEnd(0, visibleEnd = true))
+        val bounds = node.fetchSemanticsNode().boundsInWindow
+        assertTrue("文字右侧超出可见区域", layout.getLineRight(0) <= bounds.width + 1)
+        assertTrue("文字基线应在可见区域", layout.firstBaseline in 0f..bounds.height)
+    }
+
+    private fun assertRoleTitle(role: String) {
+        val title = ui.onNodeWithTag("chat-title").assertTextEquals(vm.friends.first { it.id == role }.name)
+        verifyTextSize(title, 22)
+    }
+
+    private fun verifySweep(node: SemanticsNodeInteraction, surface: String) {
+        val bounds = node.fetchSemanticsNode().boundsInWindow
+        val width = bounds.width.toInt()
+        val height = bounds.height.toInt()
+        val times = listOf(320, 800, 1440, 1920, 2256, 2432, 2560)
+        val samples = mutableListOf<IntArray>()
+        val instrument = InstrumentationRegistry.getInstrumentation()
+        val dir = File(instrument.targetContext.getExternalFilesDir(null), "evidence-header-typing/$surface").apply { mkdirs() }
+        var previous = 0
+        // 2672 ms is the nearest 16 ms display frame to the 2670 ms cycle.
+        for (time in times + times.map { it + 2672 }) {
+            ui.mainClock.advanceTimeBy((time - previous).toLong())
+            previous = time
+            ui.waitForIdle()
+            assertEquals(bounds, node.fetchSemanticsNode().boundsInWindow)
+            // The Compose test clock is paused. Wait for the Android window to present its
+            // updated buffer before UiAutomation samples the physical display.
+            val presented = CountDownLatch(1)
+            ui.runOnUiThread {
+                val view = ui.activity.window.decorView
+                view.postOnAnimation { view.postOnAnimation { view.postOnAnimation { presented.countDown() } } }
+            }
+            assertTrue("等待屏幕呈现采样帧", presented.await(5, TimeUnit.SECONDS))
+            val screen = instrument.uiAutomation.takeScreenshot()
+            if (time == 800) File(dir, "screen.png").outputStream().use { screen.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            val crop = Bitmap.createBitmap(screen, bounds.left.toInt(), bounds.top.toInt(), width, height)
+            File(dir, "glyph-$time.png").outputStream().use { crop.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            val pixels = IntArray(width * height)
+            crop.getPixels(pixels, 0, width, 0, 0, width, height)
+            samples += pixels
+            crop.recycle()
+            screen.recycle()
+        }
+        fun distance(a: IntArray, b: IntArray) = a.indices.sumOf { kotlin.math.abs((a[it] and 255) - (b[it] and 255)) }
+        val motion = distance(samples[1], samples[2])
+        assertTrue("字形必须出现可测量的流光", motion > 100)
+        assertEquals("停留期字形应静止", 0, distance(samples[4], samples[6]))
+        for (i in times.indices) {
+            assertTrue("下一周期同相位应该重合，采样时间 ${times[i]}", distance(samples[i], samples[i + times.size]) < motion / 8)
+        }
+    }
+
+    @Test fun chatTitleAndListRepeatTheSameSweepWithoutClipping() {
+        start()
+        ui.mainClock.autoAdvance = false
+        try {
+            ui.runOnUiThread { vm.back() }
+            ui.mainClock.advanceTimeBy(64)
+            val listLabel = ui.onNodeWithTag("replying-label", useUnmergedTree = true)
+            verifyTextSize(listLabel, 16)
+            verifySweep(listLabel, "list")
+            ui.runOnUiThread { vm.open("chat", "seed-lin") }
+            ui.mainClock.advanceTimeBy(64)
+            val title = ui.onNodeWithTag("chat-title").assertTextEquals("对方正在输入…")
+            verifyTextSize(title, 18)
+            verifySweep(title, "header")
+        } finally { ui.mainClock.autoAdvance = true }
+        allowBody.complete(Unit)
+        finish.complete(Unit)
+        ui.waitUntil(20000) { !vm.isReplying("seed-lin") }
+        assertRoleTitle("seed-lin")
     }
 
     @Test fun concurrentConversationsOwnTheirTypingLabel() {
         start()
         val other=vm.friends.first{it.id!="seed-lin"}.id
-        ui.runOnIdle { vm.open("chat",other); assertTrue(vm.send("第二段合成对话")) }
+        ui.runOnIdle { vm.open("chat",other) }
+        assertRoleTitle(other)
+        ui.runOnIdle { assertTrue(vm.send("第二段合成对话")) }
+        ui.onNodeWithTag("chat-title").assertTextEquals("对方正在输入…")
         ui.onNodeWithTag("back").performClick()
         ui.onAllNodesWithTag("replying-label",useUnmergedTree=true).assertCountEquals(2)
         ui.runOnIdle { vm.stopReply("seed-lin") }
         ui.onNodeWithTag("friend-row-$other").assertTextContains("对方正在输入")
         ui.onAllNodesWithTag("replying-label",useUnmergedTree=true).assertCountEquals(1)
+        ui.onNodeWithTag("friend-row-seed-lin").performClick()
+        assertRoleTitle("seed-lin")
+        ui.onNodeWithTag("back").performClick()
+        ui.onNodeWithTag("friend-row-$other").performClick()
+        ui.onNodeWithTag("chat-title").assertTextEquals("对方正在输入…")
         ui.runOnIdle { vm.stopReply(other) }
+        assertRoleTitle(other)
+        ui.onNodeWithTag("back").performClick()
         ui.onAllNodesWithTag("replying-label",useUnmergedTree=true).assertCountEquals(0)
     }
 
@@ -152,6 +253,7 @@ class ChatReplyStreamingUiTest {
         start(); returnToList()
         ui.onNodeWithTag("friend-row-seed-lin").performClick()
         ui.runOnIdle { vm.stopReply("seed-lin") }
+        assertRoleTitle("seed-lin")
         ui.onNodeWithTag("back").performClick()
         ui.onNodeWithTag("replying-label",useUnmergedTree=true).assertDoesNotExist()
     }

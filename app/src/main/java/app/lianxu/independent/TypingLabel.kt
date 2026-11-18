@@ -8,12 +8,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.*
-import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import kotlin.math.exp
 
 @Composable
-internal fun TypingLabel() {
+internal fun TypingLabel(
+    modifier: Modifier,
+    style: TextStyle = MaterialTheme.typography.titleSmall,
+    text: String = "对方正在输入",
+    maxLines: Int = 1,
+) {
     val dark = Paper.luminance() < .5f
     val ink = if (dark) Muted else Color(0xFF695B4E)
     val gold = if (dark) Color(0xFFEDD6B9) else Color(0xFFBC9B70)
@@ -32,11 +37,10 @@ internal fun TypingLabel() {
     var textWidth by remember { mutableIntStateOf(0) }
     val progress = phase.value
     val radius = textWidth * .38f
-    val style = MaterialTheme.typography.titleSmall
     val paint = if (progress > 0f && progress < 1f && radius > 0f) {
         val center = progress * (textWidth + 2 * radius) - radius
         style.copy(brush=Brush.horizontalGradient(colors,center-radius,center+radius))
     } else style.copy(color=ink)
-    Text("对方正在输入", modifier=Modifier.testTag("replying-label").onSizeChanged { textWidth=it.width },
-        style=paint,maxLines=1,overflow=TextOverflow.Ellipsis)
+    Text(text, modifier=modifier.onSizeChanged { textWidth=it.width },
+        style=paint,maxLines=maxLines,overflow=TextOverflow.Ellipsis)
 }

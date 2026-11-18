@@ -189,7 +189,7 @@ class MainActivity:ComponentActivity(){
         Avatar(friend,52);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){
             Row(verticalAlignment=Alignment.CenterVertically){
                 Box(Modifier.weight(1f)) {
-                    if (typing) TypingLabel() else Text(friend.name,style=MaterialTheme.typography.titleSmall,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    if (typing) TypingLabel(Modifier.testTag("replying-label")) else Text(friend.name,style=MaterialTheme.typography.titleSmall,maxLines=1,overflow=TextOverflow.Ellipsis)
                 }
                 if(meta.isNotEmpty())Text(meta,style=MaterialTheme.typography.labelSmall,color=Muted)
             }

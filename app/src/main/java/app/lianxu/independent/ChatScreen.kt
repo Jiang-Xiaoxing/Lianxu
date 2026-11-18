@@ -206,7 +206,14 @@ private suspend fun LazyListState.showEndOf(index:Int){
     Column(Modifier.fillMaxSize().background(ChatPageBackground)){
         Row(Modifier.fillMaxWidth().heightIn(min=68.dp).background(ChatBarBackground).padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically){
             IconButton(onClick={vm.back()},modifier=Modifier.size(UiSpace.action).testTag("back").semantics{contentDescription="返回"}){ControlIcon("back",Ink)}
-            Text(if(typing)"对方正在输入…" else friend.name,Modifier.weight(1f).padding(horizontal=8.dp,vertical=8.dp).testTag("chat-title"),style=MaterialTheme.typography.titleLarge,maxLines=2,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            Box(Modifier.weight(1f).padding(horizontal=8.dp,vertical=8.dp)) {
+                val titleModifier = Modifier.testTag("chat-title")
+                if (typing) {
+                    TypingLabel(titleModifier, MaterialTheme.typography.titleMedium, "对方正在输入…", maxLines = 2)
+                } else {
+                    Text(friend.name,titleModifier,style=MaterialTheme.typography.titleLarge,maxLines=2,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                }
+            }
             IconButton(onClick={vm.open("detail",friend.id)},modifier=Modifier.size(UiSpace.action).testTag("chat-role-detail").semantics{contentDescription="角色资料"}){ControlIcon("more")}
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned{val p=it.localToWindow(Offset.Zero);viewport=Rect(p,it.size.toSize())}){

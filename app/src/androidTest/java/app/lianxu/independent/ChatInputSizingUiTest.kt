@@ -20,6 +20,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
@@ -135,12 +136,27 @@ class ChatInputSizingUiTest {
         assertEquals("Clearing the field restores its compact height",empty,measure("$name-cleared",fontScale),1f)
         ui.onNodeWithTag("chat-attach").performClick()
         cancelNativeImagePicker()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        ui.waitUntil(5000) {
+            instrumentation.uiAutomation.rootInActiveWindow?.packageName == instrumentation.targetContext.packageName
+        }
         ui.onNodeWithTag("message-input").assertExists()
         ui.onNodeWithTag("message-input").performTextReplacement("键盘发送")
         ui.onNodeWithTag("message-input").performImeAction()
         ui.waitUntil(15000){app.messages.any{it.mine&&it.text=="键盘发送"}&&ui.onAllNodesWithText("停止").fetchSemanticsNodes().isNotEmpty()}
         val message=app.messages.single{it.mine&&it.text=="键盘发送"}
         ui.onNodeWithTag("message-${message.id}").assertTextEquals("键盘发送")
+        val title = ui.onNodeWithTag("chat-title").assertTextEquals("对方正在输入…")
+        val titleLayouts = mutableListOf<TextLayoutResult>()
+        title.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(titleLayouts) }
+        val titleLayout = titleLayouts.single()
+        val lastLine = titleLayout.lineCount - 1
+        assertEquals(18.sp, titleLayout.layoutInput.style.fontSize)
+        assertFalse(titleLayout.isLineEllipsized(lastLine))
+        assertEquals(titleLayout.layoutInput.text.length, titleLayout.getLineEnd(lastLine, visibleEnd = true))
+        val titleBounds = title.fetchSemanticsNode().boundsInRoot
+        assertTrue(titleBounds.left >= ui.onNodeWithTag("back").fetchSemanticsNode().boundsInRoot.right)
+        assertTrue(titleBounds.right <= ui.onNodeWithTag("chat-role-detail").fetchSemanticsNode().boundsInRoot.left)
         val labelLayouts=mutableListOf<TextLayoutResult>()
         ui.onNodeWithText("停止",useUnmergedTree=true).performSemanticsAction(SemanticsActions.GetTextLayoutResult){it(labelLayouts)}
         val face=ui.onNodeWithTag("chat-send-face",useUnmergedTree=true).fetchSemanticsNode().boundsInRoot
