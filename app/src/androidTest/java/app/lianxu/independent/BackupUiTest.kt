@@ -243,7 +243,37 @@ class BackupUiTest {
         assertFalse(bytes().toString(Charsets.UTF_8).contains("关闭期间合成诊断正文"))
         ui.onNodeWithTag("backup-detailed").performClick();ui.onAllNodesWithTag("backup-detailed").assertCountEquals(1)
         record("开启期间合成诊断正文")
-        n=saves.size;ui.onNodeWithTag("backup-export-diagnostics").performClick();waitSaved(n)
+        n=saves.size
+        val export=ui.onNodeWithTag("backup-export-diagnostics")
+        export.performClick()
+        ui.onNodeWithText("取消").performClick()
+        assertEquals(n,saves.size)
+        export.performClick()
+        ui.onNodeWithText("导出详细诊断").assertIsDisplayed()
+        ui.waitUntil(5000) { !ui.activity.hasWindowFocus() }
+        instrument.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        ui.onNodeWithText("导出详细诊断").assertDoesNotExist()
+        assertEquals(n,saves.size)
+        export.performClick()
+        ui.onNodeWithText("继续导出").assertIsDisplayed()
+        ui.waitUntil(5000) { !ui.activity.hasWindowFocus() }
+        instrument.uiAutomation.executeShellCommand("input tap 2 80").close()
+        ui.waitUntil(5000) { ui.onAllNodesWithText("继续导出").fetchSemanticsNodes().isEmpty() }
+        assertEquals(n,saves.size)
+        export.performClick()
+        ui.runOnIdle { vm.setDiagnosticDetailed(false); vm.setDiagnosticDetailed(true) }
+        ui.onNodeWithText("继续导出").performClick()
+        assertEquals(n,saves.size)
+        export.performClick()
+        ui.onNodeWithText("密钥和登录凭据不会写入日志。").assertIsDisplayed()
+        instrument.uiAutomation.takeScreenshot().let { bitmap ->
+            File(instrument.targetContext.filesDir,"detailed-export.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) }
+            bitmap.recycle()
+        }
+        val action=ui.onNodeWithTag("confirm-detailed-export").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsActions.OnClick].action!!
+        ui.runOnIdle { action(); action() }
+        waitSaved(n)
+        assertEquals(n+1,saves.size)
         val detailed=bytes().toString(Charsets.UTF_8)
         assertTrue(detailed.contains("开启期间合成诊断正文"));assertFalse(detailed.contains("关闭期间合成诊断正文"));assertFalse(detailed.contains("synthetic-ui-key-only"))
         assertEquals(0,calls.get());shot("diagnostic-switch")

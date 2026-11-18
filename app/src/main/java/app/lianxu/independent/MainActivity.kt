@@ -41,11 +41,12 @@ class MainActivity:ComponentActivity(){
         if(value.data?.scheme=="lianxu")value.data=null
         return request.takeIf{!it.getStringExtra(CompanionNotifications.ROLE).isNullOrBlank()&&it.getLongExtra(CompanionNotifications.MESSAGE,0)>0}
     }
-    override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);notificationIntent=consumeNotification(intent);enableEdgeToEdge();setContent{LianxuTheme{
+    override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);DiagnosticEnvironment.attach(this);notificationIntent=consumeNotification(intent);enableEdgeToEdge();setContent{LianxuTheme{
         val vm:AppState=viewModel()
         LaunchedEffect(vm.ready,notificationIntent){if(vm.ready){notificationIntent?.let{i->val role=i.getStringExtra(CompanionNotifications.ROLE);val id=i.getLongExtra(CompanionNotifications.MESSAGE,0);if(role!=null&&id>0)vm.notificationOpen(role,id)};notificationIntent=null}}
         Lianxu(vm)
     }}}
+    override fun onDestroy(){DiagnosticEnvironment.detach(this);super.onDestroy()}
     override fun onNewIntent(intent:android.content.Intent){super.onNewIntent(intent);notificationIntent=consumeNotification(intent)}
 }
 @Composable fun Lianxu(vm:AppState=viewModel()){

@@ -28,12 +28,12 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
     fun send(friendId:String,input:String,onPersisted:()->Unit):Boolean=sendImage(friendId,input,null,onPersisted)
     fun sendImage(friendId:String,input:String,image:PendingChatImage?,onPersisted:()->Unit):Boolean {
         if((input.isBlank()&&image==null)||input.length>2000)return false
-        stop(friendId)
+        stop(friendId,"new_message")
         launch(friendId,input,null,onPersisted,image);return true
     }
-    fun stop(friendId:String){
+    fun stop(friendId:String,origin:String="user_stop"){
         attempts[friendId]?.let{it.keepSpoken=true;it.delivery.stop()}
-        cancel(friendId)
+        cancel(friendId,origin)
     }
     internal fun acknowledge(friendId:String,turnId:String,attempt:Int,count:Int){
         val st=attempts[friendId]?:return
@@ -66,13 +66,13 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         }
     }
     fun retry(turn:ChatTurn){if(turn.friendId !in sending)launch(turn.friendId,null,turn.id,{})}
-    fun cancel(friendId:String){
+    fun cancel(friendId:String,origin:String="caller"){
         val lease=leases.remove(friendId)?:return;lease.cancel()
         // A cancelled transport can return late. Its revoked lease cannot publish or run tools;
         // do not make the next reply wait for that transport to acknowledge cancellation.
         val lock=CompanionRuntime.mutex(friendId)
         runCatching{if(lock.holdsLock(lease))lock.unlock(lease)}
-        jobs.remove(friendId)?.cancel();sending=sending-friendId
+        jobs.remove(friendId)?.cancel(ChatRequestCancellation(origin));sending=sending-friendId
         activeTurns.remove(friendId)?.let{turn->scope.launch(NonCancellable+Dispatchers.Main.immediate){
             if(previews[friendId]?.let{it.turnId==turn.id&&it.attempt==turn.attempt}==true){
                 // The task's own catch may run later; keep what the panel showed so it can still be logged.

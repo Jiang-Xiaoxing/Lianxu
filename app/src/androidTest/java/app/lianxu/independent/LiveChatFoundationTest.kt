@@ -14,7 +14,7 @@ import javax.net.ssl.*
 import kotlin.concurrent.thread
 
 /** Bounded loopback TLS server. Reads the real POST body; never a trust-all socket. */
-class TextTlsMock(val status:Int=200,val response:String="{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"【Mock HTTP】合成回复\",\"reasoning_content\":\"not-user-output\"}}]}",val delay:Long=0,val contentType:String="application/json",maxRequests:Int=1,responder:((String)->String)?=null,maxBodyBytes:Int=2*1024*1024,requestSink:((java.io.InputStream,Int)->Unit)?=null):AutoCloseable {
+class TextTlsMock(val status:Int=200,val response:String="{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"【Mock HTTP】合成回复\",\"reasoning_content\":\"not-user-output\"}}]}",val delay:Long=0,val contentType:String="application/json",maxRequests:Int=1,responder:((String)->String)?=null,maxBodyBytes:Int=2*1024*1024,requestSink:((java.io.InputStream,Int)->Unit)?=null,declaredResponseBytes:Int?=null):AutoCloseable {
     private val ks=KeyStore.getInstance("PKCS12").apply{InstrumentationRegistry.getInstrumentation().context.assets.open("localhost-test.p12").use{load(it,"synthetic-test-only".toCharArray())}}
     private val km=KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply{init(ks,"synthetic-test-only".toCharArray())}
     private val tls=SSLContext.getInstance("TLS").apply{init(km.keyManagers,null,null)}
@@ -32,7 +32,7 @@ class TextTlsMock(val status:Int=200,val response:String="{\"choices\":[{\"finis
         val size=Regex("(?im)^content-length: (\\d+)").find(headers)?.groupValues?.get(1)?.toInt()?:0;require(size<=maxBodyBytes)
         if(requestSink!=null)requestSink(input,size)else{val data=ByteArray(size);DataInputStream(input).readFully(data);body=String(data,Charsets.UTF_8)}
         if(delay>0)Thread.sleep(delay)
-        val bytes=(responder?.invoke(body)?:response).toByteArray(Charsets.UTF_8);socket.getOutputStream().apply{write(("HTTP/1.1 $status Result\r\nContent-Type: $contentType\r\nContent-Length: ${bytes.size}\r\nLocation: https://example.invalid/never-follow\r\nConnection: close\r\n\r\n").toByteArray());write(bytes);flush()}
+        val bytes=(responder?.invoke(body)?:response).toByteArray(Charsets.UTF_8);socket.getOutputStream().apply{write(("HTTP/1.1 $status Result\r\nContent-Type: $contentType\r\nContent-Length: ${declaredResponseBytes ?: bytes.size}\r\nLocation: https://example.invalid/never-follow\r\nConnection: close\r\n\r\n").toByteArray());write(bytes);flush()}
     }}}catch(_:Exception){}}
     fun client(timeout:Int=3000)=HttpsTextChatClient(HttpsConnectionFactory{url->(url.openConnection() as HttpsURLConnection).apply{sslSocketFactory=clientTls.socketFactory}},timeout)
     /** Test-only URL routing to a certificate-verified loopback server, never production trust changes. */

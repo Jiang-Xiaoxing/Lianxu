@@ -19,7 +19,23 @@ internal object Diagnostics {
     @Volatile private var journal:DiagnosticJournal?=null
     private var identity=""
     /** Detailed journal mode. Off by default; only then is the visible reasoning text recorded. */
-    @Volatile var detailed=false
+    @Volatile internal var detailSession:Any?=null
+        private set
+    internal var detailed:Boolean
+        get()=detailSession!=null
+        @Synchronized set(value){
+            if(value==detailed)return
+            detailSession=if(value)Any() else null
+            modeChanged?.invoke()
+        }
+    @Volatile internal var modeChanged:(()->Unit)?=null
+    @Volatile internal var environment:(()->Map<String,Any?>)?=null
+    private val knownCredentials=DiagnosticRedactor()
+    internal val collectText get() = detailed && requestState()?.enabled != false
+
+    @Synchronized fun detail(session:Any?,name:String,data:()->Map<String,Any?> = {emptyMap()}){
+        if(session!=null && detailSession===session)event(name,data())
+    }
     /** Same per-event reasoning budget the journal applies to any data row. */
     internal const val REASONING_LIMIT=32768
     /**
@@ -31,36 +47,42 @@ internal object Diagnostics {
         val received=maxOf(receivedChars,value.length)
         if(received==0)return mapOf("reasoning_status" to "absent","reasoning_chars" to 0)
         val status=if(incomplete)"partial" else "returned"
-        if(!detailed)return mapOf("reasoning_status" to status,"reasoning_chars" to received,"reasoning_text" to "[详细诊断未开启]")
+        if(!collectText)return mapOf("reasoning_status" to status,"reasoning_chars" to received,"reasoning_text" to "[详细诊断未开启]")
         val truncated=hitLimit||received>REASONING_LIMIT
+        val prefix = value.take(REASONING_LIMIT)
+        val safe = if (truncated || incomplete) (journal?.redactor ?: knownCredentials).protectTail(prefix) else prefix
         return mapOf("reasoning_status" to status,"reasoning_chars" to received,
-            "reasoning_text" to if(value.length>REASONING_LIMIT)value.take(REASONING_LIMIT)else value,"reasoning_truncated" to truncated)
+            "reasoning_text" to safe,"reasoning_truncated" to truncated)
     }
     /** Invoke on Dispatchers.IO during application setup; directory is app-private. */
     @Synchronized fun configure(directory:File,version:String){
         val key=directory.absolutePath
         if(journal!=null&&identity==key)return
-        journal?.close();journal=DiagnosticJournal(directory,version);identity=key
+        journal?.close();journal=DiagnosticJournal(directory,version,redactor=knownCredentials);identity=key
         event("diagnostic.session",mapOf("retention_days" to 7,"segments" to 5,"segment_bytes" to 2*1024*1024,"queue_capacity" to 128,"queue_bytes" to 2*1024*1024))
     }
-    fun registerSecret(secret:String){journal?.redactor?.register(secret)}
+    fun registerSecret(secret:String){(journal?.redactor?:knownCredentials).register(secret)}
     /** Chat words, memory text, prompts and replies reach the journal only with 详细诊断 on; otherwise just how long they were. */
-    fun raw(value:String?):Any? = if(value==null)null else if(detailed)value else "[详细诊断未开启，共${value.length}字]"
+    fun raw(value:String?):Any? = if(value==null)null else if(collectText)value else "[详细诊断未开启，共${value.length}字]"
     /** Same rule for structured payloads (tool arguments and results), counted on their JSON text. */
-    fun rawJson(value:Any?):Any? = if(value==null||detailed)value else "[详细诊断未开启，共${com.google.gson.Gson().toJson(value).length}字]"
+    fun rawJson(value:Any?):Any? = if(value==null||collectText)value else "[详细诊断未开启，共${com.google.gson.Gson().toJson(value).length}字]"
     /** Same masking as the journal, for text shown to the user (raw provider errors). */
     fun redact(text:String,secrets:List<String> = emptyList()):String {
-        val shared=journal?.redactor
-        return if(shared!=null)synchronized(shared){secrets.forEach{shared.register(it)};shared.text(text)}
-        else DiagnosticRedactor().apply{secrets.forEach{register(it)}}.text(text)
+        val shared=journal?.redactor?:knownCredentials
+        return synchronized(shared){secrets.forEach{shared.register(it)};shared.text(text)}
     }
     fun traceId():String=traceState.get()?.trace?:UUID.randomUUID().toString()
     fun event(name:String,data:Map<String,Any?> = emptyMap(),trace:String?=null,elapsed:Long?=null,secrets:List<String> = emptyList()){
         val state=traceState.get()
-        runCatching{journal?.record(name,trace?:state?.trace?:UUID.randomUUID().toString(),state?.links.orEmpty()+state?.request?.fields().orEmpty()+data+mapOf("span" to state?.span,"parent_span" to state?.parent,"purpose" to state?.purpose),elapsed,secrets)}
+        val wall=System.currentTimeMillis()
+        val mono=if(detailed)System.nanoTime() else null
+        runCatching{journal?.record(name,trace?:state?.trace?:UUID.randomUUID().toString(),state?.links.orEmpty()+state?.request?.fields().orEmpty()+data+mapOf("span" to state?.span,"parent_span" to state?.parent,"purpose" to state?.purpose)+(if(detailed)environment?.invoke().orEmpty() else emptyMap()),elapsed,secrets,wall,mono)}
     }
     fun failure(name:String,error:Throwable,data:Map<String,Any?> = emptyMap(),trace:String?=null,secrets:List<String> = emptyList()){
-        event(name,data+mapOf("error_type" to error.javaClass.name,"error" to error.message,"stack" to error.stackTraceToString()),trace,secrets=secrets)
+        synchronized(this) {
+            val details = if (detailed) mapOf("error" to error.message, "stack" to error.stackTraceToString()) else emptyMap()
+            event(name, data + ("error_type" to error.javaClass.name) + details, trace, secrets=secrets)
+        }
     }
     fun context(purpose:String,trace:String=UUID.randomUUID().toString(),request:NetworkDiagnosticState?=traceState.get()?.request):DiagnosticTrace {
         val old=traceState.get();return DiagnosticTrace(DiagnosticTraceState(old?.trace?:trace,UUID.randomUUID().toString(),old?.span,purpose,request,old?.links.orEmpty()))
@@ -96,7 +118,21 @@ internal object Diagnostics {
 internal class LoggedTextChatClient(private val delegate:TextChatClient):TextChatClient {
     private fun request(config:ModelConfig,key:String,value:TextChatRequest,id:String,stream:Boolean){
         Diagnostics.registerSecret(key)
-        Diagnostics.event("network.request",mapOf("request_id" to id,"stream" to stream,"model" to config.modelId,"provider" to config.providerId,"endpoint" to config.baseUrl,"context_limit" to config.contextTokens,"output_limit" to value.outputLimit,"timeout_ms" to value.timeoutMillis,"messages" to value.messages.map{mapOf("role" to it.role,"content" to Diagnostics.raw(it.content),"tool_calls" to it.toolCalls.map{c->mapOf("id" to c.id,"name" to c.name,"arguments" to Diagnostics.raw(c.arguments))})},"tools" to value.tools),secrets=listOf(key))
+        Diagnostics.event("network.request",mapOf(
+            "request_id" to id, "stream" to stream, "model" to config.modelId, "provider" to config.providerId,
+            "endpoint" to config.baseUrl, "context_limit" to config.contextTokens, "output_limit" to value.outputLimit,
+            "timeout_ms" to value.timeoutMillis, "messages" to value.messages.map { message ->
+                val media = if (Diagnostics.collectText && (message.images.isNotEmpty() || message.videos.isNotEmpty())) mapOf(
+                    "images" to message.images.size, "video_frames" to message.images.count { it.videoFrame },
+                    "image_bytes" to message.images.sumOf { it.size }, "videos" to message.videos.size,
+                    "video_bytes" to message.videos.sumOf { it.size },
+                    "media_types" to (message.images.map { it.mime } + message.videos.map { it.mime }).distinct()
+                ) else emptyMap()
+                mapOf("role" to message.role, "content" to Diagnostics.raw(message.content), "tool_calls" to message.toolCalls.map {
+                    mapOf("id" to it.id, "name" to it.name, "arguments" to Diagnostics.raw(it.arguments))
+                }) + media
+            }, "tools" to value.tools
+        ),secrets=listOf(key))
     }
     private fun response(id:String,result:TextChatResult,start:Long,key:String,extra:Map<String,Any?> = emptyMap(),reasoning:Map<String,Any?>?=null){
         if(Diagnostics.requestState()?.finish(if(result is TextChatResult.Success)"SUCCESS"else(result as TextChatResult.Failure).reason.name)==false)return
@@ -125,7 +161,7 @@ internal class LoggedTextChatClient(private val delegate:TextChatClient):TextCha
         val id=requireNotNull(Diagnostics.requestState()).id;val start=System.nanoTime();request(config,key,request,id,true)
         var chunks=0;var chars=0;var omitted=false;val text=StringBuilder()
         return@withContext try{
-            delegate.stream(config,key,request){chunk->chunks++;chars+=chunk.length;if(!omitted){if(text.length+chunk.length<=32768)text.append(chunk)else{omitted=true;text.clear()}};onChunk(chunk)}
+            delegate.stream(config,key,request){chunk->chunks++;chars+=chunk.length;if(Diagnostics.collectText&&!omitted){if(text.length+chunk.length<=32768)text.append(chunk)else{omitted=true;text.clear()}};onChunk(chunk)}
                 .also{result->response(id,result,start,key,mapOf("chunks" to chunks,"stream_chars" to chars,"stream_text" to if(result is TextChatResult.Success&&!omitted)Diagnostics.raw(text.toString()) else "[流式正文已省略]","stream_text_omitted" to (omitted||result !is TextChatResult.Success),"stream_omitted_reason" to if(omitted)"超过正文限额" else if(result !is TextChatResult.Success)"响应未完整成功" else ""))}
         }catch(e:CancellationException){cancelled(e,id,mapOf("chunks" to chunks,"stream_chars" to chars));throw e}
         catch(e:Exception){failed(e,id,mapOf("chunks" to chunks,"stream_chars" to chars));throw e}
@@ -140,11 +176,11 @@ internal class LoggedTextChatClient(private val delegate:TextChatClient):TextCha
         return@withContext try{
             delegate.streamEvents(config,key,request){event->
                 when(event){
-                    is TextStreamEvent.Content->{chunks++;chars+=event.text.length;if(!omitted){if(text.length+event.text.length<=32768)text.append(event.text)else{omitted=true;text.clear()}}}
+                    is TextStreamEvent.Content->{chunks++;chars+=event.text.length;if(Diagnostics.collectText&&!omitted){if(text.length+event.text.length<=32768)text.append(event.text)else{omitted=true;text.clear()}}}
                     is TextStreamEvent.Reasoning->{reasoningChunks++;reasoningChars+=event.text.length
                         // Keep a bounded prefix that fills the remaining budget instead of dropping a
                         // whole oversized chunk (which would make a long thought look "absent").
-                        if(!reasoningOmitted){
+                        if(Diagnostics.collectText&&!reasoningOmitted){
                             val room=Diagnostics.REASONING_LIMIT-streamedReasoning.length
                             if(event.text.length<=room)streamedReasoning.append(event.text)
                             else{streamedReasoning.append(event.text,0,room);reasoningOmitted=true}

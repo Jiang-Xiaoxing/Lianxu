@@ -67,11 +67,13 @@ class HttpsTextChatClient(
             fun shown(text:String)=Diagnostics.redact(text,listOf(key)).take(DETAIL_LIMIT)
             val result=try {
                 if(!continuation.isActive)return@submit
+                requestDiagnostics?.phase("prepare_body",mapOf("dns_tls_timing" to "not_exposed_by_urlconnection","server_received_bytes" to "unobservable","timeout_ms" to budget))
                 val body=ImageWire.body(config,request,onEvent!=null)
                 val messages=body.getJSONArray("messages")
                 val requestBytes=ImageWire.size(body,request)
                 val requestLimit=ImageWire.requestLimit(request)
                 if(requestBytes>requestLimit)throw RequestTooLarge()
+                requestDiagnostics?.phase("open_connection_object",mapOf("planned_body_bytes" to requestBytes))
                 val active=factory.open(URL(config.baseUrl.trimEnd('/')+"/chat/completions"));c=active;connection.set(active)
                 if(!continuation.isActive)return@submit
                 val provider=ProviderPresets.get(config.providerId)
@@ -84,9 +86,16 @@ class HttpsTextChatClient(
                 for(i in 0 until diagnosticMessages.length())diagnosticMessages.getJSONObject(i).remove("reasoning_content")
                 Diagnostics.event("http.request.body",mapOf("method" to "POST","endpoint" to config.baseUrl.trimEnd('/')+"/chat/completions","body" to Diagnostics.raw(diagnosticBody.toString())),trace=diagnosticTrace,secrets=listOf(key))
                 active.setFixedLengthStreamingMode(requestBytes)
-                active.outputStream.use{ImageWire.write(body,request,it)}
+                requestDiagnostics?.phase("acquire_output_stream",mapOf("connect_timeout_ms" to active.connectTimeout,"read_timeout_ms" to active.readTimeout))
+                active.outputStream.use{out->
+                    requestDiagnostics?.phase("write_body")
+                    ImageWire.write(body,request,requestDiagnostics?.observe(out)?:out)
+                    requestDiagnostics?.phase("close_output_stream")
+                }
                 requestDiagnostics?.stage("http.request_sent",mapOf("request_bytes" to requestBytes,"stream" to (onEvent!=null)))
+                requestDiagnostics?.phase("await_response_headers")
                 val status=active.responseCode;responded=status
+                requestDiagnostics?.phase("read_response_body",mapOf("http_status" to status))
                 Diagnostics.event("http.response",mapOf("status" to status,"content_type" to active.contentType,"content_encoding" to active.contentEncoding,"content_length" to active.contentLengthLong,"stream" to (onEvent!=null)),trace=diagnosticTrace,secrets=listOf(key))
                 val error=if(status !in 200..299)diagnosticErrorBody(active,deadline,diagnosticTrace,key) else ErrorBody("",true)
                 val errorBody=error.text

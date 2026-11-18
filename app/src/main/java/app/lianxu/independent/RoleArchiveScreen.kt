@@ -34,6 +34,7 @@ private class PendingBackup(val archive:BackupRepository.Export?=null,val bytes:
     var status by remember{mutableStateOf("")};var error by remember{mutableStateOf("")};var output by remember{mutableStateOf<PendingBackup?>(null)}
     var incoming by remember{mutableStateOf<BackupArchive.Package?>(null)};var mode by remember{mutableStateOf("")};var target by remember{mutableStateOf("")}
     var chooseKeys by remember{mutableStateOf(false)};var chooseMode by remember{mutableStateOf(false)};var confirm by remember{mutableStateOf(false)}
+    var exportConfirmation by remember { mutableStateOf<Any?>(null) }
     val tabs=rememberPageTabs(2)
     val section=tabs.selected
     var chooseRole by remember{mutableStateOf(false)};var help by remember{mutableStateOf(false)}
@@ -71,6 +72,25 @@ private class PendingBackup(val archive:BackupRepository.Export?=null,val bytes:
         try{withContext(Dispatchers.IO){val current=currentCoroutineContext();loaded=requireNotNull(context.contentResolver.openInputStream(uri)).use{BackupArchive.read(it,context.cacheDir){current.ensureActive();check(active.isActive()){ "读取已取消" }}}};incoming=loaded;loaded=null}finally{loaded?.close()}
         chooseMode=true;status="第 1 步：文件已读取，尚未导入。建议选择新增，保留现有角色。"
     }}
+    fun exportDiagnostics(session: Any?) {
+        if (busy || output != null || session != null && session !== Diagnostics.detailSession) return
+        val detailed = session != null
+        work { active ->
+            val bytes = Diagnostics.export(detailed)
+            if (!active.isActive() || detailed && session !== Diagnostics.detailSession) {
+                bytes.fill(0)
+                return@work
+            }
+            output = PendingBackup(bytes=bytes)
+            try {
+                save.launch("恋叙诊断-${if (detailed) "详细" else "简版"}.jsonl")
+            } catch (failure: Exception) {
+                output?.clear()
+                output = null
+                throw failure
+            }
+        }
+    }
     fun plan(){val pack=incoming?:return;work{clearPreview();if(pack.legacy!=null)legacyPreview=vm.roleArchive.preview(pack.legacy,if(mode=="REPLACE")target else null)else preview=vm.backup.preview(pack,mode,if(mode=="REPLACE"&&!pack.all)target else null)}}
     fun apply(confirmed:Boolean,password:CharArray?=null){val p=preview;val old=legacyPreview;work{active->
         if(p!=null)try{vm.importBackup(p,confirmed,active,password)}finally{password?.fill('\u0000')}else if(old!=null)vm.importRoleArchive(old,confirmed,active)else error("预览已过期")
@@ -100,11 +120,25 @@ private class PendingBackup(val archive:BackupRepository.Export?=null,val bytes:
                     if(impact!=null){Text("第 2 步：核对以下范围，确认后才会导入。",style=MaterialTheme.typography.titleSmall);Text(impact,modifier=Modifier.testTag("archive-impact"));Button({if(mode=="REPLACE")confirm=true else apply(false)},enabled=!busy,modifier=Modifier.testTag("archive-import")){Text(if(mode=="REPLACE")"继续确认覆盖"else"确认新增角色")}}
                 }
                 }else{
-                BackupActionRow("document","导出诊断日志","生成并导出诊断日志文件","backup-export-diagnostics",!busy){work{output=PendingBackup(bytes=Diagnostics.export(vm.diagnosticDetailed));save.launch("恋叙诊断-${if(vm.diagnosticDetailed)"详细"else"简版"}.jsonl")}}
+                BackupActionRow("document","导出诊断日志","生成并导出诊断日志文件","backup-export-diagnostics",!busy && output == null){
+                    val session = Diagnostics.detailSession
+                    if (session == null) exportDiagnostics(null) else exportConfirmation = session
+                }
                 BackupDiagnosticToggle(vm.diagnosticDetailed,!busy){vm.setDiagnosticDetailed(it)}
                 Text("详细日志可能包含聊天等私密原文，请谨慎开启和分享。",style=MaterialTheme.typography.bodySmall,color=Muted)
                 }
         }}
+    }
+    exportConfirmation?.let { session ->
+        DiagnosticExportDialog(
+            dismiss = { exportConfirmation = null },
+            confirm = {
+                if (exportConfirmation === session) {
+                    exportConfirmation = null
+                    exportDiagnostics(session)
+                }
+            }
+        )
     }
     if(help)BackupHelpDialog(section==1){help=false}
     if(chooseRole)BackupRoleDialog(vm.friends,selected,{selected=it},{chooseRole=false}){chooseRole=false;export(selected,false)}

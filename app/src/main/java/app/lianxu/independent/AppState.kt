@@ -71,7 +71,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     internal fun companionRead(role:String,id:Long,stillVisible:()->Boolean){viewModelScope.launch{companion.markRead(role,id){page=="chat"&&activeId==role&&stillVisible()};companionReceipts=companion.receipts();companionNotifications.reconcile()}}
     internal fun sourceControl(messageId:Long,forget:Boolean){val role=activeId;viewModelScope.launch{
         val id=companion.sourceOfMessage(role,messageId)?:return@launch
-        runner.cancel(role)
+        runner.cancel(role,"source_control")
         if(forget)companion.forget(role,id)else companion.stopReminder(role,id)
         settleCompanion();reload()
     }}
@@ -109,7 +109,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
         }else backup.commit(plan,confirmed,lease,password=password)
         if(plan.mode=="REPLACE"){
             val replaced=if(plan.pack.all)friends.map{it.id}else listOf(requireNotNull(plan.target))
-            replaced.forEach{runner.cancel(it);memory.cancel(it)}
+            replaced.forEach{runner.cancel(it,"backup_replacement");memory.cancel(it)}
         }
         avatarCache.reset();messagePrints=emptyMap();reload();persona=store.persona();refreshUserAvatar();ids
     }}
@@ -175,8 +175,8 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
         }
     }
     init { viewModelScope.launch { runCatching { val savedDetailed=withContext(Dispatchers.IO){
-        val saved=runCatching{store.preference("diagnostic-detailed","0")}.getOrDefault("0")=="1";Diagnostics.detailed=saved;saved
-    };diagnosticDetailed=savedDetailed;savedDiagnosticDetailed=savedDetailed;withContext(Dispatchers.IO){Diagnostics.configure(java.io.File(application.filesDir,"diagnostics/$vaultNamespace"),application.packageManager.getPackageInfo(application.packageName,0).versionName.orEmpty())};ledger.recoverInterrupted();companion.checkContinuity(CompanionRuntime.owner);reload();  persona=store.persona();refreshUserAvatar(); ready=true;settleCompanion();recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
+        val saved=runCatching{store.preference("diagnostic-detailed","0")}.getOrDefault("0")=="1";saved
+    };diagnosticDetailed=savedDetailed;savedDiagnosticDetailed=savedDetailed;withContext(Dispatchers.IO){Diagnostics.configure(java.io.File(application.filesDir,"diagnostics/$vaultNamespace"),application.packageManager.getPackageInfo(application.packageName,0).versionName.orEmpty())};Diagnostics.detailed=savedDetailed;ledger.recoverInterrupted();companion.checkContinuity(CompanionRuntime.owner);reload();  persona=store.persona();refreshUserAvatar(); ready=true;settleCompanion();recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
     private var reloadSerial=0L
     private val avatarCache=RoleAvatarCache()
     private var messagePrints=emptyMap<String,MessageFingerprint>()
@@ -255,7 +255,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
             val id=plan.friendId
             store.memorySummary.requireEditable(id)
             backup.deleteRole(plan,true)
-            runner.cancel(id);memory.cancel(id);manualMemoryJobs[id]?.cancel()
+            runner.cancel(id,"role_deleted");memory.cancel(id);manualMemoryJobs[id]?.cancel()
             if(activeId==id){activeId="";page="home"}
             reload()
         }
