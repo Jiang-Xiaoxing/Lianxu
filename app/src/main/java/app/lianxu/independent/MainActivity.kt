@@ -131,7 +131,7 @@ class MainActivity:ComponentActivity(){
     val time=remember{SimpleDateFormat("HH:mm",Locale.getDefault())}
     Column(Modifier.fillMaxSize()){
         if(removalError.isNotEmpty())Text(removalError,Modifier.padding(UiSpace.page).testTag("role-delete-error"),color=MaterialTheme.colorScheme.error)
-        Row(Modifier.fillMaxWidth().heightIn(min=80.dp).background(Chrome).padding(start=24.dp,end=12.dp,top=8.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically){
+        Row(Modifier.fillMaxWidth().heightIn(min=if(vm.tab==3)64.dp else 80.dp).background(if(vm.tab==3)Paper else Chrome).padding(start=24.dp,end=12.dp,top=8.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically){
             Row(Modifier.weight(1f),verticalAlignment=Alignment.CenterVertically){
                 Text(labels[vm.tab].let{if(vm.tab==0)"恋叙" else it},Modifier.testTag("home-title"),style=BrandStyle)
                 if(vm.tab==0){Spacer(Modifier.width(2.dp));CompanionBirds(Modifier.weight(1f,fill=false).widthIn(max=104.dp))}
@@ -259,22 +259,5 @@ class MainActivity:ComponentActivity(){
             Text("自定义内容用于本角色提示段，模型统一在设置中选择。未配置聊天模型时不会生成演示回复。",style=MaterialTheme.typography.bodySmall,color=Muted)
             PrimaryAction(if(saved)"打开已创建的角色"else"创建角色",enabled=!vm.busy,modifier=Modifier.align(Alignment.End).testTag("create-friend")){vm.createCompanion(name,bio,expression,opening,prompt,creationId=creationId)}
         }
-    }
-}
-@Composable private fun Profile(vm:AppState){
-    val avatarPicker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null)vm.setUserAvatar(uri)}
-    var name by rememberSaveable(vm.persona){mutableStateOf(vm.persona.name)}
-    var address by rememberSaveable(vm.persona){mutableStateOf(vm.persona.address)}
-    var introduction by rememberSaveable(vm.persona){mutableStateOf(vm.persona.introduction)}
-    Column(Modifier.fillMaxSize().background(Chrome).verticalScroll(rememberScrollState()).padding(UiSpace.page),verticalArrangement=Arrangement.spacedBy(UiSpace.group)){
-        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper).padding(20.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){SelfAvatar(vm.userAvatar,64,"profile-avatar",Modifier.clickable(enabled=!vm.busy,role=Role.Button,onClickLabel="选择本人头像"){avatarPicker.launch(arrayOf("image/*"))});Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){Text(vm.nickname,style=MaterialTheme.typography.titleLarge);Text("${vm.friends.size} 位角色 · ${vm.messages.count{it.mine}} 条已发送消息",style=MaterialTheme.typography.bodySmall,color=Muted)}}
-        Text("点击头像更换图片。本人头像不随聊天请求发送；全部备份会包含头像。",style=MaterialTheme.typography.bodySmall,color=Muted)
-        SectionLabel("聊天中的你")
-        AppField(name,{name=it.take(80)},"我的名字","nickname",singleLine=true)
-        AppField(address,{address=it.take(80)},"希望被怎样称呼","persona-address",singleLine=true)
-        AppField(introduction,{introduction=it.take(4000)},"自我介绍","persona-introduction",minLines=4)
-        Text("这些资料会用于聊天，让角色更了解你。请只填写愿意发送给所选模型服务的信息。",style=MaterialTheme.typography.bodySmall,color=Muted)
-        PrimaryAction("保存资料",enabled=!vm.busy,modifier=Modifier.fillMaxWidth()){vm.savePersona(UserPersona(name,address,introduction))}
-        Text("资料保存在本机 · 无需注册",style=MaterialTheme.typography.bodySmall,color=Muted)
     }
 }
