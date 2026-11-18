@@ -79,7 +79,7 @@ internal class NetworkDiagnosticState(val id:String) {
         val source=timeout?.source?:stopped.get();val decided=terminal.get()
         val cause=if(timeout?.primary==true)"primary_local_timeout"else when(source){"total_timeout","coroutine_timeout","socket_timeout"->"after_local_timeout";"caller_cancellation"->"after_local_cancellation";"cancellation_unknown"->"cancellation_origin_unknown";else->"unattributed"}
         stage(name,mapOf("error_type" to error.javaClass.simpleName,"cancel_source" to source,"terminal_status" to decided,"cause_relation" to cause,"after_terminal_decision" to (decided!=null))+
-            if(enabled)mapOf("exception_stack" to error.stackTraceToString()) else emptyMap())
+            if(enabled)mapOf("exception_stack" to Diagnostics.raw(error.stackTraceToString())) else emptyMap())
     }
     fun transferEnd(status:Int?){
         if(last.get()!=0L)stage("http.last_byte")

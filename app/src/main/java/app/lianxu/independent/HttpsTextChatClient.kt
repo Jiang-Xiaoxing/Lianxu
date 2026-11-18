@@ -81,10 +81,26 @@ class HttpsTextChatClient(
                 active.setRequestProperty(provider.authHeader,if(provider.authHeader=="Authorization")"Bearer $key" else key)
                 ProviderRequestMetadata.headers(config,request).forEach{(name,value)->active.setRequestProperty(name,value)}
                 active.setRequestProperty("Content-Type","application/json; charset=utf-8");active.setRequestProperty("Accept",if(onEvent==null)"application/json" else "text/event-stream, application/json")
-                val diagnosticBody=JSONObject();body.keys().forEach{k->if(k!="messages")diagnosticBody.put(k,body.get(k))};val diagnosticMessages=JSONArray();request.messages.forEachIndexed{i,m->diagnosticMessages.put((if(m.images.isEmpty()&&m.videos.isEmpty())JSONObject(messages.getJSONObject(i).toString())else JSONObject()).put("role",m.role).put("content",ImageWire.content(m,true)))};diagnosticBody.put("messages",diagnosticMessages)
-                request.messages.forEachIndexed{i,m->if(m.images.isNotEmpty()||m.videos.isNotEmpty())diagnosticMessages.getJSONObject(i).put("content",ImageWire.content(m,true))}
-                for(i in 0 until diagnosticMessages.length())diagnosticMessages.getJSONObject(i).remove("reasoning_content")
-                Diagnostics.event("http.request.body",mapOf("method" to "POST","endpoint" to config.baseUrl.trimEnd('/')+"/chat/completions","body" to Diagnostics.raw(diagnosticBody.toString())),trace=diagnosticTrace,secrets=listOf(key))
+                // ImageWire's metadata tree contains media descriptions and sizes, never the binary.
+                // Private provider continuation must stay out of both journal formats.
+                val session = Diagnostics.detailSession
+                if (session != null && Diagnostics.collectText) {
+                    Diagnostics.detail(session,"http.request.body") {
+                        val summary = JSONObject()
+                        body.keys().forEach { field -> if (field != "messages") summary.put(field,body.get(field)) }
+                        val visible = JSONArray()
+                        for (i in 0 until messages.length()) {
+                            val source = messages.getJSONObject(i)
+                            val item = JSONObject()
+                            source.keys().forEach { field -> if (field != "reasoning_content") item.put(field,source.get(field)) }
+                            visible.put(item)
+                        }
+                        summary.put("messages",visible)
+                        mapOf("method" to "POST","endpoint" to config.baseUrl.trimEnd('/')+"/chat/completions","body" to summary.toString())
+                    }
+                } else {
+                    Diagnostics.event("http.request.body",mapOf("method" to "POST","planned_body_bytes" to requestBytes),trace=diagnosticTrace)
+                }
                 active.setFixedLengthStreamingMode(requestBytes)
                 requestDiagnostics?.phase("acquire_output_stream",mapOf("connect_timeout_ms" to active.connectTimeout,"read_timeout_ms" to active.readTimeout))
                 active.outputStream.use{out->

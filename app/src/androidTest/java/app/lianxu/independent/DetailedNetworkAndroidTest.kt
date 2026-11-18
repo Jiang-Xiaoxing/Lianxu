@@ -51,6 +51,32 @@ class DetailedNetworkAndroidTest {
         assertEquals(atOff,rows().count{name(it) in setOf("diagnostic.network","diagnostic.lifecycle","diagnostic.build")})
     }
 
+    @Test fun recreatedActivityAndLateNetworkCallbacksRespectTheCurrentSession() {
+        val vm=enable()
+        ui.activityRule.scenario.recreate()
+        val cm=ui.activity.getSystemService(android.net.ConnectivityManager::class.java)
+        val network=requireNotNull(cm.activeNetwork)
+        val caps=requireNotNull(cm.getNetworkCapabilities(network))
+        val observer=DiagnosticEnvironment.networkObserver(requireNotNull(Diagnostics.detailSession))
+        val trace="synthetic-network-callback"
+        val state=DiagnosticTraceState(trace,"fixture",null,"synthetic")
+        ui.runOnIdle {
+            Diagnostics.onThread(state) {
+                observer.onAvailable(network)
+                observer.onCapabilitiesChanged(network,caps)
+                observer.onLost(network)
+                observer.onCapabilitiesChanged(network,caps)
+                vm.setDiagnosticDetailed(false)
+                vm.setDiagnosticDetailed(true)
+                observer.onAvailable(network)
+                observer.onLost(network)
+            }
+        }
+        val observed=rows().filter { it["trace"].asString==trace && name(it)=="diagnostic.network" && data(it).has("network_event") }
+            .map { data(it)["network_event"].asString }.filter { it!="snapshot" }
+        assertEquals(listOf("available","capabilities","lost"),observed)
+    }
+
     @Test fun completedWritesAndPartialReadsMatchSyntheticPeer() {
         enable()
         for (partial in listOf(false,true)) {

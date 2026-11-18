@@ -40,13 +40,21 @@ internal class DiagnosticRedactor {
     private val pem=Regex("""(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)""")
     private val simpleName=Regex("[a-zA-Z_][a-zA-Z_0-9.:-]*")
     private val encodedCredential=Regex("(?i)token|password|secret|credential|key|authorization|cookie")
+    private val encodedStructure=Regex("(?i)%(?:7b|5b|22|25(?:7b|5b|22))")
+    private val opaqueJson=Regex("""\beyJ[A-Za-z0-9_+/=-]{8,}""")
+    private val binaryField=setOf("b64_json","base64","image_base64","video_base64","audio_base64")
     private val mediaData=Regex("""(?i)data(?:\:|\\u003a)(?:video|audio|application)(?:\\*/|\\u002f)[^\s"'<>]*""")
     private val tokenPattern=Regex("""(?i)\b(?:sk|sess|ghp|gho|github_pat)[-_][A-Za-z0-9_-]{8,}""")
     @Synchronized fun text(raw:String):String {
         if(saturated)return "[凭据脱敏容量已满]"
         var value=raw
         longestFirst.forEach{value=value.replace(it,"[已脱敏]")}
+        value=opaqueJson.replace(value,"[编码载荷已省略]")
         if(simpleName.matches(value))return tokenPattern.replace(value,"[已脱敏]")
+        if (encodedStructure.containsMatchIn(value)) {
+            // Only decode into memory. Ambiguous fragments can contain credentials in encoded field names.
+            return "[百分号编码片段已省略]"
+        }
         // Structured JSON is decoded in clean(). A fragment inside an exception or prose may
         // start halfway through an escaped object, where individual field boundaries are ambiguous.
         if (value.contains("\\\"") && encodedCredential.containsMatchIn(value)) return "[含凭据的编码片段已省略]"
@@ -62,11 +70,25 @@ internal class DiagnosticRedactor {
         return value.replace(Regex("""(?i)https?://[^\s"<>]+""")){m->runCatching{val u=URI(m.value);require(u.host!=null);u.scheme+"://"+u.rawAuthority.substringAfterLast('@')+u.rawPath+if(u.rawQuery!=null||u.rawFragment!=null)"?[参数已脱敏]" else ""}.getOrDefault("[地址已脱敏]")}
     }
     fun clean(value:JsonElement,encodedDepth:Int=0):JsonElement=when{
-        value.isJsonObject->JsonObject().apply{value.asJsonObject.entrySet().forEach{(k,v)->add(text(k),if(sensitive.matches(k))JsonPrimitive("[已脱敏]") else clean(v,encodedDepth))}}
+        value.isJsonObject->JsonObject().apply{
+            val obj=value.asJsonObject
+            val inlineMedia=obj.has("mime_type") || obj.has("mimeType") || obj.has("format") && obj.has("data")
+            obj.entrySet().forEach { (k,v) ->
+                val safe=when {
+                    sensitive.matches(k) -> JsonPrimitive("[已脱敏]")
+                    k.lowercase() in binaryField || inlineMedia && k=="data" && v.isJsonPrimitive ->
+                        JsonPrimitive("[媒体载荷已省略，共${if(v.isJsonPrimitive)v.asString.length else 0}字符]")
+                    else -> clean(v,encodedDepth)
+                }
+                add(text(k),safe)
+            }
+        }
         value.isJsonArray->JsonArray().apply{value.asJsonArray.forEach{add(clean(it,encodedDepth))}}
         value.isJsonPrimitive&&value.asJsonPrimitive.isString->{
             val raw=value.asString
-            val nested=if(raw.trimStart().firstOrNull() in listOf('{','['))runCatching{strictJson.fromJson(raw,JsonElement::class.java)}.getOrNull() else null
+            val input=if(raw.trimStart().startsWith("%") && encodedStructure.containsMatchIn(raw) && encodedDepth<4)
+                runCatching{java.net.URLDecoder.decode(raw,"UTF-8")}.getOrDefault(raw) else raw
+            val nested=if(input.trimStart().firstOrNull() in listOf('{','['))runCatching{strictJson.fromJson(input,JsonElement::class.java)}.getOrNull() else null
             if(nested!=null && (nested.isJsonArray||nested.isJsonObject)){
                 if(encodedDepth>=4)JsonPrimitive("[深层编码载荷已省略]") else JsonPrimitive(clean(nested,encodedDepth+1).toString())
             }else JsonPrimitive(text(raw))
@@ -90,7 +112,7 @@ internal class DiagnosticJournal(private val directory:File,private val version:
     private val pendingBytes=AtomicLong();val dropped=AtomicLong();private var reportedDrops=0L
     private val rotations=AtomicLong();private val expired=AtomicLong();private val started=System.currentTimeMillis()
     private val lock=Any();@Volatile private var closed=false
-    private val gson=GsonBuilder().registerTypeAdapter(ByteArray::class.java,JsonSerializer<ByteArray>{bytes,_,_->JsonPrimitive("[二进制数据已省略，共${bytes.size}字节]")}).create();private val worker:Thread
+    private val gson=GsonBuilder().registerTypeAdapter(DiagnosticPayload::class.java,JsonSerializer<DiagnosticPayload>{field,_,context->context.serialize(field.current())}).registerTypeAdapter(ByteArray::class.java,JsonSerializer<ByteArray>{bytes,_,_->JsonPrimitive("[二进制数据已省略，共${bytes.size}字节]")}).create();private val worker:Thread
     init{require(segmentBytes>=1024&&segments in 2..10&&queueCapacity>0);worker=Thread({consume()},"lianxu-diagnostics").apply{isDaemon=true;start()}}
     fun record(event:String,trace:String=UUID.randomUUID().toString(),data:Map<String,Any?> = emptyMap(),elapsed:Long?=null,secrets:List<String> = emptyList(),wall:Long=System.currentTimeMillis(),mono:Long?=null){
         if(closed)return

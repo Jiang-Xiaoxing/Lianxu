@@ -13,6 +13,12 @@ internal class DiagnosticTrace(private val value:DiagnosticTraceState):ThreadCon
     override fun restoreThreadContext(context:CoroutineContext,oldState:DiagnosticTraceState?){Diagnostics.traceState.set(oldState)}
 }
 
+/** A field prepared before an asynchronous mode change must still be authorised when serialized. */
+internal class DiagnosticPayload(private val session: Any, private val value: Any) {
+    fun current(): Any = if (Diagnostics.detailSession === session) value else "[详细诊断已关闭或重新开启]"
+    override fun toString() = "[诊断载荷]"
+}
+
 /** Best-effort local diagnostics. Logging must never change a business result or call a model. */
 internal object Diagnostics {
     internal val traceState=ThreadLocal<DiagnosticTraceState?>()
@@ -52,7 +58,7 @@ internal object Diagnostics {
         val prefix = value.take(REASONING_LIMIT)
         val safe = if (truncated || incomplete) (journal?.redactor ?: knownCredentials).protectTail(prefix) else prefix
         return mapOf("reasoning_status" to status,"reasoning_chars" to received,
-            "reasoning_text" to safe,"reasoning_truncated" to truncated)
+            "reasoning_text" to raw(safe),"reasoning_truncated" to truncated)
     }
     /** Invoke on Dispatchers.IO during application setup; directory is app-private. */
     @Synchronized fun configure(directory:File,version:String){
@@ -63,9 +69,18 @@ internal object Diagnostics {
     }
     fun registerSecret(secret:String){(journal?.redactor?:knownCredentials).register(secret)}
     /** Chat words, memory text, prompts and replies reach the journal only with 详细诊断 on; otherwise just how long they were. */
-    fun raw(value:String?):Any? = if(value==null)null else if(collectText)value else "[详细诊断未开启，共${value.length}字]"
+    fun raw(value:String?):Any? {
+        if (value == null) return null
+        val session=detailSession
+        return if(session!=null && collectText) DiagnosticPayload(session,value) else "[详细诊断未开启，共${value.length}字]"
+    }
     /** Same rule for structured payloads (tool arguments and results), counted on their JSON text. */
-    fun rawJson(value:Any?):Any? = if(value==null||collectText)value else "[详细诊断未开启，共${com.google.gson.Gson().toJson(value).length}字]"
+    fun rawJson(value:Any?):Any? {
+        if (value == null) return null
+        val session=detailSession
+        return if(session!=null && collectText) DiagnosticPayload(session,value) else "[详细诊断未开启，共${com.google.gson.Gson().toJson(value).length}字]"
+    }
+    fun protectTail(prefix:String)=(journal?.redactor ?: knownCredentials).protectTail(prefix)
     /** Same masking as the journal, for text shown to the user (raw provider errors). */
     fun redact(text:String,secrets:List<String> = emptyList()):String {
         val shared=journal?.redactor?:knownCredentials

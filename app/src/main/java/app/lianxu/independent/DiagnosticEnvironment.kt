@@ -94,10 +94,9 @@ internal object DiagnosticEnvironment {
             Diagnostics.detail(session,"diagnostic.lifecycle")
         }
     }
-    private fun startNetwork(app:Context,session:Any){
-        val manager=app.getSystemService(ConnectivityManager::class.java)?:return
+    internal fun networkObserver(session:Any):ConnectivityManager.NetworkCallback {
         var active:Network?=null
-        val callback=object:ConnectivityManager.NetworkCallback(){
+        return object:ConnectivityManager.NetworkCallback(){
             private fun update(event:String,value:String){
                 if(current!==session||Diagnostics.detailSession!==session)return
                 fields=fields+("default_network" to value)
@@ -113,6 +112,10 @@ internal object DiagnosticEnvironment {
             }
             override fun onLost(network:Network){if(active==network){active=null;update("lost","none")}}
         }
+    }
+    private fun startNetwork(app:Context,session:Any){
+        val manager=app.getSystemService(ConnectivityManager::class.java)?:return
+        val callback=networkObserver(session)
         runCatching{
             manager.registerDefaultNetworkCallback(callback,main)
             registration=manager to callback

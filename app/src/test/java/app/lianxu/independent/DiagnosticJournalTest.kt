@@ -70,13 +70,16 @@ class DiagnosticJournalTest {
                     IllegalArgumentException("HTTPS://name:marker-pass@example.invalid/x?t=marker-query")).stackTraceToString(),
                 "pem" to "-----BEGIN RSA PRIVATE KEY-----\nmarker-pem\n-----END RSA PRIVATE KEY-----",
                 "body" to "data:video/mp4;base64,marker-video", "bytes" to ByteArray(180000){42},
-                "cookies" to listOf("marker-cookie")
+                "cookies" to listOf("marker-cookie"),
+                "encoded_form" to java.net.URLEncoder.encode(payload.toString(),"UTF-8"),
+                "encoded_blob" to java.util.Base64.getEncoder().encodeToString(payload.toString().toByteArray()),
+                "audio" to mapOf("format" to "wav","data" to "marker-sound")
             ))
             assertTrue(journal.flush())
             val disk=dir.listFiles().orEmpty().joinToString { it.readText() }
             val full=journal.export(true).decodeToString()
             listOf(disk,full,journal.export(false).decodeToString()).forEach { output ->
-                listOf(key,"marker-auth","marker-private","marker-pass","marker-query","marker-pem","marker-video","marker-cookie")
+                listOf(key,"marker-auth","marker-private","marker-pass","marker-query","marker-pem","marker-video","marker-cookie","marker-sound",java.util.Base64.getEncoder().encodeToString(payload.toString().toByteArray()))
                     .forEach { assertFalse(it,output.contains(it)) }
             }
             listOf(disk,full).forEach { assertTrue(it.contains("普通聊天内容"));assertTrue(it.contains("IllegalArgumentException"));assertTrue(it.contains("180000字节")) }
@@ -93,13 +96,16 @@ class DiagnosticJournalTest {
             withContext(Diagnostics.networkContext("synthetic")) {
                 val state=requireNotNull(Diagnostics.requestState())
                 state.phase("first")
+                val prepared=Diagnostics.raw("marker-stale-prepared")
+                val preparedTool=Diagnostics.rawJson(mapOf("tool" to "marker-stale-json"))
                 val out=state.observe(java.io.ByteArrayOutputStream())
                 out.write(ByteArray(13))
                 Diagnostics.detailed=false
                 out.write(ByteArray(19))
                 Diagnostics.detailed=true
                 state.phase("marker-stale-phase")
-                Diagnostics.event("sample",mapOf("body" to Diagnostics.raw("marker-stale-body")))
+                Diagnostics.event("sample",mapOf("body" to Diagnostics.raw("marker-stale-body"),
+                    "old" to prepared, "old_tool" to preparedTool))
             }
             val full=journal.export(true).decodeToString()
             assertFalse(full.contains("marker-stale"))

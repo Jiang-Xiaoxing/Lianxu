@@ -49,7 +49,7 @@ class SseStreamGuardTest {
         val html="<!DOCTYPE html><html><body>blocked by gateway</body></html>"
         guard.line(html);guard.line("second line is not sampled")
         assertEquals(2,guard.otherLines)
-        assertEquals(html.take(SseStreamGuard.SAMPLE_CHARS),guard.snapshot()["sample"])
+        assertEquals(html.take(SseStreamGuard.SAMPLE_CHARS),(guard.snapshot()["sample"] as DiagnosticPayload).current())
         assertFalse(guard.snapshot()["sample"].toString().contains("second"))
         }finally{Diagnostics.detailed=false}
     }
