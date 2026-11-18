@@ -82,9 +82,6 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
             ledger.cancel(turn.id,turn.attempt);changed()
         }}
     }
-    internal fun cancelImageAttempt(friendId:String){
-        if(attempts[friendId]?.imageSensitive==true)cancel(friendId)
-    }
     fun cancelAll(){leases.keys.toList().forEach{cancel(it)}}
     /** A failure while settling must never strand the per-role lock, or the role stops answering. */
     private suspend fun releaseRole(friendId:String,turn:ChatTurn?,settled:BooleanArray,lease:ChatAttemptLease,locked:Boolean,lock:kotlinx.coroutines.sync.Mutex){
@@ -104,7 +101,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         val imageHold=image?.retain()
         CompanionRuntime.foreground(friendId)
         val lease=ChatAttemptLease();leases[friendId]=lease;sending=sending+friendId
-        val st=AttemptState();st.imageSensitive=image!=null;attempts[friendId]=st
+        val st=AttemptState();attempts[friendId]=st
         val prepared=inputs.submit(friendId){previous->
             try{
             if(st.epoch!=AppMutationGate.epoch())return@submit st
@@ -172,7 +169,6 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
     }
     /** What one attempt shares with its cleanup; allocated up front so the cancellation path allocates nothing new. */
     private class AttemptState {
-        var imageSensitive=false
         var current:()->Boolean={true}
         var turn:ChatTurn?=null
         val epoch=AppMutationGate.epoch()
@@ -209,8 +205,6 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         withContext(Dispatchers.Main.immediate){
             if(leases[friendId]===lease&&lease.isActive())previews=previews+(friendId to ChatReplyPreview(current.id,current.attempt,tools=previousTools,bubbles=st.delivery.bubbles,visible=st.delivery.visible))
         }
-        val imageContext=ledger.context(current.id)
-        st.imageSensitive=imageContext.image!=null||imageContext.recent.any{it.image!=null}
         val credentials=auth()
         if(credentials==null){ledger.fail(current.id,current.attempt,ChatFailure.MISSING_CONFIG);changed();return}
         val imageRoute=ChatImageRoute(store,vault,client,current,credentials.config,credentials.epoch){lease.isActive()}
@@ -381,7 +375,6 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
             if(context.recent.map{it.id}==before){ledger.fail(current.id,current.attempt,ChatFailure.MEMORY_CAPACITY);changed();return}
         }
         if(built is PromptBuild.Blocked){ledger.fail(current.id,current.attempt,built.reason);changed();return}
-        st.imageSensitive=(built as PromptBuild.Ready).request.messages.any{it.imageRefs.isNotEmpty()||it.images.isNotEmpty()}
         var tools=toolRunner()
         val result=run {
             // Plain reply branch: the preview and the stored body go through the same decoder,
