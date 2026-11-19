@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -44,10 +45,13 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
 @Composable fun ModelConfigScreen(onBack:()->Unit,state:ModelConfigState=viewModel(),saveForPurpose:ModelPurpose?=null) {
     LaunchedEffect(state.vaultVersion){state.refresh()}
     var screen by remember {mutableStateOf("overview")}
-    val tabs=rememberPageTabs(2)
+    val tabs=rememberPageTabs(4)
     val overviewTab=tabs.selected
     val servicesScroll=rememberLazyListState()
     val purposesScroll=rememberLazyListState()
+    val voiceScroll=rememberLazyListState()
+    val imageScroll=rememberLazyListState()
+    var imageNotice by remember{mutableStateOf(false)}
     var embeddingEditor by remember {mutableStateOf(false)}
     var allProviders by remember {mutableStateOf(false)}
     var regionGroup by remember {mutableStateOf<ProviderGroup?>(null)}
@@ -110,49 +114,62 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
         if(saveForPurpose==ModelPurpose.CHAT&&!embeddingEditor)Text("这里只设置全局聊天。其他用途正在使用的配置可直接选用，但不能在这里修改或删除；可另加全局聊天配置。",Modifier.padding(horizontal=UiSpace.page,vertical=8.dp).testTag("config-chat-context"),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
         if(screen=="overview"){
             Row(Modifier.padding(horizontal=UiSpace.page,vertical=12.dp).fillMaxWidth().selectableGroup().clip(RoundedCornerShape(28.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(4.dp)){
-                listOf("服务商","模型用途").forEachIndexed{index,label->
+                listOf("聊天模型","向量","语音","画图").forEachIndexed{index,label->
                     Tab(selected=overviewTab==index,onClick={tabs.select(index)},
-                        modifier=Modifier.weight(1f).heightIn(min=UiSpace.action).clip(RoundedCornerShape(24.dp)).background(if(overviewTab==index)Paper else Color.Transparent).testTag(if(index==0)"config-tab-services" else "config-tab-purposes"),
-                        selectedContentColor=ConfigInk,unselectedContentColor=ConfigGreen,text={Text(label,style=MaterialTheme.typography.labelLarge)})
+                        modifier=Modifier.weight(1f).heightIn(min=UiSpace.action).clip(RoundedCornerShape(24.dp)).background(if(overviewTab==index)Paper else Color.Transparent).testTag(listOf("config-tab-chat","config-tab-embedding","config-tab-voice","config-tab-image")[index]),
+                        selectedContentColor=ConfigInk,unselectedContentColor=ConfigGreen,text={Text(label,style=MaterialTheme.typography.labelMedium,maxLines=1)})
                 }
             }
-            // The visible panels have different lists and independent scroll positions.
-            PageTabContent(tabs){panel->LazyColumn(Modifier.fillMaxSize().testTag("config-overview"),state=if(panel==0)servicesScroll else purposesScroll,contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
+            if(saveForPurpose!=null){
+                LazyColumn(Modifier.fillMaxSize().testTag("config-overview"),state=purposesScroll,contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
+                    if(state.status.isNotBlank())item("status"){Notice(state.status,state.statusError)}
+                    item("purposes"){PurposeSelection(state,only=saveForPurpose)}
+                }
+            }else{
+            // 四个用途各占一个 tab，每个 tab 只列这个用途的服务商；互相不看对方的列表。
+            PageTabContent(tabs){panel->LazyColumn(Modifier.fillMaxSize().testTag("config-overview"),state=when(panel){0->servicesScroll;1->purposesScroll;2->voiceScroll;else->imageScroll},contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
                 if(state.status.isNotBlank())item("status"){Notice(state.status,state.statusError)}
-                if(panel==0){
-                if(state.configs.isEmpty())item("empty"){Column(Modifier.fillMaxWidth().heightIn(min=240.dp).testTag("config-services-empty"),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
-                    ControlIcon("services",ConfigMuted,64.dp);Spacer(Modifier.height(20.dp))
-                    Text("还没有保存的服务",style=MaterialTheme.typography.titleMedium,color=ConfigMuted)
-                }}
-                else {
-                item("saved-label"){SectionLabel("已保存的服务")}
-                item("saved-services"){Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
-                    state.configs.forEachIndexed {index,config->
-                        val p=ProviderPresets.get(config.providerId)
-                        Row(Modifier.fillMaxWidth().clickable(enabled=!state.busy&&!sharedWithOtherPurposes(config.id)){edit(config)}.testTag("config-edit-${config.id}").padding(18.dp),verticalAlignment=Alignment.CenterVertically){
-                            ProviderMark(p);Spacer(Modifier.width(14.dp))
-                            Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){
-                                Text(config.name,style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Medium,maxLines=1,overflow=TextOverflow.Ellipsis)
-                                Text("${providerName(p)} · ${config.modelId}",style=MaterialTheme.typography.bodySmall,color=ConfigMuted,maxLines=1,overflow=TextOverflow.Ellipsis)
-                                if(sharedWithOtherPurposes(config.id))Text("其他用途正在使用，在此不能修改",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
-                                val test=state.tests[config.id];val testLine=ModelStatusText.test(test,config)
-                                Text(testLine,Modifier.testTag("config-probe-${config.id}"),style=MaterialTheme.typography.bodySmall,color=when{testLine=="未测试"->ConfigMuted;test?.ok==true->ConfigGreen;else->ConfigErrorColor})
-                                val call=state.calls[config.id]
-                                Text(ModelStatusText.calls(call),Modifier.testTag("config-calls-${config.id}"),style=MaterialTheme.typography.bodySmall,color=if(call?.ok==false)ConfigErrorColor else ConfigMuted)
-                            }
-                            if(config.id==state.defaultId)Text("默认",Modifier.padding(horizontal=8.dp).clip(RoundedCornerShape(8.dp)).background(SelectedBackground).padding(horizontal=8.dp,vertical=4.dp),color=ConfigGreen,style=MaterialTheme.typography.bodySmall)
+                when(panel){
+                0->{
+                    val rows=state.configs.filter{ProviderCatalog.modelKind(it)!=ProviderModelKind.TEXT_EMBEDDING}
+                    item("chat-label"){SectionLabel("聊天模型")}
+                    if(rows.isEmpty())item("chat-empty"){Column(Modifier.fillMaxWidth().heightIn(min=180.dp).testTag("config-services-empty"),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
+                        ControlIcon("services",ConfigMuted,56.dp);Spacer(Modifier.height(16.dp))
+                        Text("还没有聊天服务",style=MaterialTheme.typography.titleMedium,color=ConfigMuted)
+                    }}
+                    item("chat-list"){Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
+                        rows.forEachIndexed{index,config->
+                            ModelServiceRow(config,state.tests[config.id]?.ok==true,config.id==state.defaultId){edit(config)}
+                            if(index<rows.lastIndex)HorizontalDivider(Modifier.padding(horizontal=16.dp),color=ConfigLine)
                         }
-                        if(index<state.configs.lastIndex)HorizontalDivider(Modifier.padding(start=72.dp,end=18.dp),color=ConfigLine)
-                    }
-                }}
+                        if(rows.isNotEmpty())HorizontalDivider(Modifier.padding(horizontal=16.dp),color=ConfigLine)
+                        AddServiceRow("+ 添加聊天服务商","config-add-chat"){add()}
+                    }}
+                    item("chat-hint"){Text("用于和角色聊天",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)}
                 }
-                item("add-service"){OutlinedButton(onClick={add()},enabled=!state.saving,modifier=Modifier.fillMaxWidth().heightIn(min=UiSpace.action).testTag("config-add")){Text("添加服务商")}}
-                if(saveForPurpose==null)item("add-embedding"){OutlinedButton(onClick={add(true)},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).testTag("config-add-embedding")){Text("添加向量模型")}}
-                if(saveForPurpose==null)item("voice-config"){ BreezeVoiceServiceSection() }
-                }else{
-                item("purposes"){PurposeSelection(state,only=saveForPurpose)}
+                1->{
+                    val rows=state.configs.filter{ProviderCatalog.modelKind(it)==ProviderModelKind.TEXT_EMBEDDING}
+                    item("emb-label"){SectionLabel("向量模型")}
+                    item("emb-list"){Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
+                        rows.forEachIndexed{index,config->
+                            ModelServiceRow(config,state.tests[config.id]?.ok==true,state.purposes[ModelPurpose.EMBEDDING]==config.id){edit(config)}
+                            if(index<rows.lastIndex)HorizontalDivider(Modifier.padding(horizontal=16.dp),color=ConfigLine)
+                        }
+                        if(rows.isNotEmpty())HorizontalDivider(Modifier.padding(horizontal=16.dp),color=ConfigLine)
+                        AddServiceRow("+ 添加向量服务商","config-add-embedding"){add(true)}
+                    }}
+                    item("emb-hint"){Text("用于记住和回忆，不影响聊天",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)}
                 }
-            }
+                2->item("voice"){BreezeVoiceServiceSection()}
+                else->{
+                    item("img-label"){SectionLabel("画图服务")}
+                    item("img-list"){Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
+                        AddServiceRow("+ 添加画图服务商","config-add-image"){imageNotice=true}
+                    }}
+                    item("img-hint"){Text("还没有配置，先接一家才能让角色发图",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)}
+                }
+                }
+            }}
             }
         }else if(screen=="providers"){
             OutlinedTextField(query,{query=it.take(80)},placeholder={Text("搜索服务商")},singleLine=true,leadingIcon={ControlIcon("search")},modifier=Modifier.fillMaxWidth().padding(horizontal=UiSpace.page,vertical=12.dp).testTag("provider-search"),shape=RoundedCornerShape(16.dp),colors=OutlinedTextFieldDefaults.colors(unfocusedContainerColor=Paper,focusedContainerColor=Paper,unfocusedBorderColor=Color.Transparent))
@@ -251,7 +268,40 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
             }
         }
     }}
+    if(imageNotice)AlertDialog(onDismissRequest={imageNotice=false},title={Text("画图功能还没接入")},
+        text={Text("现在还不能添加画图服务商。等画图接上以后，这里会列出可以选的服务。")},
+        confirmButton={TextButton({imageNotice=false}){Text("知道了")}})
     deleting?.let{config->AlertDialog(onDismissRequest={deleting=null},title={Text("删除这份配置？")},text={Text("同时清除保存的密钥。聊天记录不受影响。")},confirmButton={TextButton(onClick={state.delete(config);deleting=null;key="";reveal=false;screen="overview"}){Text("确认删除")}},dismissButton={TextButton(onClick={deleting=null}){Text("取消")}})}
+}
+
+/** 一个用途下的一行：名字 + 状态 + 小胶囊，行高 44dp，和语音服务那一行一致。 */
+@Composable private fun ModelServiceRow(config:ModelConfig,testOk:Boolean,isDefault:Boolean,onOpen:()->Unit){
+    val p=ProviderPresets.get(config.providerId)
+    Row(Modifier.fillMaxWidth().heightIn(min=44.dp).clickable(role=Role.Button,onClick=onOpen)
+        .testTag("config-edit-${config.id}").padding(horizontal=16.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically){
+        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(2.dp)){
+            Text(config.name,style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Medium,maxLines=1,overflow=TextOverflow.Ellipsis)
+            Text("${providerName(p)} · ${config.modelId}",style=MaterialTheme.typography.labelSmall,color=ConfigMuted,maxLines=1,overflow=TextOverflow.Ellipsis)
+        }
+        if(testOk){
+            Box(Modifier.size(7.dp).clip(CircleShape).background(ConfigGreen));Spacer(Modifier.width(5.dp))
+            Text("已连接",style=MaterialTheme.typography.labelSmall,color=ConfigGreen)
+        }else Text("未连接",style=MaterialTheme.typography.labelSmall,color=ConfigMuted)
+        if(isDefault)Text("默认",Modifier.padding(start=6.dp),style=MaterialTheme.typography.labelSmall,color=ConfigGreen)
+        Spacer(Modifier.width(8.dp))
+        Box(Modifier.clip(CircleShape).background(Accent).clickable(onClick=onOpen)
+            .padding(horizontal=12.dp,vertical=5.dp).testTag("config-manage-${config.id}"),contentAlignment=Alignment.Center){
+            Text(if(testOk)"管理" else "连接",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSecondaryContainer)
+        }
+    }
+}
+
+/** 卡片最下面那一行「+ 添加…」。 */
+@Composable private fun AddServiceRow(label:String,tag:String,onClick:()->Unit){
+    Row(Modifier.fillMaxWidth().heightIn(min=44.dp).clickable(role=Role.Button,onClick=onClick)
+        .testTag(tag).padding(horizontal=16.dp,vertical=10.dp),verticalAlignment=Alignment.CenterVertically){
+        Text(label,style=MaterialTheme.typography.bodyMedium,color=ConfigGreen)
+    }
 }
 
 @Composable private fun Notice(text:String,error:Boolean){Text(text,Modifier.fillMaxWidth().testTag("config-status"),style=MaterialTheme.typography.bodySmall,color=if(error)ConfigErrorColor else ConfigGreen)}
