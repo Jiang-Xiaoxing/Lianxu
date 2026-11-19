@@ -10,6 +10,11 @@ internal object UpdatesPresentation {
     fun experienceFor(installedCode:Long)=experienceChanges.takeIf{installedCode==60L}
     /** Startup highlights only; the updates page keeps the complete facts and limitations. */
     fun noticeSummary(note:LocalReleaseNote):List<String> = when(note.code){
+        63L->listOf(
+            "聊天可发图片和视频，视频默认逐秒抽帧。",
+            "离开聊天页后可继续等待和查看回复。",
+            "角色设定分为四栏，每个角色可自定思考提示词。"
+        )
         62L->listOf(
             "没有角色时可开门相遇，新增暖色分步创建。",
             "从开门引导分步创建时，可先润色再确认。",
@@ -23,6 +28,11 @@ internal object UpdatesPresentation {
         else->summary(note)
     }
     fun summary(note:LocalReleaseNote):List<String> = when(note.code){
+        63L->listOf(
+            "聊天支持图片与视频，工具包可选择媒体理解方式。",
+            "聊天请求可在后台继续，完整回复保存后可回看。",
+            "角色设置分栏，记忆操作说明跟随本轮可用工具。"
+        )
         62L->listOf(
             "没有角色时新增开门引导与暖色分步创建，关系留空点下一步；已有角色保留原入口。",
             "从开门引导分步创建时，可用全局聊天模型润色并编辑预览，保留原文和最终确认，以及记忆与识图的已有用途选择。",
