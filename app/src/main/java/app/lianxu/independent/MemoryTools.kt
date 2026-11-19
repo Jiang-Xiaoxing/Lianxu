@@ -339,11 +339,18 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
     }
     private fun pending(db:SQLiteDatabase)=db.rawQuery("SELECT 1 FROM chat_turns t JOIN messages m ON m.id=t.user_message_id WHERE t.id=? AND t.friend_id=? AND t.attempt=? AND t.state='PENDING' AND m.body=?",arrayOf(turn.id,turn.friendId,turn.attempt.toString(),input)).use{it.moveToFirst()}
     /** Invoked inside ChatLedger's final reply transaction, after its ownership/context/config guards. */
-    fun commit(db:SQLiteDatabase){
-        initial.valid.filter{it.memoryId in deliveredMemories&&!it.mandatory&&(it.label.startsWith("关键词记忆")||it.label.startsWith("关联记忆"))}.forEach{recalled.putIfAbsent(it.memoryId,RecallSource.CUE_HIT)}
-        recalled.forEach{(id,source)->MemoryForgetting.recalled(db,turn.friendId,id,recallAt,source)}
+    fun receivedEffects():ReceivedMemoryEffects {
+        val hits=recalled.toMutableMap()
+        initial.valid.filter{it.memoryId in deliveredMemories&&!it.mandatory&&(it.label.startsWith("关键词记忆")||it.label.startsWith("关联记忆"))}.forEach{hits.putIfAbsent(it.memoryId,RecallSource.CUE_HIT)}
+        return ReceivedMemoryEffects(hits,recallAt,stableDigest(gson.toJson(rulesState)))
+    }
+    fun commit(db:SQLiteDatabase)=commit(db,receivedEffects())
+    fun commit(db:SQLiteDatabase,effects:ReceivedMemoryEffects){
+        effects.recalls.forEach{(id,source)->MemoryForgetting.recalled(db,turn.friendId,id,effects.at,source)}
         Diagnostics.event("tool.commit.staged",mapOf("character" to turn.friendId,"turn" to turn.id,"attempt" to turn.attempt))
-        val raw=pref(stageKey)?:return;rejectUnless(repo.memoryRules(db)==rulesState&&rules.immediateWrite&&allowWrite,"SOURCE_CHANGED");val stages=JSONArray(raw)
+        val raw=pref(stageKey)?:return
+        rejectUnless(stableDigest(gson.toJson(repo.memoryRules(db)))==effects.rulesStamp&&rules.immediateWrite&&allowWrite,"SOURCE_CHANGED")
+        val stages=JSONArray(raw)
         val source=repo.sources(db,turn.friendId).firstOrNull{it.requestId==turn.id}?:throw ProcessingRejected("SOURCE_CHANGED")
         rejectUnless(source.user.text==input,"SOURCE_CHANGED")
         val written=mutableMapOf<String,Int>()

@@ -23,7 +23,7 @@ internal class ChatDraftState(text:String="",version:Long=0){
 
 class AppState @JvmOverloads constructor(application: Application, client:TextChatClient=AppServices.createTextClient(),vaultNamespace:String=AppServices.vaultNamespace) : AndroidViewModel(application) {
     internal val chatDrafts=mutableMapOf<String,ChatDraftState>()
-    override fun onCleared(){chatDrafts.values.forEach{it.image.value?.close()};super.onCleared()}
+    override fun onCleared(){chatBinding.detach(this);chatDrafts.values.forEach{it.image.value?.close()};super.onCleared()}
     internal var imagePickerRole:String?=null
     private val store = Store(application,AppServices.databaseName)
     private val ledger=ChatLedger(store)
@@ -113,9 +113,12 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
         }
         avatarCache.reset();messagePrints=emptyMap();reload();persona=store.persona();refreshUserAvatar();ids
     }}
-    internal val memory=MemoryEngine(viewModelScope,processing,modelAccess,diagnosticClient,{reload()})
+    internal val memory:MemoryEngine get()=chatBinding.memory
     private val manualMemoryJobs=mutableMapOf<String,Job>()
-    private val runner=ConversationRunner(viewModelScope,store,modelVault,diagnosticClient,processing,memory,{reload()},{error=it},{settleCompanion()},displayReplies=true)
+    private val chatBinding=ChatRunnerBinding.acquire(store,modelVault,diagnosticClient,processing,this)
+    private val runner get()=chatBinding.runner
+    internal suspend fun refreshChat(){reload()}
+    internal fun chatNotice(message:String){error=message}
     var processingRevision by mutableIntStateOf(0);private set
     var turns by mutableStateOf(emptyList<ChatTurn>());private set
     internal fun isReplying(role: String) = role in runner.sending
@@ -183,7 +186,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
         Diagnostics.startLocalRecording(application, vaultNamespace)
         modelVault.list() // Register persisted model credentials before accepting user input.
         store.preference(EXPORT_DETAIL_PREF,"1")=="1"
-    };selectDetailedExport(savedDetailed);savedDiagnosticDetailed=savedDetailed;ledger.recoverInterrupted();companion.checkContinuity(CompanionRuntime.owner);reload();  persona=store.persona();refreshUserAvatar(); ready=true;settleCompanion();recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
+    };selectDetailedExport(savedDetailed);savedDiagnosticDetailed=savedDetailed;ledger.recoverInterrupted();companion.checkContinuity(CompanionRuntime.owner);runner.restoreReceived();reload();  persona=store.persona();refreshUserAvatar(); ready=true;settleCompanion();recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
     private var reloadSerial=0L
     private val avatarCache=RoleAvatarCache()
     private var messagePrints=emptyMap<String,MessageFingerprint>()

@@ -8,7 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** Own app-private database. Primary key on friend is also the unique conversation key. */
-class Store(context: Context, name: String = AppServices.databaseName) : SQLiteOpenHelper(context, name, null, 18) {
+class Store(context: Context, name: String = AppServices.databaseName) : SQLiteOpenHelper(context, name, null, 19) {
     init {ImageDisk.cacheDirectory=context.applicationContext.cacheDir}
     internal val applicationContext=context.applicationContext
     internal val memorySummary=MemorySummaryGuard()
@@ -45,6 +45,7 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
         ChatMemoryPills.createSchema(db)
         MemoryForgetting.migrate(db,AppServices.companionClock())
         ChatImages.create(db)
+        ReceivedChatReply.create(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) { if(oldVersion<2)ChatLedger.createSchema(db);if(oldVersion<5)ProcessingSchema.create(db);if(oldVersion<7)CompanionRepository.create(db);if(oldVersion in 7 until 8)CompanionRepository.create(db);if(oldVersion<9)RetiredRelationshipMigration.remove(db);if(oldVersion<10)createReasoningSchema(db);if(oldVersion<11){
         db.execSQL("ALTER TABLE companion_opportunities RENAME TO relation_old_opportunities")
@@ -57,7 +58,9 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
         // Databases created by an earlier build of this version already have the table but not the column.
         ChatMemoryPills.createSchema(db)
         if(!hasColumn(db,"memory_operations","saved"))db.execSQL("ALTER TABLE memory_operations ADD COLUMN saved INTEGER NOT NULL DEFAULT 0")
-    };if(oldVersion<16)ContactFailures.migrate(db);if(oldVersion<17)ChatImages.create(db);if(oldVersion<18)ChatImages.migrateOriginals(db) }
+    };if(oldVersion<16)ContactFailures.migrate(db);if(oldVersion<17)ChatImages.create(db);if(oldVersion<18)ChatImages.migrateOriginals(db)
+        if(oldVersion<19)ReceivedChatReply.create(db)
+    }
     private fun hasColumn(db:SQLiteDatabase,table:String,column:String)=column in columns(db,table)
     private fun columns(db:SQLiteDatabase,table:String)=db.rawQuery("PRAGMA table_info($table)",null).use{c->buildList{while(c.moveToNext())add(c.getString(1))}}
     private fun createReasoningSchema(db:SQLiteDatabase){

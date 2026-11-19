@@ -21,6 +21,7 @@ data class TextChatRequest(val messages:List<WireMessage>,val outputLimit:Int=20
     init {require(conversationId.matches(Regex("[A-Za-z0-9_-]{1,160}")));require(messages.isNotEmpty());require(outputLimit in 1..ModelTokenPolicy.MAX_OUTPUT);require(timeoutMillis in 1..300000)}
 }
 enum class ChatFailure(val display:String) {
+    FOREGROUND_UNAVAILABLE("系统未能启动本次聊天的后台服务，未发送模型请求。请回到聊天页后手动重试。"),
     MISSING_CONFIG("请先在设置的大模型配置中选择聊天模型。"),
     MISSING_VISION_MODEL("辅助看图已开启，请先选择辅助看图模型并保存密钥。"),
     IMAGE_LIMIT("图片超过本机单图、完整请求或整图处理上限；原消息保留，没有在报错后自动降质、删图或换模型。请核对错误后手动重试，已发出的请求可能重复计费。"),

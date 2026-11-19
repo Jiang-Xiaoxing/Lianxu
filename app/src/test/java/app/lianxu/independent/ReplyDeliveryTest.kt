@@ -4,6 +4,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ReplyDeliveryTest {
+    @Test fun restoredReceiptShowsOnlyTheRemainingBubbles(){
+        val d=ReplyDelivery();d.restore("一");d.restoreFinal(listOf("一","二","三"))
+        assertEquals(1,d.visible);assertFalse(d.completed.isCompleted)
+        d.acknowledge(2);assertEquals("一\n\n二",d.stop())
+        d.acknowledge(3);assertEquals(2,d.visible);assertFalse(d.completed.isCompleted)
+    }
     @Test fun retryRestoresPublishedPrefixAndOnlyAddsNewBubbles() {
         val d=ReplyDelivery();d.restore("已经说过")
         assertEquals(1,d.visible);d.update("接着说的",true)

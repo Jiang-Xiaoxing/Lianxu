@@ -68,6 +68,11 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
     internal suspend fun contactPolicies()=repo.read{db->db.rawQuery("SELECT f.id,COALESCE(c.policy,'disabled') FROM friends f LEFT JOIN companion_state c ON c.role=f.id",null).use{c->buildMap{while(c.moveToNext())put(c.getString(0),c.getString(1))}}}
     suspend fun checkContinuity(owner:String)=repo.tx{db->
         // Owner is process execution identity; permission/version survive normal recreation.
+        // A local result survives process identity rollover only if it matched the role before rollover.
+        db.execSQL("""UPDATE received_chat_replies SET companion_epoch=companion_epoch+1 WHERE EXISTS(
+            SELECT 1 FROM chat_turns t JOIN companion_state s ON s.role=t.friend_id
+            WHERE t.id=received_chat_replies.turn_id AND t.attempt=received_chat_replies.attempt
+            AND t.state='PENDING' AND s.owner<>? AND s.epoch=received_chat_replies.companion_epoch)""",arrayOf<Any>(owner))
         db.execSQL("UPDATE companion_state SET epoch=epoch+1,owner=? WHERE owner<>?",arrayOf<Any>(owner,owner))
         opportunities(db,"state='running' AND owner<>?",arrayOf(owner)).forEach{requeue(db,it)}
         opportunities(db,"state='queued'",emptyArray()).forEach{settlePermission(db,it)}

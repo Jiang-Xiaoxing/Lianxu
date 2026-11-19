@@ -18,8 +18,7 @@ internal class ChatImageRoute(private val store:Store,private val vault:ModelVau
     private val sourceVersions=store.readableDatabase.rawQuery("SELECT user_message_id,source_revision FROM chat_turns WHERE friend_id=? AND (user_message_id=? OR user_message_id IN(SELECT message_id FROM chat_images WHERE friend_id=?))",arrayOf(turn.friendId,turn.userMessageId.toString(),turn.friendId)).use{c->buildMap{while(c.moveToNext())put(c.getLong(0),c.getLong(1))}}
     private var sensitive=false
     private val used=linkedMapOf<ChatImageRef,Long>()
-    private data class Observation(val ref:ChatImageRef,val revision:Long,val model:String,val text:String)
-    private val observations=linkedMapOf<ChatImageRef,Observation>()
+    private val observations=linkedMapOf<ChatImageRef,ReceivedObservation>()
     private fun revision(db:SQLiteDatabase,id:Long)=db.rawQuery("SELECT source_revision FROM chat_turns WHERE user_message_id=? AND friend_id=?",arrayOf(id.toString(),turn.friendId)).use{check(it.moveToFirst());it.getLong(0)}
     fun current():Boolean=runCatching{
         active()&&AppMutationGate.epoch()==epoch&&(!sensitive||(ChatImages.routeStamp(store.readableDatabase)==routeStamp&&
@@ -88,7 +87,7 @@ internal class ChatImageRoute(private val store:Store,private val vault:ModelVau
             for(ref in refs){if(observations.containsKey(ref))continue;requireCurrent()
                 when(val result=delegate.complete(receiver,receiverKey,vision.getValue(ref))){
                     is TextChatResult.Failure->throw CompanionModelFailure(result.reason,result.detail)
-                    is TextChatResult.Success->{requireCurrent();if(result.text.isBlank()||result.text.length>8000||result.toolCalls.isNotEmpty())throw CompanionModelFailure(ChatFailure.FORMAT);observations[ref]=Observation(ref,used.getValue(ref),receiver.id,result.text)}
+                    is TextChatResult.Success->{requireCurrent();if(result.text.isBlank()||result.text.length>8000||result.toolCalls.isNotEmpty())throw CompanionModelFailure(ChatFailure.FORMAT);observations[ref]=ReceivedObservation(ref,used.getValue(ref),receiver.id,result.text)}
                 }
             }
             val messages=request.messages.map{m->if(m.imageRefs.isEmpty())m else m.copy(imageRefs=emptyList(),content=m.content.ifBlank{"[用户发送图片或视频，无附文；模型观察另列，非用户原话]"})}
@@ -109,9 +108,24 @@ internal class ChatImageRoute(private val store:Store,private val vault:ModelVau
     override suspend fun streamEvents(config:ModelConfig,key:String,request:TextChatRequest,onEvent:suspend(TextStreamEvent)->Unit):TextChatResult = prepared(request,key){
         val result=delegate.streamEvents(config,key,it){event->requireCurrent();onEvent(event)};requireCurrent();result
     }
-    fun commit(db:SQLiteDatabase){
-        check(current())
-        for((_,v) in observations)db.insertOrThrow("image_observations",null,ContentValues().apply{
+    fun receivedEffects():ReceivedImageEffects {
+        val aux=if(sensitive&&auxiliary)vault.list().find{it.id==vault.purposeId(ModelPurpose.AUX_VISION)} else null
+        return ReceivedImageEffects(sensitive,routeStamp,if(sensitive)sourceVersions else emptyMap(),used.keys.toList(),observations.values.toList(),aux?.let{stableDigest(it.toString())})
+    }
+    fun validReceived(db:SQLiteDatabase,effects:ReceivedImageEffects):Boolean {
+        if(!effects.sensitive)return true
+        if(ChatImages.routeStamp(db)!=effects.route||!CompanionRepository.aiAllowed(db,turn.friendId,turn.userMessageId))return false
+        if(effects.auxiliaryConfig!=null){
+            val aux=vault.list().find{it.id==vault.purposeId(ModelPurpose.AUX_VISION)}?:return false
+            if(stableDigest(aux.toString())!=effects.auxiliaryConfig)return false
+        }
+        return effects.revisions.all{(id,version)->runCatching{revision(db,id)==version}.getOrDefault(false)}&&
+            effects.used.all{ChatImages.ref(db,it.messageId)==it&&CompanionRepository.aiAllowed(db,turn.friendId,it.messageId)}
+    }
+    fun commit(db:SQLiteDatabase)=commit(db,receivedEffects())
+    fun commit(db:SQLiteDatabase,effects:ReceivedImageEffects){
+        check(current()&&validReceived(db,effects))
+        for(v in effects.observations)db.insertOrThrow("image_observations",null,ContentValues().apply{
             put("id",UUID.randomUUID().toString());put("friend_id",turn.friendId);put("message_id",v.ref.messageId);put("question_message_id",turn.userMessageId);put("question_revision",revision(db,turn.userMessageId));put("source_revision",v.revision);put("image_hash",v.ref.hash);put("model_id",v.model);put("body",v.text);put("created",System.currentTimeMillis())
         })
     }

@@ -47,7 +47,36 @@ class ChatLedger(private val store:Store,private val session:String=processSessi
         ChatToolJournal.put(db,id,item);true
     }}
     internal suspend fun settleActivities(id:String,attempt:Int,committed:Boolean,recordSaved:Boolean,memorySaved:Boolean)=withContext(Dispatchers.IO){atomic{db->ChatToolJournal.settle(db,id,attempt,committed,recordSaved,memorySaved)}}
-    suspend fun recoverInterrupted()=withContext(Dispatchers.IO){store.writableDatabase.update("chat_turns",ContentValues().apply{put("state",TurnState.INTERRUPTED.name);put("error_code",ChatFailure.INTERRUPTED.name)},"state='PENDING' AND owner_session<>?",arrayOf(session))}
+    suspend fun recoverInterrupted()=withContext(Dispatchers.IO){atomic{db->
+        db.update("chat_turns",ContentValues().apply{put("state",TurnState.INTERRUPTED.name);put("error_code",ChatFailure.INTERRUPTED.name)},
+            "state='PENDING' AND owner_session<>? AND NOT EXISTS(SELECT 1 FROM received_chat_replies r WHERE r.turn_id=chat_turns.id AND r.attempt=chat_turns.attempt)",arrayOf(session))
+    }}
+    internal suspend fun saveReceived(t:ChatTurn,reply:ReceivedChatReply,lease:ChatAttemptLease,current:()->Boolean)=withContext(Dispatchers.IO){
+        val payload=com.google.gson.Gson().toJson(reply)
+        atomic{db->lease.guard{
+            val owned=db.rawQuery("SELECT 1 FROM chat_turns WHERE id=? AND attempt=? AND owner_session=? AND state='PENDING'",arrayOf(t.id,t.attempt.toString(),session)).use{it.moveToFirst()}
+            if(!owned||!current()||snapshot(db,t.id).stamp!=reply.contextStamp)return@guard false
+            db.insertOrThrow("received_chat_replies",null,ContentValues().apply{
+                put("turn_id",t.id);put("attempt",t.attempt);put("payload",payload);put("companion_epoch",reply.companion.epoch)
+            })
+            true
+        }}
+    }
+    internal fun hasReceived(id:String,attempt:Int)=store.readableDatabase.rawQuery(
+        "SELECT 1 FROM received_chat_replies WHERE turn_id=? AND attempt=?",arrayOf(id,attempt.toString())
+    ).use{it.moveToFirst()}
+    /** Only the UI's local delivery runner claims receipts. Background workers leave them alone. */
+    internal suspend fun claimReceived():List<Pair<ChatTurn,ReceivedChatReply>> = withContext(Dispatchers.IO){atomic{db->
+        val results=mutableListOf<Pair<ChatTurn,ReceivedChatReply>>()
+        db.rawQuery("""SELECT t.id,r.payload,r.companion_epoch FROM received_chat_replies r JOIN chat_turns t ON t.id=r.turn_id AND t.attempt=r.attempt
+            WHERE t.state='PENDING' AND t.owner_session<>?""",arrayOf(session)).use{c->while(c.moveToNext()){
+            val t=requireNotNull(turn(db,c.getString(0)))
+            val result=com.google.gson.Gson().fromJson(c.getString(1),ReceivedChatReply::class.java)
+            results+=t to result.copy(companion=result.companion.copy(epoch=c.getLong(2)))
+        }}
+        for((t,_) in results)db.update("chat_turns",ContentValues().apply{put("owner_session",session)},"id=? AND attempt=?",arrayOf(t.id,t.attempt.toString()))
+        results
+    }}
     suspend fun begin(friendId:String,input:String,configId:String,id:String=UUID.randomUUID().toString(),expectedEpoch:Long?=null,image:PendingChatImage?=null):ChatTurn = withContext(Dispatchers.IO){atomic{db->
         check(expectedEpoch==null||expectedEpoch==AppMutationGate.epoch())
         require((input.isNotBlank()||image!=null)&&input.length<=2000)
