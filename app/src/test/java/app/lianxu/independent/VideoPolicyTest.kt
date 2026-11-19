@@ -4,6 +4,11 @@ import org.junit.Test
 import org.junit.Assert.*
 
 class VideoPolicyTest {
+    @Test fun missingVideoModeUsesFramesAndSavedModesAreRespected(){
+        assertEquals(ToolboxPreferences.VideoMode.FRAMES,ToolboxPreferences.videoMode(""))
+        assertEquals(ToolboxPreferences.VideoMode.ORIGINAL,ToolboxPreferences.videoMode("ORIGINAL"))
+        assertEquals(ToolboxPreferences.VideoMode.FRAMES,ToolboxPreferences.videoMode("FRAMES"))
+    }
     @Test fun decimalSeventyMegabytesIncludesTheBoundaryAndRejectsOneMoreByte(){
         VideoPolicy.requireSize(69_999_999);VideoPolicy.requireSize(70_000_000)
         try{VideoPolicy.requireSize(70_000_001);fail("oversized video accepted")}catch(e:IllegalArgumentException){assertEquals("暂不支持超过70 MB的视频",e.message)}

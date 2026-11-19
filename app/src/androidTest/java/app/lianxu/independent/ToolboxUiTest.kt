@@ -44,8 +44,13 @@ class ToolboxUiTest {
         ui.onNodeWithTag("rules-recall-enabled").performClick();ui.onNodeWithTag("rules-write-enabled").performClick()
         assertEquals(old,runBlocking{vm.processing.memoryRules().first})
         ui.onNodeWithTag("memory-tools-save").performClick();ui.waitUntil(10000){runBlocking{vm.processing.memoryRules().first==old.copy(proactiveRecall=true,immediateWrite=false)}};shot("03-memory-tools");back()
-        ui.onNodeWithTag("tool-card-video").performClick();ui.onNodeWithTag("video-mode-original").assertIsSelected();ui.onNodeWithTag("video-mode-frames").performClick()
-        ui.waitUntil(10000){runBlocking{ToolboxPreferences.videoMode(vm.processing.store)==ToolboxPreferences.VideoMode.FRAMES}};shot("04-video-settings");back()
+        ui.onNodeWithTag("tool-card-video").performClick()
+        ui.waitUntil(10000){runCatching{ui.onNodeWithTag("video-mode-frames").assertIsSelected();true}.getOrDefault(false)}
+        ui.onNodeWithTag("video-mode-original").performClick()
+        ui.waitUntil(10000){runBlocking{ToolboxPreferences.videoMode(vm.processing.store)==ToolboxPreferences.VideoMode.ORIGINAL}};shot("04-video-settings");back()
+        ui.onNodeWithTag("tool-card-video").performClick()
+        ui.waitUntil(10000){runCatching{ui.onNodeWithTag("video-mode-original").assertIsSelected();true}.getOrDefault(false)}
+        back()
         ui.onNodeWithTag("tool-card-contact").performClick();ui.onNodeWithTag("toolbox-contact-page").assertIsDisplayed();ui.onNodeWithTag("companion-notification").assertExists();shot("05-contact-roles");back();back()
         ui.onNodeWithTag("settings-models").performScrollTo().performClick();ui.onNodeWithTag("config-tab-purposes").performClick();ui.onNodeWithTag("auxiliary-vision-switch").assertDoesNotExist();ui.onNodeWithTag("purpose-select-aux-vision").assertDoesNotExist();back()
         ui.onNodeWithTag("settings-processing").performScrollTo().performClick();ui.onNodeWithTag("settings-memory-rules").performClick();ui.onNodeWithTag("rules-recall-enabled").assertDoesNotExist();ui.onNodeWithTag("rules-write-enabled").assertDoesNotExist();back();back()

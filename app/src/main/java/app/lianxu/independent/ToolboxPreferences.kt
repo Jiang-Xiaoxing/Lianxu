@@ -17,8 +17,9 @@ internal object ToolboxPreferences {
     fun encodeOrder(values:List<String>):String=JSONArray(values).toString().also{order(it)}
     suspend fun loadOrder(store:Store)=order(store.preference(ORDER_KEY,encodeOrder(defaultOrder)))
     suspend fun saveOrder(store:Store,values:List<String>)=store.setPreference(ORDER_KEY,encodeOrder(values))
-    suspend fun videoMode(store:Store)=VideoMode.valueOf(store.preference(VIDEO_KEY,VideoMode.ORIGINAL.name))
-    fun videoMode(db:android.database.sqlite.SQLiteDatabase)=ChatImages.setting(db,VIDEO_KEY).let{if(it.isBlank())VideoMode.ORIGINAL else VideoMode.valueOf(it)}
+    fun videoMode(stored:String)=if(stored.isBlank()) VideoMode.FRAMES else VideoMode.valueOf(stored)
+    suspend fun videoMode(store:Store)=videoMode(store.preference(VIDEO_KEY,""))
+    fun videoMode(db:android.database.sqlite.SQLiteDatabase)=videoMode(ChatImages.setting(db,VIDEO_KEY))
     suspend fun saveVideoMode(store:Store,mode:VideoMode)=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
         val db=store.writableDatabase;db.beginTransaction()
         try{for((key,value) in listOf(VIDEO_KEY to mode.name,VIDEO_REVISION to java.util.UUID.randomUUID().toString()))

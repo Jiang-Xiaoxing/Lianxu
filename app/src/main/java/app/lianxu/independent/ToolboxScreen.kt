@@ -175,7 +175,7 @@ private val toolboxCards=mapOf(
 }
 
 @Composable internal fun ToolboxVideoScreen(vm:AppState){
-    var mode by remember{mutableStateOf(ToolboxPreferences.VideoMode.ORIGINAL)};var ready by remember{mutableStateOf(false)};var busy by remember{mutableStateOf(false)};var error by remember{mutableStateOf("")}
+    var mode by remember{mutableStateOf<ToolboxPreferences.VideoMode?>(null)};var ready by remember{mutableStateOf(false)};var busy by remember{mutableStateOf(false)};var error by remember{mutableStateOf("")}
     LaunchedEffect(vm){try{mode=ToolboxPreferences.videoMode(vm.processing.store);ready=true}catch(e:CancellationException){throw e}catch(_:Exception){error="暂时读不到视频设置，请返回重试。"}}
     ToolboxPage("视频理解",{vm.back()},"toolbox-video-page"){
         Column(Modifier.fillMaxWidth().background(Paper,RoundedCornerShape(UiSpace.radius)).selectableGroup()){
