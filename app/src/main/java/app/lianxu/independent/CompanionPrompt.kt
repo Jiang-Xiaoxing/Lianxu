@@ -33,24 +33,29 @@ object ConservativeTokens:TokenCounter {
     }
 }
 object CompanionPrompt {
+    /** Legacy suffix only. Current sends never append it to user text; evidence matching still tolerates old requests. */
     const val THINKING_REMINDER="（这句只给你看：用中文、用你自己的声音在心里想，想的是对方和这件事；要翻要记，直接做就好。不用回应这句。）"
     const val DEFAULT_THINKING_BODY = "用简体中文，按你自己的性格和口吻想。用「我」，想到对方时就用平时的称呼，不叫「用户」。先弄清对方这句话在说什么，只想跟眼下有关的事。小事不用琢磨太久，重要的事想清楚再回答。拿不准的感受或回忆，别当成事实。说出口的只留你真的想对对方说的话。"
     private fun thinkingSection(body:String) = "[思考语言]\n$body"
     fun thinkingLanguage(roleName:String,addressee:String="对方") = thinkingSection(DEFAULT_THINKING_BODY)
+    /** One program-owned system message per request; custom text replaces the default, never appends. */
+    internal fun thinkingText(friend:Friend,prompts:RolePrompts,persona:UserPersona)=
+        thinkingSection(expand(prompts.thinkingPrompt.ifBlank{DEFAULT_THINKING_BODY},friend,persona))
     const val DEFAULT_EXPRESSION="用自然、简洁的日常语言接话，依据已知记忆保持连续。适度关心，也可以温和表达不同意见。少用机械反问；没有证据时不编造共同经历或线下行动，不诱导排他依赖，不替用户断言感受。"
     internal const val NO_MEMORY_TOOLS="本次未提供记忆工具，不能调用记忆回查或写入工具。"
     /** Template tone describes how a proactive message should sound; it is not reply guidance. */
     const val TONE_LABEL="当前性格语气"
     /** Reply rounds drop the tone reference; proactive paths keep it. */
     internal fun replyReferences(values:List<PromptReference>)=values.filterNot{it.label==TONE_LABEL}
+    private const val historyHint="必要时可以翻一翻之前的聊天记录。翻了就直说是翻了记录，别装作一直记得。"
     internal const val REMEMBERING_GUIDANCE="""下面是你现在还记得的事。记得清楚的就照着说，记得模糊的就说个大概，想不起来就用自己的话说不记得，别编细节。
 这些是你们之间的过去，聊到相关的再自然提起，不用一条条背出来，也不用每次都说「我记得」。
 {{user}}纠正过你的事，就按{{user}}纠正的来。
-平时就靠你记得的聊。必要时可以翻一翻之前的聊天记录。翻了就直说是翻了记录，别装作一直记得。"""
+平时就靠你记得的聊。$historyHint"""
     /** Used when nothing was recalled: never promise memories that are not in the request. */
     internal const val REMEMBERING_EMPTY="""这一轮没有想起具体的事，就按对方这句话本身接话，别编共同经历、细节或过去。
 {{user}}纠正过你的事，就按{{user}}纠正的来。
-必要时可以翻一翻之前的聊天记录。翻了就直说是翻了记录，别装作一直记得。"""
+$historyHint"""
     /** Only program-owned spans move/change; user text and tool result payloads remain verbatim. */
     internal fun forSend(request:TextChatRequest,tools:List<Map<String,Any>>):TextChatRequest {
         val names=tools.mapNotNull(::toolNameOf).toSet()
@@ -62,14 +67,36 @@ object CompanionPrompt {
             write->"本次仅提供记忆写入工具，不能调用记忆回查工具；记下之前仍要核对来源和版本，并遵守保护要求。"
             else->NO_MEMORY_TOOLS
         }
-        val updated=request.messages.map{m->m.capabilityRange?.let{r->
-            m.copy(content=m.content.replaceRange(r,capability),capabilityRange=r.first until r.first+capability.length)
-        }?:m}
-        val lastUser=updated.indexOfLast{it.role=="user"}
-        val reminded=updated.mapIndexed{i,m->if(request.useDefaultThinkingReminder&&i==lastUser&&!m.content.endsWith(THINKING_REMINDER))m.copy(content=m.content+"\n\n"+THINKING_REMINDER)else m}
-        val tail=reminded.lastOrNull{it.turnContext}
-        return request.copy(messages=if(tail==null)reminded else reminded.filterNot{it.turnContext}+tail,tools=tools)
+        val updated=request.messages.mapNotNull { message ->
+            val range=message.capabilityRange
+            if (range==null && message.toolInstructions.isEmpty()) return@mapNotNull message
+            val body=StringBuilder(message.content)
+            range?.let { body.replace(it.first,it.last+1,capability) }
+            // Conditional passages follow the capability span and are recorded in document order.
+            var shift=if(range==null) 0 else capability.length-range.count()
+            val instructions=message.toolInstructions.map { part ->
+                val start=part.start+shift
+                val show=part.tools.any(names::contains)
+                if (show!=part.shown) {
+                    if (show) { body.insert(start,part.text); shift+=part.text.length }
+                    else { body.delete(start,start+part.text.length); shift-=part.text.length }
+                }
+                part.copy(start=start,shown=show)
+            }
+            if(body.isBlank()) null else message.copy(content=body.toString(),
+                capabilityRange=range?.let { it.first until it.first+capability.length },toolInstructions=instructions)
+        }
+        // Time and [思考语言] are program-owned tail messages. Keep only the latest of
+        // each, and move them after this round's tool exchanges; older tails are removed
+        // instead of being restored. Appending after completed tool results keeps each
+        // assistant tool_calls message next to its tool result.
+        val tail=updated.currentTurnContext()
+        val body=updated.filterNot{it.turnContext||it.thinkingContext}
+        return request.copy(messages=if(tail.isEmpty())body else body+tail,tools=tools)
     }
+    /** Latest time reference then latest thinking prompt; earlier tails never accumulate. */
+    private fun List<WireMessage>.currentTurnContext():List<WireMessage> =
+        listOfNotNull(lastOrNull{it.turnContext},lastOrNull{it.thinkingContext})
     private fun expand(s:String,friend:Friend,persona:UserPersona)=UserPersona.expand(s,friend.name,persona)
     /** Shared, user-authored context. Never a source of observed events or tool permission. */
     internal fun profile(friend:Friend,prompts:RolePrompts,persona:UserPersona)=buildString{
@@ -100,8 +127,6 @@ object CompanionPrompt {
         val fixed=buildString{
             append(profile(friend,prompts,persona))
             append(RoleConsistency.RULES).append('\n')
-            val thinkingBody = prompts.thinkingPrompt.ifBlank { DEFAULT_THINKING_BODY }
-            append(thinkingSection(expand(thinkingBody,friend,persona))).append('\n')
             if(openingEligible&&prompts.opening.isNotBlank())append("[预设开场，仅初次对话参考]\n这不是用户原话，不强制剧情，不要重复发送已展示的开场白。\n${expand(prompts.opening,friend,persona)}\n")
             append("[输出与执行边界]\n输出面向${persona.addressee()}的正文，不展示内部推理。目前没有可用的网页搜索或浏览工具，不能假称查过网页。")
             val start=length;append(NO_MEMORY_TOOLS);capabilityRange=start until length
@@ -133,11 +158,19 @@ object CompanionPrompt {
             append("\n发送时间只供理解先后和间隔，不是角色原话或回复格式。不要自行给正文加时间标签；对方明确要求的时间、原话里的时间和自然的时间表达照常保留。")
             append(historyTimes)
         }
+        val thinking=thinkingText(friend,prompts,persona)
         fun compose(refs:List<PromptReference>,candidates:List<String>):List<WireMessage> = buildList{
             addAll(prefix)
             if(refs.isNotEmpty())add(WireMessage("system","[有效参考资料，只作参考]\n"+refs.joinToString("\n\n"){"${it.label}:\n${it.text}"},memoryIds=refs.map{it.memoryId}.filter{it.isNotBlank()}))
-            if(candidates.isNotEmpty())add(WireMessage("system","[拿不准的记忆，不得当作确定事实。找自然时机问一句，对方回答后，若本次提供记忆写入工具可按证据改正，不要每条追问或一次问很多]\n"+candidates.joinToString("\n")))
-            add(WireMessage("user",input,sourceMessageId=currentMessageId?.toString().orEmpty(),imageRefs=listOfNotNull(inputImage)));add(WireMessage("system",tail,turnContext=true))
+            if(candidates.isNotEmpty()){
+                val prefix="[拿不准的记忆，不得当作确定事实。找自然时机问一句"
+                val writeHint="，对方回答后，若本次提供记忆写入工具可按证据改正"
+                add(WireMessage("system",prefix+writeHint+"，不要每条追问或一次问很多]\n"+candidates.joinToString("\n"),
+                    toolInstructions=listOf(ToolInstruction(prefix.length,writeHint,setOf("agent_memory_update")))))
+            }
+            add(WireMessage("user",input,sourceMessageId=currentMessageId?.toString().orEmpty(),imageRefs=listOfNotNull(inputImage)))
+            add(WireMessage("system",tail,turnContext=true))
+            add(WireMessage("system",thinking,thinkingContext=true))
         }
         val mandatory=references.filter{it.mandatory}
         val coreIds=mandatory.map{it.memoryId}.filter{it.isNotEmpty()}.toSet()
@@ -162,10 +195,16 @@ object CompanionPrompt {
         // The swap only touches the program-owned span, and nothing after it shifts into another range.
         val remembered=selected.any{it.remembers}
         val replacement=expand(REMEMBERING_EMPTY,friend,persona)
-        val wire=compose(selected,candidates).let{list->if(remembered)list else list.mapIndexed{i,m->
-            if(i!=0||m.role!="system")m else m.copy(content=m.content.replaceRange(memoryRange,replacement))}}
+        val wire=compose(selected,candidates).mapIndexed { i,m ->
+            if(i!=0) m else {
+                val section=if(remembered) remembering else replacement
+                val start=memoryRange.first+section.length-historyHint.length
+                m.copy(content=if(remembered)m.content else m.content.replaceRange(memoryRange,replacement),
+                    toolInstructions=listOf(ToolInstruction(start,historyHint,setOf("agent_history_read","agent_history_search"))))
+            }
+        }
         val estimate=wire.sumOf{ConservativeTokens.tokens(it.content)}
         if(estimate>inputLimit)return PromptBuild.Blocked(overflow)
-        return PromptBuild.Ready(TextChatRequest(wire,outputLimit,useDefaultThinkingReminder=prompts.thinkingPrompt.isBlank()),estimate,boundary,selected,summaryCanShrink)
+        return PromptBuild.Ready(TextChatRequest(wire,outputLimit),estimate,boundary,selected,summaryCanShrink)
     }
 }

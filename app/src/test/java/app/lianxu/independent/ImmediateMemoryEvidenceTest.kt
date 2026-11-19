@@ -17,13 +17,16 @@ class ImmediateMemoryEvidenceTest {
         }
     private fun aliases(vararg previous:MemoryEvidence)=ImmediateMemoryEvidence.aliases(confirmation,previous.toList(),previous.map{wire(it)}+WireMessage("user",confirmation.snapshot))
     private fun rejected(code:String,block:()->Unit){assertEquals(code,(runCatching(block).exceptionOrNull() as? ProcessingRejected)?.code)}
-    @Test fun currentMessageWithStoredIdStaysVisibleAfterProgramReminder(){
+    @Test fun currentMessageWithStoredIdStaysVisibleWithoutAppendingAReminder(){
         val request=TextChatRequest(listOf(wire(confirmation)))
         val outgoing=CompanionPrompt.forSend(request,emptyList())
-        val sent=outgoing.messages.single();assertTrue(sent.content.endsWith(CompanionPrompt.THINKING_REMINDER));assertEquals(confirmation.source.turnId.toString(),sent.sourceMessageId)
+        val sent=outgoing.messages.single();assertEquals(confirmation.snapshot,sent.content);assertEquals(confirmation.source.turnId.toString(),sent.sourceMessageId)
         assertEquals(confirmation,ImmediateMemoryEvidence.aliases(confirmation,emptyList(),outgoing.messages)["S1"])
         assertTrue(ImmediateMemoryEvidence.visible(confirmation,outgoing.messages,true))
-        assertEquals(confirmation.snapshot+"\n\n"+CompanionPrompt.THINKING_REMINDER,sent.content)
+        // Legacy queued/stored requests may still carry the old suffix; matching keeps tolerating it.
+        val legacy=sent.copy(content=confirmation.snapshot+"\n\n"+CompanionPrompt.THINKING_REMINDER)
+        assertTrue(ImmediateMemoryEvidence.visible(confirmation,listOf(legacy),true))
+        assertEquals(confirmation,ImmediateMemoryEvidence.aliases(confirmation,emptyList(),listOf(legacy))["S1"])
     }
     @Test fun reminderHandlingKeepsIdentityVerbatimHistoryAndLiteralUserTextGuards(){
         val sent=wire(confirmation).copy(content=confirmation.snapshot+"\n\n"+CompanionPrompt.THINKING_REMINDER)

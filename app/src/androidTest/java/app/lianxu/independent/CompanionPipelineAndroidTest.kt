@@ -169,6 +169,26 @@ class CompanionPipelineAndroidTest {
         assertEquals(now,core.cached(retry)!!.timingReferenceAt);assertNotEquals(oldClock,core.cached(retry)!!.timingReferenceAt)
         core.contact(retry,request,core.snapshot("a"),now){true};assertEquals(1,core.queued().size)
     }
+    @Test fun switchedOffRequestCannotApplyItsOldScheduleAndParametersStayPending():Unit=runBlocking{
+        val t=ledger.begin("a","回头聊",config.id);val source=core.sourceFor(t)
+        val enabledSnapshot=core.snapshot("a")
+        core.setPolicy("a",false,CompanionRuntime.owner)
+        val context=core.roleContext("a",source)
+        val future=ImmediateContact.parse("""{"future":{"kind":"follow_up","reason":"回头聊","when":"30秒后","evidence":[{"source":${source.turnId},"layer":"fact"}]}}""","回头聊",context,now)
+        try{core.contact(t,future,enabledSnapshot,now){true};fail("旧排期必须在开关关闭后失效")}catch(e:Exception){
+            assertTrue("unexpected ${e.message}",e.message in setOf("source_changed","contact_permission_disabled"))
+        }
+        try{core.contact(t,future,core.snapshot("a"),now){true};fail("关闭的开关不能接受新的排期")}catch(e:IllegalStateException){
+            assertEquals("contact_permission_disabled",e.message)
+        }
+        assertTrue(core.queued().isEmpty());assertNull(core.cached(t))
+        val beforeTone=core.relationship("a").parameters.tone
+        val parameters=ImmediateContact.parse("""{"改主动参数":{"消息":"${source.turnId}","参数":{"tone":"温柔些"},"她的话":"那我说得温柔些。"}}""","改主动参数",context,now,scheduling=false)
+        val result=core.contact(t,parameters,core.snapshot("a"),now){true}
+        assertEquals(true,result["success"]);assertTrue(core.queued().isEmpty())
+        assertEquals(mapOf("tone" to "温柔些"),core.cached(t)!!.parameterProposal!!.values)
+        assertEquals(beforeTone,core.relationship("a").parameters.tone)
+    }
     @Test fun unresolvedControlCannotScheduleAContact():Unit=runBlocking{
         val input="更正那件事";core.beginInput("a");val t=ledger.begin("a",input,config.id)
         val p=ExperienceProposal(quote=input,controlChecked=true,reconsider=Reconsideration("不应变成回访",now+900000,now+1800000))

@@ -11,13 +11,15 @@ class ProviderContinuation internal constructor(@Transient private val reasoning
     internal fun wireValue()=reasoning
     override fun toString()="ProviderContinuation([omitted])"
 }
+/** A program-authored passage. Offsets belong to this message, never to user text. */
+data class ToolInstruction(val start:Int,val text:String,val tools:Set<String>,val shown:Boolean=true)
 data class WireMessage(val role:String,val content:String,val toolCalls:List<ChatToolCall> = emptyList(),val toolCallId:String="",val name:String="",val memoryIds:List<String> = emptyList(),val sourceMessageId:String="",
     /** Length of the program-added time head in front of a history message; the original text starts after it. */
-    val sourcePrefix:Int=0,val capabilityRange:IntRange?=null,val turnContext:Boolean=false,@Transient val continuation:ProviderContinuation?=null,
-    val imageRefs:List<ChatImageRef> = emptyList(),val images:List<WireImage> = emptyList(),val videos:List<WireVideo> = emptyList()) {
+    val sourcePrefix:Int=0,val capabilityRange:IntRange?=null,val turnContext:Boolean=false,val thinkingContext:Boolean=false,@Transient val continuation:ProviderContinuation?=null,
+    val imageRefs:List<ChatImageRef> = emptyList(),val images:List<WireImage> = emptyList(),val videos:List<WireVideo> = emptyList(),val toolInstructions:List<ToolInstruction> = emptyList()) {
     init {require(role in setOf("system","user","assistant","tool"));require(content.isNotBlank()||(role=="assistant"&&toolCalls.isNotEmpty())||(role=="user"&&(imageRefs.isNotEmpty()||images.isNotEmpty()||videos.isNotEmpty())));require(role!="tool"||toolCallId.isNotBlank());require(role=="user"||(imageRefs.isEmpty()&&images.isEmpty()&&videos.isEmpty()))}
 }
-data class TextChatRequest(val messages:List<WireMessage>,val outputLimit:Int=2048,val timeoutMillis:Int=120000,val tools:List<Map<String,Any>> = emptyList(),val conversationId:String=java.util.UUID.randomUUID().toString(),val jsonObject:Boolean=false,val useDefaultThinkingReminder:Boolean=true) {
+data class TextChatRequest(val messages:List<WireMessage>,val outputLimit:Int=2048,val timeoutMillis:Int=120000,val tools:List<Map<String,Any>> = emptyList(),val conversationId:String=java.util.UUID.randomUUID().toString(),val jsonObject:Boolean=false) {
     init {require(conversationId.matches(Regex("[A-Za-z0-9_-]{1,160}")));require(messages.isNotEmpty());require(outputLimit in 1..ModelTokenPolicy.MAX_OUTPUT);require(timeoutMillis in 1..300000)}
 }
 enum class ChatFailure(val display:String) {

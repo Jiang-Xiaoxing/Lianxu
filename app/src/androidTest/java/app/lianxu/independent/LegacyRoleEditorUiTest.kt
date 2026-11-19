@@ -187,7 +187,9 @@ class LegacyRoleEditorUiTest {
         assertEquals("按 {{character}} 的口吻想。",saved.thinkingPrompt)
         val request=(CompanionPrompt.build(vm.friends.single{it.id==first.id},saved,emptyList(),"合成输入") as PromptBuild.Ready).request
         val sent=CompanionPrompt.forSend(request,emptyList())
-        assertTrue(sent.messages.first().content.contains("[思考语言]\n按 新名字 的口吻想。\n"))
+        val thinking=sent.messages.single{it.thinkingContext}.content
+        assertTrue(thinking.contains("[思考语言]\n按 新名字 的口吻想。"))
+        assertTrue(sent.messages.last().thinkingContext);assertFalse(sent.messages.first().content.contains("[思考语言]"))
         assertEquals("合成输入",sent.messages.single{it.role=="user"}.content)
         for (blank in listOf(false,true)) {
             ui.runOnIdle{vm.open("role-prompts",first.id)}

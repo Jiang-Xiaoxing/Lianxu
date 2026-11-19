@@ -9,7 +9,8 @@ internal object ImmediateMemoryEvidence {
     fun visible(proof:MemoryEvidence,messages:List<WireMessage>,current:Boolean=false)=messages.any{m->
         fun matches(body:String)=if(current&&m.sourceMessageId.isEmpty())body==proof.snapshot
             else m.sourceMessageId==proof.source.turnId.toString()&&m.sourcePrefix in 0..body.length&&body.substring(m.sourcePrefix)==proof.snapshot
-        // Match literal user text first; only the current message can carry this program suffix.
+        // Match literal user text first. The short suffix is no longer sent, but old queued
+        // requests may still carry it, so only the current message may be matched without it.
         m.role=="user"&&(matches(m.content)||current&&matches(m.content.removeSuffix("\n\n"+CompanionPrompt.THINKING_REMINDER)))
     }
     fun aliases(current:MemoryEvidence,history:List<MemoryEvidence>,messages:List<WireMessage>):Map<String,MemoryEvidence> = buildMap{

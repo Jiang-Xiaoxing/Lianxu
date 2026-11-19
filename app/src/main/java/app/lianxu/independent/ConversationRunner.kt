@@ -376,7 +376,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
             // Evidence selected during appraisal must remain available to the reply, even after summarizing.
             return if(rules.adaptiveContext)values.map{if(it.sources.any{r->r in used})it.copy(mandatory=true)else it}else values
         }
-        var freshControlContext:(suspend()->TextChatRequest)?=null
+        var freshControlContext:(suspend()->Pair<TextChatRequest,ProcessingRepository.References>)?=null
         val controlTool:suspend(org.json.JSONObject)->Map<String,Any> = {args->
             val proposal=JointControl.parse(args,originalInput,appraisalTime,companionState.sources.map{it.turnId}.toSet(),executedControl)
             if(executedControl!=null){
@@ -388,6 +388,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
             }
             JointControl.receipt(requireNotNull(executedControl))
         }
+        // Freeze this request's exposure. If the switch turns off after it is sent, contact() still rejects the old schedule.
         val contactScheduling=companionState.policy=="enabled"
         val contactTool:suspend(String)->Map<String,Any> = {raw->
             val request=ImmediateContact.parse(raw,originalInput,companion.roleContext(friendId,source),appraisalTime,contactZone,contactScheduling)
@@ -414,7 +415,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
             companionState=replySnapshot();roleState=companion.roleContext(friendId,source)
             val fresh=build()
             check(fresh is PromptBuild.Ready){"context_capacity_after_control"}
-            fresh.request
+            fresh.request to refs
         }
         suspend fun fitExperiences(){
             if(needsPlan)return

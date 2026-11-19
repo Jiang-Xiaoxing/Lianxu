@@ -22,7 +22,7 @@ class UserPersonaTest {
         assertTrue("角色独立设定" in fixed);assertTrue("合成用户" in fixed&&"小星" in fixed&&persona.introduction in fixed)
         assertTrue(fixed.indexOf("[角色定义]")<fixed.indexOf("[用户自填资料]"));assertTrue(fixed.indexOf("[用户自填资料]")<fixed.indexOf("[表达方式]"))
         assertTrue(fixed.indexOf("[用户自填资料]")<fixed.indexOf("[输出与执行边界]"));assertTrue(result.request.tools.isEmpty())
-        assertFalse("原自写要求" in fixed);assertTrue(result.request.messages.last().turnContext)
+        assertFalse("原自写要求" in fixed);assertTrue(result.request.messages.single{it.turnContext}.content.contains("程序时间参考"));assertTrue(result.request.messages.last().thinkingContext)
     }
     @Test fun legacyCharacterDefinitionStaysIntactWhenNewFieldIsMissing(){
         val result=CompanionPrompt.build(friend,RolePrompts(),emptyList(),"你好",persona=persona) as PromptBuild.Ready

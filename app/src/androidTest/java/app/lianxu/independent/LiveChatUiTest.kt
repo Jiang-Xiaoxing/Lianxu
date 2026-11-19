@@ -65,7 +65,10 @@ class LiveChatUiTest {
         val messages=JSONObject(server.body).getJSONArray("messages")
         assertTrue(messages.getJSONObject(0).getString("content").contains("用自然表达回应 合成·新角色"))
         val latestUser=(0 until messages.length()).map{messages.getJSONObject(it)}.last{it.getString("role")=="user"}
-        assertEquals("你好，这是本机合成测试。",latestUser.getString("content").removeSuffix("\n\n"+CompanionPrompt.THINKING_REMINDER))
+        assertEquals("你好，这是本机合成测试。",latestUser.getString("content"))
+        assertEquals(1,Regex.fromLiteral("[思考语言]").findAll(server.body).count())
+        val latestSystem=(0 until messages.length()).map{messages.getJSONObject(it)}.last{it.getString("role")=="system"}
+        assertTrue(latestSystem.getString("content").contains("[思考语言]"))
         assertFalse(server.body.contains(CompanionRecord.NAME))
         assertFalse(server.body.contains("【演示开场】"));assertFalse(server.body.contains("synthetic-key-only"))
         shot("02-new-role-real-http-mock-reply")

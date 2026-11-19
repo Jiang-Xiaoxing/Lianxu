@@ -92,7 +92,10 @@ internal class ChatImageRoute(private val store:Store,private val vault:ModelVau
             }
             val messages=request.messages.map{m->if(m.imageRefs.isEmpty())m else m.copy(imageRefs=emptyList(),content=m.content.ifBlank{"[用户发送图片或视频，无附文；模型观察另列，非用户原话]"})}
             val text=refs.joinToString("\n\n"){ref->"[辅助模型${if(VideoPolicy.isVideo(ref.mime))"视频"else"图片"}观察，非用户原话；来源消息${ref.messageId}；原件/保存文件SHA256 ${ref.hash}；问题消息${turn.userMessageId}]\n${observations.getValue(ref).text}"}
-            val ready=request.copy(messages=messages+WireMessage("system",text));if(!capacity(chat,ready))throw CompanionModelFailure(ChatFailure.CONTEXT_CAPACITY)
+            // Keep the program-owned time/thinking tails last after adding the observation.
+            val observation=WireMessage("system",text)
+            val tailStart=messages.indexOfFirst{it.turnContext||it.thinkingContext}.takeIf{it>=0}?:messages.size
+            val ready=request.copy(messages=messages.toMutableList().apply{add(tailStart,observation)});if(!capacity(chat,ready))throw CompanionModelFailure(ChatFailure.CONTEXT_CAPACITY)
             requireCurrent();send(ready)
           }
         }
