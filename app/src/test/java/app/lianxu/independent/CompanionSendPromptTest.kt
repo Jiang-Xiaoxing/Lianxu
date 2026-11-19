@@ -15,7 +15,7 @@ class CompanionSendPromptTest {
         val original=request();val sent=CompanionPrompt.forSend(original,tools)
         assertTrue(sent.messages.first().content.contains(expected))
         assertTrue(sent.messages.first().content.contains("目前没有可用的网页搜索或浏览工具，不能假称查过网页"))
-        assertTrue(sent.messages.first().content.contains("只有对方开启主动联系后，你才有机会再考虑要不要找对方，不能保证准时联系或一定送到"))
+        assertFalse(sent.messages.first().content.contains("只有对方开启主动联系后，你才有机会再考虑要不要找对方，不能保证准时联系或一定送到"))
         assertFalse(sent.messages.first().content.contains("没有开放联网、主动聊天或工具执行能力"))
         assertEquals(original.messages.map{it.role},sent.messages.map{it.role})
         assertEquals(original.messages.drop(1),originalText(sent.messages.drop(1)));assertEquals(tools,sent.tools)

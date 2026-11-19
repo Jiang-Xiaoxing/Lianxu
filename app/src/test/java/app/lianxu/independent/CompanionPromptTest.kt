@@ -17,7 +17,7 @@ class CompanionPromptTest {
         val head=(CompanionPrompt.build(f,p,emptyList(),"你好") as PromptBuild.Ready).request.messages.first().content
         assertFalse(head.contains("当前程序"));assertFalse(head.contains("没法上网"));assertTrue(head.contains("目前没有可用的网页搜索或浏览工具"))
         assertTrue(head.contains("不能假称查过网页"))
-        assertTrue(head.contains("只有对方开启主动联系后"));assertTrue(head.contains("不能保证准时联系或一定送到"))
+        assertFalse(head.contains("只有对方开启主动联系后"));assertFalse(head.contains("不能保证准时联系或一定送到"))
     }
     @Test fun orderedLayersRawUserAndOneTail(){
         val p=RolePrompts(expression="自定义表达 {{character}}",extra="附加要求",examples=listOf(DialogueExample("示例用户","示例回复")),examplesEnabled=true)
