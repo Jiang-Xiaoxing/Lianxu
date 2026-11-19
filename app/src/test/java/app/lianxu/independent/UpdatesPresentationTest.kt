@@ -4,6 +4,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class UpdatesPresentationTest {
+    @Test fun mediaReleaseHasThreeShortHighlightsAndPreservesThePreviousEntry(){
+        val note=requireNotNull(LocalReleaseNotes.forVersion(63))
+        assertEquals("1.0.4",note.version)
+        assertEquals(3,UpdatesPresentation.noticeSummary(note).size)
+        assertTrue(UpdatesPresentation.noticeSummary(note).all{it.length<=32})
+        assertTrue(note.changes.any{"每秒抽取一帧" in it})
+        assertTrue(note.changes.any{"本机滚动记录" in it})
+        assertEquals("1.0.3",LocalReleaseNotes.forVersion(62)?.version)
+    }
     @Test fun creationReleaseSummaryKeepsFullChangesAndLimits(){
         val note=LocalReleaseNotes.forVersion(62)!!
         assertEquals("1.0.3",note.version);assertEquals(6,note.changes.size)
