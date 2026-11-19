@@ -32,37 +32,6 @@ import kotlinx.coroutines.launch
     }
 }
 
-@Composable internal fun BreezeConfigCard() {
-    val account = rememberBreezeAccount()
-    val catalog by account.catalogChanges.collectAsState(Triple("",0L,false))
-    var input by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("") }
-    val focus=androidx.compose.ui.platform.LocalFocusManager.current
-    val scope=rememberCoroutineScope()
-    VoiceSection("BreezeBlue 语音") {
-        Text(if(catalog.third) "已连接 · ${account.voices().size} 个音色" else if(catalog.first.isEmpty()) "尚未连接" else "请重新验证连接",color=Muted)
-        OutlinedTextField(input,{input=it;status=""},label={Text("API Key")}, singleLine=true,
-            keyboardOptions=androidx.compose.foundation.text.KeyboardOptions(keyboardType=androidx.compose.ui.text.input.KeyboardType.Password,imeAction=androidx.compose.ui.text.input.ImeAction.Done),
-            keyboardActions=androidx.compose.foundation.text.KeyboardActions(onDone={focus.clearFocus()}),
-            enabled=!busy,visualTransformation=PasswordVisualTransformation(),
-            modifier=Modifier.fillMaxWidth().testTag("voice-key"))
-        OutlinedButton(onClick={
-            val key=input.trim()
-            focus.clearFocus();input="";busy=true;status=""
-            scope.launch {
-                try { account.refresh(key.ifEmpty { null });status="已获取音色" }
-                catch(e:CancellationException){throw e}
-                catch(_:Exception){status="连接失败，请检查密钥和网络"}
-                finally {busy=false}
-            }
-        }, enabled=!busy && (input.isNotBlank() || catalog.first.isNotEmpty()), modifier=Modifier.testTag("voice-connect")) {
-            Text(if(busy) "正在连接…" else if(input.isEmpty() && catalog.first.isNotEmpty()) "重新验证并获取音色" else "保存并获取音色")
-        }
-        if(status.isNotEmpty()) Text(status,color=Muted)
-    }
-}
-
 @Composable internal fun BreezeRoleSettings(vm:AppState) {
     val role=vm.friends.find { it.id==vm.activeId } ?: return
     val account=rememberBreezeAccount()

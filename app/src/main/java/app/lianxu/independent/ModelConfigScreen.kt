@@ -147,8 +147,8 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
                 }}
                 }
                 item("add-service"){OutlinedButton(onClick={add()},enabled=!state.saving,modifier=Modifier.fillMaxWidth().heightIn(min=UiSpace.action).testTag("config-add")){Text("添加服务商")}}
-                if(saveForPurpose==null)item("voice-config"){ BreezeConfigCard() }
                 if(saveForPurpose==null)item("add-embedding"){OutlinedButton(onClick={add(true)},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).testTag("config-add-embedding")){Text("添加向量模型")}}
+                if(saveForPurpose==null)item("voice-config"){ BreezeVoiceServiceSection() }
                 }else{
                 item("purposes"){PurposeSelection(state,only=saveForPurpose)}
                 }

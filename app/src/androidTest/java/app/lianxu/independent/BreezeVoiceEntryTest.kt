@@ -42,7 +42,10 @@ class BreezeVoiceEntryTest {
             put(MediaStore.Audio.Media.DISPLAY_NAME,"lianxu-voice-entry-test.mp3");put(MediaStore.Audio.Media.MIME_TYPE,"audio/mpeg")
         }))
         val old=AppServices.voiceConnections
+        val oldProbe=VoiceConnectProbe.reachable
         val paths=CopyOnWriteArrayList<String>()
+        // 验证失败后的密钥/网络分类由真实网络探测决定，测试里固定成「服务器可达」。
+        VoiceConnectProbe.reachable={ true }
         try{
             resolver.openOutputStream(uri)!!.use{it.write(audio)}
             AppServices.voiceConnections=HttpsConnectionFactory { url->
@@ -77,17 +80,19 @@ class BreezeVoiceEntryTest {
             ui.onNodeWithTag("tab-2").performClick()
             ui.onNodeWithTag("settings-models").performClick()
             ui.onNodeWithTag("config-overview").performScrollToKey("voice-config")
-            ui.onNodeWithTag("voice-connect").assertIsNotEnabled()
+            ui.onNodeWithTag("voice-action-breezeblue").assertExists()
             shot("config")
-            val input=ui.onNodeWithTag("voice-key")
+            ui.onNodeWithTag("voice-action-breezeblue").performClick()
+            ui.onNodeWithTag("voice-verify").assertIsNotEnabled()
+            val input=ui.onNodeWithTag("voice-key-input")
             input.performTextInput("simulate-failure")
-            input.performImeAction()
-            ui.onNodeWithTag("voice-connect").performScrollTo().assertIsEnabled().performClick()
-            waitText("连接失败，请检查密钥和网络")
+            ui.onNodeWithTag("voice-verify").assertIsEnabled().performClick()
+            waitText("密钥无效，检查后再试")
             input.performTextInput("synthetic-entry-fixture")
-            input.performImeAction()
-            ui.onNodeWithTag("voice-connect").performScrollTo().assertIsEnabled().performClick()
-            waitText("已获取音色")
+            ui.onNodeWithTag("voice-verify").assertIsEnabled().performClick()
+            waitText("已连接")
+            ui.onNodeWithTag("voice-cancel").performClick()
+            ui.waitForIdle()
             fun role(id:String){
                 ui.runOnIdle{vm.open("chat",id)}
                 ui.onNodeWithTag("chat-role-detail").performClick()
@@ -135,7 +140,7 @@ class BreezeVoiceEntryTest {
             clickText("另存为新音色");waitText("已另存为新音色")
             assertEquals(1,paths.count{it.endsWith("/save")});assertEquals(1,paths.count{it=="voice-previews/clone"})
             assertEquals("a",account.selected("seed-lin"))
-        }finally{AppServices.voiceConnections=old;resolver.delete(uri,null,null)}
+        }finally{AppServices.voiceConnections=old;VoiceConnectProbe.reachable=oldProbe;resolver.delete(uri,null,null)}
     }
 }
 
