@@ -52,6 +52,19 @@ class CompleteBackupAndroidTest {
         assertFalse(reply.any{"[语气示例]" in it.content});assertEquals(listOf("本轮独立问题"),reply.filter{it.role=="user"}.map{it.content})
         assertTrue(other.vault.list().isEmpty())
     }
+    @Test fun fullBackupKeepsCustomThinkingAndLegacyDefaultPerRole()=runBlocking {
+        f.store.updateRolePrompts("a"){it.copy(thinkingPrompt="说话前先理清头绪。",extra="旧聊天约定")}
+        val target=fixture()
+        roundTrip(target,all=true)
+        val restored=target.store.friends().associateBy { it.name }
+        suspend fun prompts(name:String):RolePrompts {
+            val key=RolePromptStore.key(restored.getValue(name).id)
+            return RolePromptStore.decode(target.store.preference(key,""))
+        }
+        assertEquals("说话前先理清头绪。",prompts("合成甲").thinkingPrompt)
+        assertEquals("旧聊天约定",prompts("合成甲").extra)
+        assertEquals("",prompts("合成乙").thinkingPrompt)
+    }
     @Test fun roleReplaceOnlyTouchesExplicitTarget()=runBlocking{
         val oldB=f.store.friends().first{it.id=="b"};val p=pack(f.backup.export("a"));assertTrue(runCatching{f.backup.preview(p,"REPLACE")}.isFailure)
         val plan=f.backup.preview(p,"REPLACE","b");assertTrue(runCatching{f.backup.commit(plan)}.isFailure);assertEquals(oldB,f.store.friends().first{it.id=="b"})

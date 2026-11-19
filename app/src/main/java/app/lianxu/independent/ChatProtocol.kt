@@ -17,7 +17,7 @@ data class WireMessage(val role:String,val content:String,val toolCalls:List<Cha
     val imageRefs:List<ChatImageRef> = emptyList(),val images:List<WireImage> = emptyList(),val videos:List<WireVideo> = emptyList()) {
     init {require(role in setOf("system","user","assistant","tool"));require(content.isNotBlank()||(role=="assistant"&&toolCalls.isNotEmpty())||(role=="user"&&(imageRefs.isNotEmpty()||images.isNotEmpty()||videos.isNotEmpty())));require(role!="tool"||toolCallId.isNotBlank());require(role=="user"||(imageRefs.isEmpty()&&images.isEmpty()&&videos.isEmpty()))}
 }
-data class TextChatRequest(val messages:List<WireMessage>,val outputLimit:Int=2048,val timeoutMillis:Int=120000,val tools:List<Map<String,Any>> = emptyList(),val conversationId:String=java.util.UUID.randomUUID().toString(),val jsonObject:Boolean=false) {
+data class TextChatRequest(val messages:List<WireMessage>,val outputLimit:Int=2048,val timeoutMillis:Int=120000,val tools:List<Map<String,Any>> = emptyList(),val conversationId:String=java.util.UUID.randomUUID().toString(),val jsonObject:Boolean=false,val useDefaultThinkingReminder:Boolean=true) {
     init {require(conversationId.matches(Regex("[A-Za-z0-9_-]{1,160}")));require(messages.isNotEmpty());require(outputLimit in 1..ModelTokenPolicy.MAX_OUTPUT);require(timeoutMillis in 1..300000)}
 }
 enum class ChatFailure(val display:String) {

@@ -82,6 +82,7 @@ class MoonLayoutUiTest {
         ui.onNodeWithTag("role-name").assertTextContains("合成原名",substring=true)
         ui.onNodeWithTag("role-name").performTextReplacement("合成新名")
         ui.onNodeWithTag("role-definition").performScrollTo().performTextReplacement("新设定")
+        ui.onNodeWithTag("role-tab-1").performClick()
         ui.onNodeWithTag("role-expression").performScrollTo().performTextReplacement("新表达")
         ui.onNodeWithTag("role-opening").performScrollTo().performTextReplacement("新开场")
         ui.onNodeWithTag("config-save").performClick()

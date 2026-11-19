@@ -11,6 +11,17 @@ class RoleArchiveTest {
     private fun root()=JsonParser.parseString("""{"scope":"role","character":{"id":"synthetic","name":"林澈","bio":"25岁虚构成年人","prompt":"不编造共同经历","tone":0},"prompts":{},"records":{}}""").asJsonObject
     private fun archive(root:JsonObject)=ByteArrayOutputStream().also{RoleArchive.write(root,it)}.toByteArray()
     private fun fails(block:()->Unit){assertTrue(runCatching(block).isFailure)}
+    @Test fun thinkingPromptIsOptionalAndRoundTripsWithChatAgreements() {
+        for(value in listOf("", "保留这条自定义")) {
+            val role = RolePrompts(extra="旧补充提示",thinkingPrompt=value)
+            val r=root()
+            r.add("prompts",JsonParser.parseString(RolePromptStore.encode(role)))
+            val imported=RoleArchive.read(archive(r).inputStream()).root()["prompts"].asJsonObject
+            assertEquals(value.isNotEmpty(),imported.has("thinkingPrompt"))
+            assertEquals(role,RolePromptStore.decode(imported.toString()))
+        }
+        assertEquals("",RolePromptStore.decode("""{"internalPrompt":"旧功能","extra":"原约定"}""").thinkingPrompt)
+    }
     @Test fun roundTripKeepsUnicodeWithoutExecutingPrompt(){val r=root();r["character"].asJsonObject.addProperty("prompt","只是文本：../../file；不执行脚本")
         val p=RoleArchive.read(archive(r).inputStream());assertEquals("林澈",p.name);assertEquals(r,p.root());assertEquals("role",p.scope)}
     @Test fun traversalAndAbsolutePathsRejected(){listOf("../role.json","/role.json","C:/role.json","a\\..\\role.json","a//role.json").forEach{fails{RoleArchive.entryName(it)}}}

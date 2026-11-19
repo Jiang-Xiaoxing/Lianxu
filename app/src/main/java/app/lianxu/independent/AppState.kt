@@ -297,9 +297,9 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
         catch(e:CancellationException){throw e}
         catch(e:Exception){error="角色已保存，打开未完成，请重试。"}
     }
-    fun saveCharacter(id:String,name:String,definition:String,expression:String,opening:String,extra:String,initialRelationship:String){
+    fun saveCharacter(id:String,name:String,definition:String,expression:String,opening:String,extra:String,initialRelationship:String,thinkingPrompt:String){
         if(name.isBlank()||definition.isBlank()){error="请填写名字和角色设定。";return}
-        save{store.saveConfigured(id,name){old->old.copy(characterDefinition=definition,expression=expression,opening=opening,extra=extra,initialRelationship=initialRelationship)};reload();back()}
+        save{store.saveConfigured(id,name){old->old.copy(characterDefinition=definition,expression=expression,opening=opening,extra=extra,initialRelationship=initialRelationship,thinkingPrompt=thinkingPrompt.ifBlank{""})};reload();back()}
     }
     fun setRoleAvatar(id:String,mime:String,bytes:ByteArray){
         if(friends.none{it.id==id})return

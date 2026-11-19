@@ -145,7 +145,7 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
         val db=writableDatabase;db.beginTransaction()
         try{
             val raw=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(RolePromptStore.key(id))).use{if(it.moveToFirst())it.getString(0)else""}
-            val p=change(RolePromptStore.decode(raw));require(p.characterDefinition.isNotBlank()&&p.initialRelationship.length<=4000&&listOf(p.characterDefinition,p.expression,p.opening,p.extra).all{it.length<=8000})
+            val p=change(RolePromptStore.decode(raw));require(p.characterDefinition.isNotBlank()&&p.initialRelationship.length<=4000&&listOf(p.characterDefinition,p.expression,p.opening,p.extra,p.thinkingPrompt).all{it.length<=8000})
             check(db.update("friends",ContentValues().apply{put("name",name.trim())},"id=?",arrayOf(id))==1)
             db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",RolePromptStore.key(id));put("value",RolePromptStore.encode(p))},SQLiteDatabase.CONFLICT_REPLACE)
             seedOpening(db,id,p.opening);db.setTransactionSuccessful()

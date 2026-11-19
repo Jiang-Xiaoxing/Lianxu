@@ -41,13 +41,14 @@ class ToneExamplesRemovalUiTest {
             vm.refreshProcessing()
         }
         ui.runOnIdle{vm.open("role-prompts",id)}
-        ui.waitUntil(5000){ui.onAllNodesWithText("合成自填说话方式").fetchSemanticsNodes().isNotEmpty()}
+        ui.waitUntil(5000){ui.onAllNodesWithText("合成角色原设定").fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithTag("role-definition").assertTextContains("合成角色原设定")
+        ui.onNodeWithTag("role-tab-1").performClick()
         ui.onNodeWithTag("role-expression").assertTextContains("合成自填说话方式")
         ui.onNodeWithTag("role-opening").performScrollTo().assertTextContains("合成自填开场白")
         ui.onNodeWithTag("role-examples").assertDoesNotExist()
         ui.onNodeWithText("旧聊天语气参考").assertDoesNotExist()
-        ui.onNodeWithTag("role-advanced").performScrollTo().assertIsDisplayed()
+        ui.onNodeWithTag("role-advanced").assertDoesNotExist()
         shot("role-prompts-after-removal")
         ui.runOnIdle{vm.open("chat",id)}
         ui.onNodeWithTag("examples-invitation").assertDoesNotExist()

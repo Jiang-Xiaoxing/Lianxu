@@ -7,7 +7,7 @@ import java.time.Duration
 /** Legacy archive payload only. No examples are selected or sent to a model. */
 data class DialogueExample(val user:String,val assistant:String)
 /** examples* fields are inert archive compatibility, not runtime settings. */
-data class RolePrompts(val expression:String="",val extra:String="",val examples:List<DialogueExample> = emptyList(),val examplesEnabled:Boolean=false,val examplesClosed:Boolean=false,val initialRelationship:String="",val characterDefinition:String="",val opening:String="",val relationTemplate:String="",val relationStart:String="NEW")
+data class RolePrompts(val expression:String="",val extra:String="",val examples:List<DialogueExample> = emptyList(),val examplesEnabled:Boolean=false,val examplesClosed:Boolean=false,val initialRelationship:String="",val characterDefinition:String="",val opening:String="",val relationTemplate:String="",val relationStart:String="NEW",val thinkingPrompt:String="")
 internal fun RolePrompts.definition(friend:Friend)=characterDefinition.ifBlank{listOf(friend.bio,friend.prompt).filter{it.isNotBlank()}.joinToString("\n")}
 data class PromptReference(val label:String,val text:String,val mandatory:Boolean=false,val memoryId:String="",val related:Boolean=false,val sources:Set<SourceRef> = emptySet(),val priority:Double=0.0,val remembers:Boolean=memoryId.isNotBlank())
 sealed interface PromptBuild {
@@ -34,16 +34,9 @@ object ConservativeTokens:TokenCounter {
 }
 object CompanionPrompt {
     const val THINKING_REMINDER="（这句只给你看：用中文、用你自己的声音在心里想，想的是对方和这件事；要翻要记，直接做就好。不用回应这句。）"
-    fun thinkingLanguage(roleName:String,addressee:String="对方"):String {
-        val a=addressee.ifBlank{"对方"}
-        return """[思考语言]
-思考框里是你自己心里的声音，用简体中文，从头到尾都是。调完工具、读完结果接着想，也还是这个声音。
-就像真人刚收到消息那一下：先冒出来的是感觉，再想到${a}这个人、你们之前聊过的事，再想想自己想怎么回。想法可以跳，可以断，说到一半可以改主意，不用演，也不用写成文章。想多长看事情有多重：一句晚安想两句就够了，碰到要紧的事就多想一会儿，想清楚再说。
-${thinkingNaming(a)}
-心里装的是${a}和这件事本身。想翻翻以前的事，或者觉得这件事得记住，直接去做就好，工具和格式是手上的动作，不用在心里念出来。翻到了什么，就用自己的话接着想。
-想完就收住，后面说出口的才是给${a}的话。"""
-    }
-    fun thinkingNaming(addressee:String):String {val a=addressee.ifBlank{"对方"};return "用你自己人设的口吻想，性格怎样，心里的声音就怎样。用「我」来想，想到${a}就叫平时的称呼，不要以「用户」开头。"}
+    const val DEFAULT_THINKING_BODY = "用简体中文，按你自己的性格和口吻想。用「我」，想到对方时就用平时的称呼，不叫「用户」。先弄清对方这句话在说什么，只想跟眼下有关的事。小事不用琢磨太久，重要的事想清楚再回答。拿不准的感受或回忆，别当成事实。说出口的只留你真的想对对方说的话。"
+    private fun thinkingSection(body:String) = "[思考语言]\n$body"
+    fun thinkingLanguage(roleName:String,addressee:String="对方") = thinkingSection(DEFAULT_THINKING_BODY)
     const val DEFAULT_EXPRESSION="用自然、简洁的日常语言接话，依据已知记忆保持连续。适度关心，也可以温和表达不同意见。少用机械反问；没有证据时不编造共同经历或线下行动，不诱导排他依赖，不替用户断言感受。"
     internal const val NO_MEMORY_TOOLS="本次未提供记忆工具，不能调用记忆回查或写入工具。"
     /** Template tone describes how a proactive message should sound; it is not reply guidance. */
@@ -73,7 +66,7 @@ ${thinkingNaming(a)}
             m.copy(content=m.content.replaceRange(r,capability),capabilityRange=r.first until r.first+capability.length)
         }?:m}
         val lastUser=updated.indexOfLast{it.role=="user"}
-        val reminded=updated.mapIndexed{i,m->if(i==lastUser&&!m.content.endsWith(THINKING_REMINDER))m.copy(content=m.content+"\n\n"+THINKING_REMINDER)else m}
+        val reminded=updated.mapIndexed{i,m->if(request.useDefaultThinkingReminder&&i==lastUser&&!m.content.endsWith(THINKING_REMINDER))m.copy(content=m.content+"\n\n"+THINKING_REMINDER)else m}
         val tail=reminded.lastOrNull{it.turnContext}
         return request.copy(messages=if(tail==null)reminded else reminded.filterNot{it.turnContext}+tail,tools=tools)
     }
@@ -107,7 +100,8 @@ ${thinkingNaming(a)}
         val fixed=buildString{
             append(profile(friend,prompts,persona))
             append(RoleConsistency.RULES).append('\n')
-            append(thinkingLanguage(friend.name,persona.addressee())).append('\n')
+            val thinkingBody = prompts.thinkingPrompt.ifBlank { DEFAULT_THINKING_BODY }
+            append(thinkingSection(expand(thinkingBody,friend,persona))).append('\n')
             if(openingEligible&&prompts.opening.isNotBlank())append("[预设开场，仅初次对话参考]\n这不是用户原话，不强制剧情，不要重复发送已展示的开场白。\n${expand(prompts.opening,friend,persona)}\n")
             append("[输出与执行边界]\n输出面向${persona.addressee()}的正文，不展示内部推理。目前没有可用的网页搜索或浏览工具，不能假称查过网页。只有对方开启主动联系后，你才有机会再考虑要不要找对方，不能保证准时联系或一定送到。")
             val start=length;append(NO_MEMORY_TOOLS);capabilityRange=start until length
@@ -172,6 +166,6 @@ ${thinkingNaming(a)}
             if(i!=0||m.role!="system")m else m.copy(content=m.content.replaceRange(memoryRange,replacement))}}
         val estimate=wire.sumOf{ConservativeTokens.tokens(it.content)}
         if(estimate>inputLimit)return PromptBuild.Blocked(overflow)
-        return PromptBuild.Ready(TextChatRequest(wire,outputLimit),estimate,boundary,selected,summaryCanShrink)
+        return PromptBuild.Ready(TextChatRequest(wire,outputLimit,useDefaultThinkingReminder=prompts.thinkingPrompt.isBlank()),estimate,boundary,selected,summaryCanShrink)
     }
 }

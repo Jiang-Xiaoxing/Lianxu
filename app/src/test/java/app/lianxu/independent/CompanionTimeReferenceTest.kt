@@ -48,7 +48,7 @@ class CompanionTimeReferenceTest {
         assertTrue(continued.messages.last{it.role=="user"}.content.endsWith("\n\n"+CompanionPrompt.THINKING_REMINDER))
         assertEquals(1,continued.messages.sumOf{Regex.fromLiteral(CompanionPrompt.THINKING_REMINDER).findAll(it.content).count()})
         assertTrue(continued.messages.first().content.contains(CompanionPrompt.thinkingLanguage(friend.name)))
-        assertTrue(continued.messages.first().content.contains("调完工具、读完结果接着想，也还是这个声音。"))
+        assertTrue(continued.messages.first().content.contains(CompanionPrompt.DEFAULT_THINKING_BODY))
     }
     @Test fun blankRowsRemainUnmodifiedWithoutInventingSpokenTextOrBreakingNumbering(){
         val history=listOf(Message(1,"a","早",true,now.minusSeconds(120).toEpochMilli()),Message(2,"a"," \n ",false,now.minusSeconds(90).toEpochMilli()),Message(3,"a","再聊一句",true,now.minusSeconds(60).toEpochMilli()))
