@@ -4,9 +4,9 @@
 
 恋叙是一款开源的 Android 角色陪伴应用。你写下她的性格、背景和你们的关系，从聊天开始认识彼此。相处中发生的事、她曾经怎样理解和回应、你后来给出的反馈，都可以留下记录，成为之后交流的依据。她可以表达自己的看法，也可以在有依据的相处中逐渐调整兴趣与习惯。
 
-当前正式版 **1.0.3**，支持 **Android 8.0 及以上**。使用时需要自行配置模型 API，费用由你选择的服务商收取。
+当前正式版 **1.0.4**，支持 **Android 8.0 及以上**。使用时需要自行配置模型 API，费用由你选择的服务商收取。
 
-[下载 APK](https://github.com/Jiang-Xiaoxing/Lianxu/releases/latest) · [这一版更新了什么](RELEASE-NOTES-1.0.3.md) · [开始使用](#开始使用) · [反馈问题](https://github.com/Jiang-Xiaoxing/Lianxu/issues)
+[下载 APK](https://github.com/Jiang-Xiaoxing/Lianxu/releases/latest) · [这一版更新了什么](RELEASE-NOTES-1.0.4.md) · [开始使用](#开始使用) · [反馈问题](https://github.com/Jiang-Xiaoxing/Lianxu/issues)
 
 <p>
   <img src="images/first-encounter.png" width="230" alt="首次进入恋叙，暖光门前的相遇入口">
@@ -171,14 +171,14 @@
 
 ## 当前的限制
 
-- **目前支持文字聊天。** 图片、文件和语音消息尚未接入，附件入口会显示提示。
+- **聊天支持文字、图片和视频。** 在输入框左侧点加号选择附件，图片和视频理解方式可在「设置 → 工具包」调整。
 - **模型可能理解错、漏记或执行失败。** 记忆、成长和关系记录依赖实际模型返回，重要内容可以查来源并手动纠正。当前还存在口头遗忘首次选错目标、答应联系却漏安排的问题。
-- **长期体验仍需继续验证。** 1.0.3 的验证使用专用模拟器、合成数据和模拟客户端。真实服务商润色、真实手机、锁屏通知及长期省电后台尚未验收，测试范围与已知问题保留在版本验证记录中。[1.0.3 验证记录](VALIDATION-1.0.3.md)
+- **设备验证范围。** 1.0.4 的正式包覆盖升级在独立 Android 模拟器上验证，真实手机、锁屏通知和长期省电后台仍待验证。[1.0.4 验证记录](VALIDATION-1.0.4.md)
 - **诊断文件可能包含隐私。** 详细诊断可能包含聊天和提示词，公开反馈前请检查并去除私人内容、密钥和其他凭据。
 
 ## 更多资料
 
-- [1.0.3 更新公告](RELEASE-NOTES-1.0.3.md) · [历史版本](https://github.com/Jiang-Xiaoxing/Lianxu/releases)
+- [1.0.4 更新公告](RELEASE-NOTES-1.0.4.md) · [历史版本](https://github.com/Jiang-Xiaoxing/Lianxu/releases)
 - [开发与测试](docs/DEVELOPMENT.md) · [界面设计](docs/UI-DESIGN.md)
 - 历史架构说明保留了公开 v0.19 时的设计记录。当前实现请结合源码和对应版本公告阅读。[历史架构说明](docs/ARCHITECTURE.md)
 - 反馈时请写明应用版本、Android 版本、操作步骤，以及预期和实际发生的情况。[提交 Issue](https://github.com/Jiang-Xiaoxing/Lianxu/issues)
