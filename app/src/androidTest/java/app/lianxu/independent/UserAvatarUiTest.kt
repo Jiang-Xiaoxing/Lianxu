@@ -1,5 +1,8 @@
 package app.lianxu.independent
 
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.unit.dp
+
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Bitmap
@@ -34,7 +37,7 @@ class UserAvatarUiTest {
     private lateinit var vm:AppState
     private var nextUri:Uri?=null
     private var selections=0
-    private fun show(){
+    private fun show(narrow:Boolean=false){
         ui.runOnUiThread{vm=ViewModelProvider(ui.activity,ViewModelProvider.AndroidViewModelFactory.getInstance(ui.activity.application))[AppState::class.java]}
         ui.waitUntil(30000){vm.ready}
         ui.runOnIdle{vm.tab=3}
@@ -45,7 +48,9 @@ class UserAvatarUiTest {
                 Handler(Looper.getMainLooper()).post{dispatchResult(code,if(selected==null)Activity.RESULT_CANCELED else Activity.RESULT_OK,Intent().setData(selected))}
             }
         }}
-        ui.setContent{CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner){LianxuTheme(false){Lianxu(vm)}}}
+        ui.setContent{CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner){LianxuTheme(false){
+            if(narrow) androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.width(320.dp)) { Lianxu(vm) } else Lianxu(vm)
+        }}}
     }
     private fun jpeg(color:Int,width:Int=100,height:Int=80):ByteArray{
         val b=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);b.eraseColor(color)
@@ -58,6 +63,13 @@ class UserAvatarUiTest {
         val out=ByteArrayOutputStream();BackupArchive.write(export.root,export.files,out);return BackupArchive.read(out.toByteArray().inputStream())
     }
     private fun restore(p:BackupArchive.Package,mode:String,target:String?=null)=runBlocking{vm.importBackup(vm.backup.preview(p,mode,target),true,ChatAttemptLease())}
+    @Test fun narrowProfileCanEditScrollAndSave() {
+        show(narrow=true)
+        ui.onNodeWithTag("persona-introduction").performScrollTo().performTextReplacement("窄屏合成介绍")
+        ui.onNodeWithText("保存资料").performScrollTo().assertIsDisplayed().performClick()
+        ui.waitUntil(15000){vm.persona.introduction=="窄屏合成介绍"}
+        shot("profile-320dp")
+    }
     @Test fun selectCancelInvalidSourceAndChatUsePersistedOwnImage(){
         show();ui.onNodeWithTag("profile-avatar-default",true).assertExists()
         select(jpeg(Color.rgb(60,130,110)))

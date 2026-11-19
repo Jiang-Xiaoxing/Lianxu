@@ -11,7 +11,7 @@ import java.time.Instant
 
 /** Adapts our optional recall tools and FusedMemoryWriter to Lianxu's source/version transactions. */
 internal class MemoryTools(private val repo:ProcessingRepository,private val turn:ChatTurn,private val input:String,
-    private val initial:ProcessingRepository.References,private val companionIndex:CompanionVectorIndex?=null,private val allowWrite:Boolean=true,private val memoryVectors:MemoryVectorIndex?=null,private val queryCache:QueryEmbeddingCache?=null,private val relationEnabled:Boolean=false,private val controlTool:(suspend(JSONObject)->Map<String,Any>)?=null,private val recordTool:(suspend(String)->Map<String,Any>)?=null,private val freshControlContext:(suspend()->TextChatRequest)?=null,private val recordNeedsExperience:Boolean=false,private val contactTool:(suspend(String)->Map<String,Any>)?=null,private val contactTime:Long=0,private val contactZone:java.time.ZoneId=java.time.ZoneId.systemDefault(),private val active:()->Boolean) {
+    private val initial:ProcessingRepository.References,private val companionIndex:CompanionVectorIndex?=null,private val allowWrite:Boolean=true,private val memoryVectors:MemoryVectorIndex?=null,private val queryCache:QueryEmbeddingCache?=null,private val relationEnabled:Boolean=false,private val controlTool:(suspend(JSONObject)->Map<String,Any>)?=null,private val recordTool:(suspend(String)->Map<String,Any>)?=null,private val freshControlContext:(suspend()->Pair<TextChatRequest,ProcessingRepository.References>)?=null,private val recordNeedsExperience:Boolean=false,private val contactTool:(suspend(String)->Map<String,Any>)?=null,private val contactTime:Long=0,private val contactZone:java.time.ZoneId=java.time.ZoneId.systemDefault(),private val contactScheduling:Boolean=true,private val active:()->Boolean) {
     private var contactAttempts=0
     private var controlAttempts=0
     private var recordAttempts=0
@@ -122,8 +122,8 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
     suspend fun run(config:ModelConfig,key:String,request:TextChatRequest,client:TextChatClient,onResponseStart:(suspend()->Unit)?=null,onEvent:(suspend(TextStreamEvent)->Unit)?=null,onToolActivity:(suspend(ChatToolActivity)->Unit)?=null):TextChatResult = runLoop(config,key,request,client,onResponseStart,onEvent,onToolActivity)
     /** A rejected structured candidate cannot leave writes for the next candidate to commit. */
     suspend fun discardCandidate()=repo.tx{db->db.delete("preferences","key=?",arrayOf(stageKey));Unit}
-    private fun definitions()=(if(contactTool!=null)listOf(ImmediateContact.definition(turn.userMessageId,contactTime,contactZone))else emptyList())+(if(controlTool!=null)listOf(JointControl.definition)else emptyList())+(if(recordTool!=null)listOf(CompanionRecord.definition(turn.userMessageId,recordNeedsExperience))else emptyList())+(if(rules.proactiveRecall)buildAgentRecallToolDefinitions(true) else emptyList())+(if(rules.immediateWrite&&allowWrite&&writeSourceAllowed)listOf(writeDefinition()) else emptyList())+(if(rules.proactiveRecall)listOf(mapOf("type" to "function","function" to mapOf("name" to "agent_memory_read","description" to "按问题读取当前有效角色记忆","parameters" to mapOf("type" to "object","properties" to mapOf("query" to mapOf("type" to "string")),"required" to listOf("query"))))) else emptyList())
-    internal fun reservedTokens():Int {val offered=definitions()+(if(relationEnabled)listOf(RelationshipRecall.definition)else emptyList());return if(offered.isEmpty())0 else ConservativeTokens.tokens(gson.toJson(offered))+ConservativeTokens.tokens(CompanionRecallBudget.QUERY_RULES)+768}
+    private fun definitions()=(if(contactTool!=null)listOf(ImmediateContact.definition(turn.userMessageId,contactTime,contactZone,contactScheduling))else emptyList())+(if(controlTool!=null)listOf(JointControl.definition)else emptyList())+(if(recordTool!=null)listOf(CompanionRecord.definition(turn.userMessageId,recordNeedsExperience))else emptyList())+(if(rules.proactiveRecall)buildAgentRecallToolDefinitions(true) else emptyList())+(if(rules.immediateWrite&&allowWrite&&writeSourceAllowed)listOf(writeDefinition()) else emptyList())+(if(rules.proactiveRecall)listOf(mapOf("type" to "function","function" to mapOf("name" to "agent_memory_read","description" to "按问题读取当前有效角色记忆","parameters" to mapOf("type" to "object","properties" to mapOf("query" to mapOf("type" to "string")),"required" to listOf("query"))))) else emptyList())
+    internal fun reservedTokens():Int {val offered=definitions()+(if(relationEnabled)listOf(RelationshipRecall.definition)else emptyList());return if(offered.isEmpty())0 else ConservativeTokens.tokens(gson.toJson(offered))+(if(rules.proactiveRecall)ConservativeTokens.tokens(CompanionRecallBudget.QUERY_RULES) else 0)+768}
     /** Read-only planning, before any model/tool execution. Same messages and cost as the first send. */
     internal suspend fun initialCapacityFailure(config:ModelConfig,request:TextChatRequest):ChatFailure? {
         if(noTools())return null
@@ -144,21 +144,35 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
     }}
     private fun requestCost(request:TextChatRequest,offered:List<Map<String,Any>>)=
         estimateLocalMessagesTokens(messageMaps(request.messages).map(::cleanRecallMessage))+request.messages.sumOf{it.continuation?.tokenCost?:0}+ConservativeTokens.tokens(gson.toJson(offered))+request.outputLimit
-    private suspend fun initialMessages(request:TextChatRequest):List<WireMessage> {
-        repo.read{db->
-            if(rules.immediateWrite&&allowWrite){
-                writeSourceAllowed=CompanionRepository.aiAllowed(db,turn.friendId,turn.userMessageId)
-                writeEvidence=if(writeSourceAllowed){val sources=validWriteEvidence(db);ImmediateMemoryEvidence.aliases(sources.first(),sources.drop(1),request.messages)}else emptyMap()
-            }
-            val visible=if(rules.adaptiveContext)request.messages.flatMap{it.memoryIds}.toSet()else initial.valid.map{it.memoryId}.toSet()
-            initial.valid.map{it.memoryId}.filter{it.isNotBlank()&&it in visible}.distinct().forEach{id->repo.memory(db,turn.friendId,id)?.let{register(it.id,it.version)}}
-            repo.candidates(db,turn.friendId).filter{it.valid&&initial.pending.any{p->it.id in p}}.forEach{c->register(c.targetId?:c.proposed.id,c.targetVersion?:0,c.id)}
+    private suspend fun initialMessages(request:TextChatRequest,references:ProcessingRepository.References=initial):List<WireMessage> {
+        val guides=buildList {
+            if(rules.proactiveRecall) add(guardedGuide(CompanionRecallBudget.QUERY_RULES,CompanionRecallBudget.readNames))
+            if(rules.immediateWrite && allowWrite) writeGuide(request,references)?.let { add(it) }
         }
-        if(noTools())return request.messages
+        if(guides.isEmpty()) return request.messages
+        val current=request.messages.indexOfLast{it.role=="user" && it.sourceMessageId==turn.userMessageId.toString()}
+        val insertAt=if(current>=0)current else request.messages.indexOfLast{it.role=="user"}.takeIf{it>=0}?:request.messages.size
+        return request.messages.toMutableList().apply{addAll(insertAt,guides)}
+    }
+    private fun guardedGuide(text:String,tools:Set<String>)=
+        WireMessage("system",text,toolInstructions=listOf(ToolInstruction(0,text,tools)))
+
+    private suspend fun writeGuide(request:TextChatRequest,references:ProcessingRepository.References):WireMessage? {
+        repo.read{db->
+            writeSourceAllowed=CompanionRepository.aiAllowed(db,turn.friendId,turn.userMessageId)
+            if (!writeSourceAllowed) return@read
+            val evidence=validWriteEvidence(db)
+            writeEvidence=ImmediateMemoryEvidence.aliases(evidence.first(),evidence.drop(1),request.messages)
+            val visible=if(rules.adaptiveContext) request.messages.flatMap{it.memoryIds}.toSet() else references.valid.map{it.memoryId}.toSet()
+            references.valid.map{it.memoryId}.filter{it.isNotBlank()&&it in visible}.distinct().forEach{id->repo.memory(db,turn.friendId,id)?.let{register(it.id,it.version)}}
+            repo.candidates(db,turn.friendId).filter{it.valid&&references.pending.any{p->p.startsWith("候选 ${it.id}（")}}.forEach{c->register(c.targetId?:c.proposed.id,c.targetVersion?:0,c.id)}
+        }
+        if (!writeSourceAllowed) return null
         val mapping=targets.entries.joinToString("\n"){(ref,t)->"$ref -> ${t.candidate?:t.id}@${t.version}"}
         val users=request.messages.filter{it.role=="user"}
         val sources=writeEvidence.entries.joinToString("\n"){(alias,e)->"$alias -> ${if(alias=="S1")"当前用户原话"else"上方第${users.indexOfFirst{it.sourceMessageId==e.source.turnId.toString()}+1}条用户原话"}；原话日期${java.time.Instant.ofEpochMilli(e.sourceAt).atZone(java.time.ZoneId.of(e.zone)).toLocalDate()}（${e.zone}）"}
-        return request.messages.toMutableList().apply{add((size-2).coerceAtLeast(0),WireMessage("system","[记忆工具编号]\n$sources\n所引时间词必须在对应S的用户原话中；助手话语和未列来源不能作用户证据。$mapping\n${CompanionRecallBudget.QUERY_RULES}",memoryIds=initial.valid.map{it.memoryId}.filter{it.isNotBlank()}))}
+        val guide="[记忆工具编号]\n$sources\n所引时间词必须在对应S的用户原话中；助手话语和未列来源不能作用户证据。\n$mapping".trimEnd()
+        return guardedGuide(guide,setOf("agent_memory_update"))
     }
     private suspend fun runLoop(config:ModelConfig,key:String,request:TextChatRequest,client:TextChatClient,onResponseStart:(suspend()->Unit)?,onEvent:(suspend(TextStreamEvent)->Unit)?,onToolActivity:(suspend(ChatToolActivity)->Unit)?):TextChatResult {
         deliveredMemories.clear();deliveredMemories.addAll(request.messages.flatMap{it.memoryIds})
@@ -174,7 +188,6 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
         if(noTools())return withoutTools()
         val messages=initialMessages(request).toMutableList()
         if(noTools())return withoutTools()
-        val definitions=definitions()+(if(relationEnabled)listOf(RelationshipRecall.definition)else emptyList())
         val progress=RecallProgress()
         val failedRecords=mutableSetOf<Int>()
         // The old 8-step loop allowed 7 tool batches before a no-tool answer. Keep that
@@ -184,6 +197,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
             kotlinx.coroutines.yield()
             currentCoroutineContext().ensureActive();if(!active()||repo.memoryRules(repo.store.readableDatabase)!=rulesState)return TextChatResult.Failure(ChatFailure.SOURCE_CHANGED)
             val actor="${turn.id}:${turn.attempt}:$step"
+            val definitions=definitions()+(if(relationEnabled)listOf(RelationshipRecall.definition)else emptyList())
             val stepDefinitions=definitions.filterNot{(contactAttempts>=3&&toolNameOf(it)==ImmediateContact.NAME)||(controlAttempts>=3&&toolNameOf(it)==JointControl.NAME)||(recordAttempts>=3&&toolNameOf(it)==CompanionRecord.NAME)||(relationCalls>RelationshipRecall.LIMIT&&toolNameOf(it)==RelationshipRecall.NAME)||(writeBatches>=7&&toolNameOf(it)=="agent_memory_update")||(progress.stopped!=null&&toolNameOf(it) in CompanionRecallBudget.readNames)}
             val preparedMessages=CompanionPrompt.forSend(request.copy(messages=messages.toList()),stepDefinitions).messages
             val maps=messageMaps(preparedMessages)
@@ -252,7 +266,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
                         @Suppress("UNCHECKED_CAST")
                         val rows=(raw["results"] as? List<Map<String,Any>>)?.map{row->
                             val id=row["id"] as? String
-                            val m=id?.let{repo.read{db->repo.memory(db,turn.friendId,it)}}
+                            val m=id?.takeIf { offered.any { tool -> toolNameOf(tool)=="agent_memory_update" } }?.let{repo.read{db->repo.memory(db,turn.friendId,it)}}
                             if(m!=null)row+("memory_ref" to register(m.id,m.version)) else row
                         }
                         if(rows==null)raw else raw+("results" to rows)
@@ -277,7 +291,9 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
                     discardCandidate();relationSeen.clear();relationQueries.clear();recalled.clear();deliveredMemories.clear()
                     // Do not continue with prompts, tool results or native continuation containing withdrawn sources.
                     failedRecords.clear()
-                    messages.clear();messages.addAll(requireNotNull(freshControlContext).invoke().messages)
+                    targets.clear();writeEvidence=emptyMap()
+                    val (fresh,references)=requireNotNull(freshControlContext).invoke()
+                    messages.clear();messages.addAll(initialMessages(fresh,references))
                     messages+=WireMessage("assistant","",listOf(call))
                 }
                 currentCoroutineContext().ensureActive();if(!active()||repo.memoryRules(repo.store.readableDatabase)!=rulesState)return TextChatResult.Failure(ChatFailure.SOURCE_CHANGED)
@@ -339,11 +355,18 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
     }
     private fun pending(db:SQLiteDatabase)=db.rawQuery("SELECT 1 FROM chat_turns t JOIN messages m ON m.id=t.user_message_id WHERE t.id=? AND t.friend_id=? AND t.attempt=? AND t.state='PENDING' AND m.body=?",arrayOf(turn.id,turn.friendId,turn.attempt.toString(),input)).use{it.moveToFirst()}
     /** Invoked inside ChatLedger's final reply transaction, after its ownership/context/config guards. */
-    fun commit(db:SQLiteDatabase){
-        initial.valid.filter{it.memoryId in deliveredMemories&&!it.mandatory&&(it.label.startsWith("关键词记忆")||it.label.startsWith("关联记忆"))}.forEach{recalled.putIfAbsent(it.memoryId,RecallSource.CUE_HIT)}
-        recalled.forEach{(id,source)->MemoryForgetting.recalled(db,turn.friendId,id,recallAt,source)}
+    fun receivedEffects():ReceivedMemoryEffects {
+        val hits=recalled.toMutableMap()
+        initial.valid.filter{it.memoryId in deliveredMemories&&!it.mandatory&&(it.label.startsWith("关键词记忆")||it.label.startsWith("关联记忆"))}.forEach{hits.putIfAbsent(it.memoryId,RecallSource.CUE_HIT)}
+        return ReceivedMemoryEffects(hits,recallAt,stableDigest(gson.toJson(rulesState)))
+    }
+    fun commit(db:SQLiteDatabase)=commit(db,receivedEffects())
+    fun commit(db:SQLiteDatabase,effects:ReceivedMemoryEffects){
+        effects.recalls.forEach{(id,source)->MemoryForgetting.recalled(db,turn.friendId,id,effects.at,source)}
         Diagnostics.event("tool.commit.staged",mapOf("character" to turn.friendId,"turn" to turn.id,"attempt" to turn.attempt))
-        val raw=pref(stageKey)?:return;rejectUnless(repo.memoryRules(db)==rulesState&&rules.immediateWrite&&allowWrite,"SOURCE_CHANGED");val stages=JSONArray(raw)
+        val raw=pref(stageKey)?:return
+        rejectUnless(stableDigest(gson.toJson(repo.memoryRules(db)))==effects.rulesStamp&&rules.immediateWrite&&allowWrite,"SOURCE_CHANGED")
+        val stages=JSONArray(raw)
         val source=repo.sources(db,turn.friendId).firstOrNull{it.requestId==turn.id}?:throw ProcessingRejected("SOURCE_CHANGED")
         rejectUnless(source.user.text==input,"SOURCE_CHANGED")
         val written=mutableMapOf<String,Int>()

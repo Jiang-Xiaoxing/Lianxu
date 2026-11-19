@@ -1,6 +1,8 @@
 package app.lianxu.independent
 
 import androidx.test.platform.app.InstrumentationRegistry
+import com.google.gson.Gson
+import com.google.gson.JsonParser
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -94,6 +96,33 @@ class CompanionRunnerAndroidTest {
     private fun failReplyStorage()=store.writableDatabase.execSQL("CREATE TRIGGER synthetic_fail_c2 BEFORE INSERT ON messages WHEN NEW.mine=0 BEGIN SELECT RAISE(ABORT,'synthetic storage failure'); END")
     private fun healReplyStorage()=store.writableDatabase.execSQL("DROP TRIGGER synthetic_fail_c2")
     private suspend fun enableFuture(){makeFuture=true;AppServices.companionClock={clock};CompanionRepository(store){clock}.setPolicy("a",true,"synthetic-owner")}
+    private fun contactTool(request:TextChatRequest)=request.tools.single{toolNameOf(it)==ImmediateContact.NAME}
+    @Test fun disabledContactRequestKeepsOnlyTheParameterSuggestion():Unit=runBlocking {
+        val t=send();assertEquals(TurnState.COMPLETED,t.state)
+        val request=requests.single();val whole=Gson().toJson(request)
+        assertFalse(whole.contains("\"future\""))
+        assertFalse(whole.contains("\"when\""))
+        assertFalse(whole.contains("\"notBefore\""))
+        assertFalse(whole.contains("每轮聊天结束前"))
+        assertFalse(whole.contains("只有对方开启主动联系后"))
+        assertFalse(whole.contains("记下的时间只是再次考虑的机会"))
+        assertFalse(whole.contains("对方尚未开启主动联系"))
+        assertFalse(whole.contains("对方已暂停主动联系"))
+        assertTrue(whole.contains(ExperiencePresentation.READ_STATE_RULE))
+        val encoded=Gson().toJson(contactTool(request))
+        assertTrue(encoded.contains("改主动参数"))
+        val function=JsonParser.parseString(encoded).asJsonObject.getAsJsonObject("function")
+        assertEquals(setOf("改主动参数"),function.getAsJsonObject("parameters").getAsJsonObject("properties").keySet())
+    }
+    @Test fun enabledContactRequestStillOffersTheScheduleEntry():Unit=runBlocking {
+        CompanionRepository(store){clock}.setPolicy("a",true,"synthetic-owner")
+        val t=send();assertEquals(TurnState.COMPLETED,t.state)
+        val encoded=Gson().toJson(contactTool(requests.single()))
+        assertTrue(encoded.contains("\"future\""))
+        assertTrue(encoded.contains("\"when\""))
+        assertTrue(encoded.contains("每轮聊天结束前"))
+        assertTrue(encoded.contains("改主动参数"))
+    }
     @Test fun twoFormatFailuresRecoverBeforeNormalReplyIsPublished():Unit=runBlocking {
         invalid=2;val t=send();assertEquals(TurnState.COMPLETED,t.state);assertEquals(1,calls)
         assertEquals(0,reviewCalls);assertNull(CompanionRepository(store).cached(t));assertEquals(2,store.messages().size)

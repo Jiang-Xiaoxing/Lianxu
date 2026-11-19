@@ -100,7 +100,7 @@ class InteriorPagesUiTest {
         ui.onNodeWithTag("add-menu").performClick();shot("02-add-menu")
         ui.onNodeWithText("创建角色").performClick();shot("03-create-role")
         ui.onNodeWithTag("back").performClick()
-        ui.onNodeWithTag("role-actions-${first.id}").performClick();shot("04-role-actions")
+        ui.onNodeWithTag("friend-row-${first.id}").performTouchInput { longClick() };shot("04-role-actions")
         ui.onNodeWithTag("role-delete-${first.id}").performClick();ui.onNodeWithTag("role-delete-cancel").performClick()
         assertEquals(3,vm.friends.size)
         ui.onNodeWithTag("tab-1").performClick();shot("05-contacts")

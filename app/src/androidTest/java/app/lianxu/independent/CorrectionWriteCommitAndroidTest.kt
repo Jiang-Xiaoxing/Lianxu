@@ -91,8 +91,11 @@ class CorrectionWriteCommitAndroidTest {
     }
     @Test fun forgettingDiscardsStagesAndRejectsWritingTheBlockedSourceAgain()=runBlocking {
         val target=seed();val text="请忘掉旧偏好，原聊天保留";var step=0
-        respond={request->when(step++){0->add(old,old,"S2");1->{staged(request);control("forget",target,text)};2->{applied(request,"forget");add(old,old,"S2")};else->{
-            val rejected=result(request,"agent_memory_update");assertFalse(rejected.getBoolean("success"));assertEquals("SOURCE_CHANGED",rejected.getString("error"));TextChatResult.Success("已停用")}}}
+        respond={request->when(step++){0->add(old,old,"S2");1->{staged(request);control("forget",target,text)};else->{
+            applied(request,"forget")
+            assertFalse(request.tools.any{toolNameOf(it)=="agent_memory_update"})
+            assertFalse(request.messages.any{"[记忆工具编号]" in it.content})
+            TextChatResult.Success("已停用")}}}
         val turn=send(text);assertEquals(TurnState.COMPLETED,turn.state)
         assertFalse(CompanionRepository.aiAllowed(store.readableDatabase,"a",target))
         assertFalse(CompanionRepository.aiAllowed(store.readableDatabase,"a",turn.userMessageId))

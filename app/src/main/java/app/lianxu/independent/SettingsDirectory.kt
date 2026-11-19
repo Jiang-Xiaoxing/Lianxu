@@ -40,31 +40,33 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
     Column(Modifier.fillMaxSize().background(SettingsPaper).verticalScroll(rememberScrollState()).padding(UiSpace.page).testTag("settings-home"),verticalArrangement=Arrangement.spacedBy(16.dp)) {
         SectionLabel("聊天与陪伴")
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)) {
-            DirectoryRow("chat","大模型配置",summary,"settings-models","settings-model-summary"){vm.open("models")}
+            DirectoryRow("chat","大模型配置",summary,"settings-models","settings-model-summary",showChevron=false){vm.open("models")}
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
-            DirectoryRow("memory","记忆","记住的内容、来源与待确认","settings-processing"){vm.open("processing")}
+            DirectoryRow("memory","记忆","记住的内容、来源与待确认","settings-processing",showChevron=false){vm.open("processing")}
+            HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
+            DirectoryRow("plug","工具包","图片、视频、记忆工具与主动联系","settings-toolbox",showChevron=false){vm.open("toolbox")}
         }
         SectionLabel("数据")
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper)) {
-            DirectoryRow("storage","备份与诊断","完整角色、全部备份与诊断日志","settings-role-archive"){vm.open("role-archive")}
+            DirectoryRow("storage","备份与诊断","完整角色、全部备份与诊断日志","settings-role-archive",showChevron=false){vm.open("role-archive")}
         }
         SectionLabel("应用")
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper)) {
-            DirectoryRow("info","更新说明","随安装包保存，可随时回看","settings-updates"){vm.open("settings-updates")}
+            DirectoryRow("info","更新说明","随安装包保存，可随时回看","settings-updates",showChevron=false){vm.open("settings-updates")}
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
-            DirectoryRow("info","关于恋叙","作者、版本、许可与致谢","settings-info"){vm.open("settings-info")}
+            DirectoryRow("info","关于恋叙","作者、版本、许可与致谢","settings-info",showChevron=false){vm.open("settings-info")}
         }
     }
 }
 
-@Composable internal fun DirectoryRow(icon:String,title:String,description:String,tag:String,descriptionTag:String="",iconColor:Color?=null,onClick:()->Unit) {
+@Composable internal fun DirectoryRow(icon:String,title:String,description:String,tag:String,descriptionTag:String="",iconColor:Color?=null,showChevron:Boolean=true,onClick:()->Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min=80.dp).clickable(role=Role.Button,onClick=onClick).testTag(tag).padding(horizontal=18.dp,vertical=16.dp),verticalAlignment=Alignment.CenterVertically) {
         ControlIcon(icon,iconColor?:GreenText);Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)) {
             Text(title,color=SettingsInk,style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Medium)
             Text(description,Modifier.then(if(descriptionTag.isEmpty())Modifier else Modifier.testTag(descriptionTag)),style=MaterialTheme.typography.bodySmall,color=SettingsMuted,maxLines=2,overflow=TextOverflow.Ellipsis)
         }
-        Spacer(Modifier.width(12.dp));ControlIcon("chevron")
+        if(showChevron){Spacer(Modifier.width(12.dp));ControlIcon("chevron")}
     }
 }
 
@@ -84,7 +86,7 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
             InformationRow("info","作者",AppInformation.AUTHOR)
             InformationRow("storage","本地数据","角色、消息与配置保存在本机。API 密钥加密保存；全部导出时可明确选择包含密钥，包含时需要备份密码。请妥善保管备份和密码。卸载应用会清除本地数据。")
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
-            InformationRow("model","当前能力","文字聊天和寻找角色使用所选模型；总结记忆会请求所选记忆模型。视觉附件未开放；主动回查与当场写记忆可在记忆规则中分别控制，主动回查默认开启，当场写记忆默认关闭。")
+            InformationRow("model","当前能力","文字聊天和寻找角色使用所选模型；总结记忆会请求所选记忆模型。图片、视频与主动联系在工具包设置；主动回查与当场写记忆可在工具包的记忆工具中分别控制，主动回查默认开启，当场写记忆默认关闭。")
             HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
             InformationRow("info","应用版本",version,"settings-version")
             InformationRow("info","开源许可",AppInformation.LICENSE)

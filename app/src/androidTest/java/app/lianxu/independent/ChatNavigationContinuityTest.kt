@@ -32,6 +32,15 @@ class ChatNavigationContinuityTest {
         ui.waitUntil(15000){calls.get()==1&&vm.turns.any{it.friendId=="seed-lin"}}
     }
     @After fun release(){pending.complete(TextChatResult.Success("清理合成请求"))}
+
+    private fun assertStoredReplyIsDisplayed(body:String){
+        ui.waitUntil(10000){vm.messages.any{it.friendId=="seed-lin" && it.text==body}}
+        val message=vm.messages.single{it.friendId=="seed-lin" && it.text==body}
+        val tag="bubble-${message.id}-0"
+        ui.waitUntil(10000){ui.onAllNodesWithTag(tag,useUnmergedTree=true).fetchSemanticsNodes().size==1}
+        ui.onNodeWithTag(tag,useUnmergedTree=true).assertIsDisplayed()
+    }
+
     @Test fun viewingProfileMemoryAndAnotherRoleDoesNotCancelOrMisattributeReply(){
         start()
         ui.onNodeWithTag("chat-role-detail").performClick()
@@ -47,7 +56,7 @@ class ChatNavigationContinuityTest {
         ui.waitUntil(15000){vm.turns.single{it.friendId=="seed-lin"}.state==TurnState.COMPLETED}
         assertEquals("seed-lin",vm.messages.single{it.text=="只属于角色甲的合成回复"}.friendId)
         assertEquals(1,calls.get())
-        ui.onNodeWithText("只属于角色甲的合成回复").assertExists()
+        assertStoredReplyIsDisplayed("只属于角色甲的合成回复")
     }
     @Test fun stoppedActivityAndRecreationKeepTheSameRequest(){
         start()
@@ -59,14 +68,15 @@ class ChatNavigationContinuityTest {
         ui.activityRule.scenario.onActivity{vm=ViewModelProvider(it)[AppState::class.java]}
         ui.waitUntil(15000){vm.turns.single{it.friendId=="seed-lin"}.state==TurnState.COMPLETED}
         assertEquals(1,calls.get())
-        ui.onNodeWithText("后台完成的合成回复").assertExists()
+        assertStoredReplyIsDisplayed("后台完成的合成回复")
     }
     @Test fun explicitStopStillRejectsLateReply(){
         start()
         val turn=vm.turns.single{it.friendId=="seed-lin"}
         ui.onNodeWithTag("cancel-turn-${turn.id}").performClick()
-        ui.waitUntil(10000){vm.turns.single{it.id==turn.id}.state==TurnState.CANCELLED}
+        ui.waitUntil(10000){!vm.chatSending}
         pending.complete(TextChatResult.Success("停止后不应保存"))
+        ui.waitUntil(10000){vm.turns.single{it.id==turn.id}.state==TurnState.SUPERSEDED}
         ui.runOnIdle{vm.open("detail","seed-lin");vm.back()}
         ui.waitForIdle()
         assertTrue(vm.messages.none{it.text=="停止后不应保存"})

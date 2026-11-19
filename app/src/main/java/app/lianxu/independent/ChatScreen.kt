@@ -129,7 +129,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
     var selectedImage by draftState.image
     var importingImage by draftState.importing
     var imageError by remember(friend.id){mutableStateOf("")}
-    var viewedImage by remember(friend.id){mutableStateOf<ImageSource?>(null)}
+    var viewedImage by remember(friend.id){mutableStateOf<ChatMediaPreview?>(null)}
     val context=LocalContext.current
     val imageScope=rememberCoroutineScope()
     val inputFocus=remember(friend.id){FocusRequester()}
@@ -138,11 +138,16 @@ private suspend fun LazyListState.showEndOf(index:Int){
         if(uri!=null&&selectedFor==friend.id&&!importingImage){
             importingImage=true
             imageScope.launch{var candidate:PendingChatImage?=null;try{
-                withContext(kotlinx.coroutines.Dispatchers.IO){candidate=context.contentResolver.openInputStream(uri)?.let{ChatImages.prepare(it,context.cacheDir)}?:error("无法打开图片")}
+                withContext(kotlinx.coroutines.Dispatchers.IO){
+                    val video=VideoPolicy.isVideo(context.contentResolver.getType(uri).orEmpty())
+                    val extract=video&&ToolboxPreferences.videoMode(vm.processing.store)==ToolboxPreferences.VideoMode.FRAMES
+                    val jobContext=kotlinx.coroutines.currentCoroutineContext()
+                    candidate=context.contentResolver.openInputStream(uri)?.let{if(video)ChatVideos.prepare(it,context.cacheDir,extract){jobContext.ensureActive()}else ChatImages.prepare(it,context.cacheDir)}?:error("无法打开图片或视频")
+                }
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 selectedImage?.close();selectedImage=requireNotNull(candidate);candidate=null;draftVersion++;imageError=""
             }catch(e:kotlinx.coroutines.CancellationException){throw e}
-            catch(e:Exception){imageError=e.message?:"无法读取图片，请重新选择"}
+            catch(e:Exception){imageError=e.message?:"无法读取图片或视频，请重新选择"}
             finally{candidate?.close();importingImage=false}}
 
         }
@@ -152,6 +157,10 @@ private suspend fun LazyListState.showEndOf(index:Int){
     var focused by remember{mutableStateOf(false)}
     val focusManager=LocalFocusManager.current
     val keyboardController=LocalSoftwareKeyboardController.current
+    fun openMedia(source:ImageSource,mime:String){
+        if(VideoPolicy.isVideo(mime)){focusManager.clearFocus();keyboardController?.hide()}
+        viewedImage=ChatMediaPreview(source,mime)
+    }
     val imeVisible=WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current)>0
     var keyboardWasVisible by remember(friend.id){mutableStateOf(false)}
     LaunchedEffect(imeVisible,selectedImage){
@@ -197,7 +206,14 @@ private suspend fun LazyListState.showEndOf(index:Int){
     Column(Modifier.fillMaxSize().background(ChatPageBackground)){
         Row(Modifier.fillMaxWidth().heightIn(min=68.dp).background(ChatBarBackground).padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically){
             IconButton(onClick={vm.back()},modifier=Modifier.size(UiSpace.action).testTag("back").semantics{contentDescription="返回"}){ControlIcon("back",Ink)}
-            Text(if(typing)"对方正在输入…" else friend.name,Modifier.weight(1f).padding(horizontal=8.dp,vertical=8.dp).testTag("chat-title"),style=MaterialTheme.typography.titleLarge,maxLines=2,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            Box(Modifier.weight(1f).padding(horizontal=8.dp,vertical=8.dp)) {
+                val titleModifier = Modifier.testTag("chat-title")
+                if (typing) {
+                    TypingLabel(titleModifier, MaterialTheme.typography.titleMedium, "对方正在输入…", maxLines = 2)
+                } else {
+                    Text(friend.name,titleModifier,style=MaterialTheme.typography.titleLarge,maxLines=2,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                }
+            }
             IconButton(onClick={vm.open("detail",friend.id)},modifier=Modifier.size(UiSpace.action).testTag("chat-role-detail").semantics{contentDescription="角色资料"}){ControlIcon("more")}
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned{val p=it.localToWindow(Offset.Zero);viewport=Rect(p,it.size.toSize())}){
@@ -247,7 +263,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
                                         }
                                     }
                                     Column(Modifier.widthIn(max=width).onGloballyPositioned{val p=it.localToWindow(Offset.Zero);bounds=Rect(p,it.size.toSize())}.testTag("message-${message.id}").semantics(mergeDescendants=true){text=androidx.compose.ui.text.AnnotatedString(message.text)}.combinedClickable(onClick={},onLongClick={controlMessage=message}),verticalArrangement=Arrangement.spacedBy(5.dp)){
-                                        message.image?.let{MessagePicture(vm,it,onControl={controlMessage=message}){data->viewedImage=data}}
+                                        message.image?.let{ref->MessagePicture(vm,ref,onControl={controlMessage=message}){data->openMedia(data,ref.mime)}}
                                         val segments=if(message.text.isBlank())emptyList()else ChatBubbleSegments.forMessage(message.text,message.mine)
                                         segments.forEachIndexed{index,segment->
                                             Text(segment,Modifier.widthIn(max=width).clip(shape).background(if(group.mine)ChatUserBubble else ChatRoleBubble).background(colors.primary.copy(alpha=if(message.id in highlightIds)highlightAlpha else 0f)).padding(UiSpace.bubble).clearAndSetSemantics{testTag=if(highlighted && message.id in highlightIds)"chat-turn-highlight" else "bubble-${message.id}-$index"},style=MaterialTheme.typography.bodyLarge,color=if(group.mine)ChatUserText else ChatRoleText)
@@ -274,13 +290,13 @@ private suspend fun LazyListState.showEndOf(index:Int){
                 }}
             }
         }
-        selectedImage?.let{image->PendingPicture(image,focused,{inputFocus.requestFocus()},{viewedImage=image.source},{selectedImage?.close();selectedImage=null;draftVersion++})}
-        if(importingImage)Text("正在读取图片…",Modifier.padding(horizontal=56.dp),style=MaterialTheme.typography.bodySmall,color=Muted)
+        selectedImage?.let{image->PendingPicture(image,focused,{inputFocus.requestFocus()},{openMedia(image.source,image.mime)},{selectedImage?.close();selectedImage=null;draftVersion++})}
+        if(importingImage)Text("正在读取图片或视频…",Modifier.padding(horizontal=56.dp),style=MaterialTheme.typography.bodySmall,color=Muted)
         if(imageError.isNotBlank())Text(imageError,Modifier.padding(horizontal=16.dp),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
         Surface(modifier=Modifier.testTag("chat-input-bar"),color=ChatBarBackground,shadowElevation=0.dp){Column{
             HorizontalDivider(color=ChatInputBorder,thickness=.5.dp)
             Row(Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=4.dp),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                IconButton(onClick={vm.imagePickerRole=friend.id;picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))},enabled=!importingImage,modifier=Modifier.size(UiSpace.action).testTag("chat-attach").semantics{contentDescription="选择图片"}){ControlIcon("plus")}
+                IconButton(onClick={vm.imagePickerRole=friend.id;picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))},enabled=!importingImage,modifier=Modifier.size(UiSpace.action).testTag("chat-attach").semantics{contentDescription="选择图片或视频"}){ControlIcon("plus")}
                 val shape=RoundedCornerShape(28.dp)
                 val interaction=remember{MutableInteractionSource()}
                 val fieldColors=TextFieldDefaults.colors(focusedContainerColor=Paper,unfocusedContainerColor=Paper,disabledContainerColor=Paper,focusedIndicatorColor=Color.Transparent,unfocusedIndicatorColor=Color.Transparent,cursorColor=ChatSendButton)
@@ -317,5 +333,5 @@ private suspend fun LazyListState.showEndOf(index:Int){
     controlMessage?.let{m->AlertDialog(onDismissRequest={controlMessage=null},title={Text("这条消息的使用方式")},text={Text("停止提醒会保留记忆。不再使用会停止相关原话、记忆与判断的AI使用，并取消回访；原聊天保留供你查看。")},
         confirmButton={TextButton(onClick={vm.sourceControl(m.id,true);controlMessage=null},modifier=Modifier.testTag("companion-forget")){Text("不再用于记忆和判断")}},
         dismissButton={Row{TextButton(onClick={vm.sourceControl(m.id,false);controlMessage=null},modifier=Modifier.testTag("companion-stop-reminder")){Text("只停关联提醒")};TextButton(onClick={controlMessage=null}){Text("取消")}}})}
-    viewedImage?.let{ChatSourceViewer(it){viewedImage=null}}
+    viewedImage?.let{ChatMediaViewer(it){viewedImage=null}}
 }

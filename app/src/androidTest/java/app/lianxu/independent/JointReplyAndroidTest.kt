@@ -104,7 +104,9 @@ class JointReplyAndroidTest {
         val followUp=requests[1]
         assertFalse(followUp.messages.any{it.role=="tool"&&it.name==CompanionRecord.NAME})
         assertTrue(followUp.messages.any{"[多轮后台回顾]" in it.content})
-        assertEquals(listOf("你好\n\n"+CompanionPrompt.THINKING_REMINDER),requests.first().messages.filter{it.role=="user"}.map{it.content})
+        assertEquals(listOf("你好"),requests.first().messages.filter{it.role=="user"}.map{it.content})
+        assertEquals(1,requests.first().messages.sumOf{m->Regex.fromLiteral("[思考语言]").findAll(m.content).count()})
+        assertTrue(requests.first().messages.last().thinkingContext)
         assertTrue(requests.first().messages.any{"只属于角色设定" in it.content})
         val joined=requests.first().messages.joinToString("\n"){it.content}
         assertTrue("当前权限与交流边界" in joined)

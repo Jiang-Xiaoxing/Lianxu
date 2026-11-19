@@ -40,16 +40,19 @@ class ToolReceiptStateAndroidTest {
     private suspend fun done():ChatTurn=withTimeout(15000){while(true){val t=ChatLedger(store).all().lastOrNull();if(t!=null&&t.state!=TurnState.PENDING)return@withTimeout t;delay(10)};error("unreachable")}
     private suspend fun idle(r:ConversationRunner){withTimeout(15000){while("a" in r.sending)delay(10)}}
 
-    @Test fun thinkingReminderStaysOnWireOnly()=runBlocking{
+    @Test fun thinkingPromptStaysInTailSystemOnly()=runBlocking{
         val input="那你记一下，我喜欢吃意大利面";var count=0
         val r=runner{request->
-            count++;assertTrue(request.messages.last{it.role=="user"}.content.endsWith(CompanionPrompt.THINKING_REMINDER))
+            count++
+            assertTrue(request.messages.last{it.role=="user"}.content==input)
+            assertTrue(request.messages.last().thinkingContext)
+            assertEquals(1,request.messages.sumOf{m->Regex.fromLiteral("[思考语言]").findAll(m.content).count()})
             if(!toolRoundSeen(request))TextChatResult.Success("",listOf(writeCall("cn")),displayReasoning="先记下来。") else TextChatResult.Success("记好了。",displayReasoning="再回应。")
         }
         assertTrue(r.send("a",input){});idle(r);assertEquals(TurnState.COMPLETED,done().state);assertEquals(2,count)
         assertEquals(input,store.messages().single{it.mine}.text)
-        store.messages().forEach{assertFalse(it.text.contains(CompanionPrompt.THINKING_REMINDER));assertFalse(it.displayReasoning.contains(CompanionPrompt.THINKING_REMINDER))}
-        assertFalse(done().toolActivities.toString().contains(CompanionPrompt.THINKING_REMINDER))
+        store.messages().forEach{assertFalse(it.text.contains("[思考语言]"));assertFalse(it.displayReasoning.contains("[思考语言]"))}
+        assertFalse(done().toolActivities.toString().contains("[思考语言]"))
     }
     @Test fun aCommittedWriteShowsSavedAndKeepsItsThinkingOffset()=runBlocking{
         val r=runner{request->

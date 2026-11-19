@@ -39,7 +39,7 @@ internal class RoleArchiveRepository(private val store:Store) {
         data["chat_turns"]?.asJsonArray?.forEach{v->v.asJsonObject.apply{addProperty("config_id","");addProperty("owner_session","")}}
         return JsonObject().apply{addProperty("scope",if(records)"records" else "role");add("character",friend);add("prompts",prompts);add("records",data)}
     }
-    suspend fun export(id:String,records:Boolean):JsonObject=atomic{db->if(records)require(!db.rawQuery("SELECT 1 FROM chat_images WHERE friend_id=? LIMIT 1",arrayOf(id)).use{it.moveToFirst()}){"聊天含图片，请使用设置中的完整数据备份"};idle(db,id);snapshot(db,id,records).also{validate(db,RoleArchive.validate(it.toString().toByteArray()))}}
+    suspend fun export(id:String,records:Boolean):JsonObject=atomic{db->if(records)require(!db.rawQuery("SELECT 1 FROM chat_images WHERE friend_id=? LIMIT 1",arrayOf(id)).use{it.moveToFirst()}){"聊天含图片或视频，请使用设置中的完整数据备份"};idle(db,id);snapshot(db,id,records).also{validate(db,RoleArchive.validate(it.toString().toByteArray()))}}
     suspend fun preview(archive:RoleArchive.Package,target:String?):Preview=atomic{db->
         validate(db,archive)
         if(target==null)Preview(archive,null,null,"新增独立角色，不修改任何现有角色。\n${archive.summary}")

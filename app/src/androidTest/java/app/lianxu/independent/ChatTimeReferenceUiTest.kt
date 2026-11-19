@@ -28,11 +28,13 @@ class ChatTimeReferenceUiTest {
                 val originals=store.messagesFor("seed-lin").associateBy{it.id.toString()}
                 history.forEach{m->assertEquals(originals.getValue(m.sourceMessageId).text,m.content);assertEquals(0,m.sourcePrefix)}
             }finally{store.close()}
-            val reference=request.messages.single{it.turnContext};assertEquals("system",reference.role);assertEquals(reference,request.messages.last())
+            val reference=request.messages.single{it.turnContext};assertEquals("system",reference.role);assertEquals(reference,request.messages[request.messages.size-2])
             assertTrue(reference.content.contains("不要自行给正文加时间标签"))
-            assertTrue(request.messages.last{it.role=="user"}.content.endsWith("\n\n"+CompanionPrompt.THINKING_REMINDER))
-            assertEquals(1,request.messages.sumOf{Regex.fromLiteral(CompanionPrompt.THINKING_REMINDER).findAll(it.content).count()})
-            assertTrue(request.messages.first().content.contains(CompanionPrompt.thinkingLanguage("林间")))
+            assertTrue(request.messages.last().thinkingContext)
+            assertFalse(request.messages.last{it.role=="user"}.content.endsWith("\n\n"+CompanionPrompt.THINKING_REMINDER))
+            assertEquals(1,request.messages.sumOf{m->Regex.fromLiteral("[思考语言]").findAll(m.content).count()})
+            assertFalse(request.messages.first().content.contains("[思考语言]"))
+            assertEquals(CompanionPrompt.thinkingLanguage("林间"),request.messages.last().content)
             val index=inputs.indexOf(request.latestUserText());assertTrue(index>=0)
             assertEquals(index*2,history.size);histories+=history.size
             if(index==0&&request.tools.any{toolNameOf(it)=="agent_recall_search"}){
@@ -61,7 +63,7 @@ class ChatTimeReferenceUiTest {
         }
         runBlocking{val store=Store(context,mock.database);try{assertEquals(baseline+inputs.zip(replies).flatMap{listOf(it.first,it.second)},store.messagesFor("seed-lin").map{it.text})}finally{store.close()}}
         assertTrue(histories.containsAll(listOf(0,2,4)))
-        assertTrue("至少一次查记忆结果后的请求保留了中文思考提示与当前用户末尾提醒",afterRecall.get()>0)
+        assertTrue("至少一次查记忆结果后的请求保留了末尾独立中文思考提示且用户原话不变",afterRecall.get()>0)
         ui.activityRule.scenario.onActivity{a->a.getSystemService(android.view.inputmethod.InputMethodManager::class.java).hideSoftInputFromWindow(a.window.decorView.windowToken,0)}
         ui.waitForIdle();val folder=File(context.getExternalFilesDir(null),"chat-time-reference/ui").apply{mkdirs()};val bitmap=instrument.uiAutomation.takeScreenshot()
         File(folder,"three-synthetic-turns.png").outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()

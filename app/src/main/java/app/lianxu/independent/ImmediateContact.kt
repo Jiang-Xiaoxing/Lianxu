@@ -6,7 +6,13 @@ import com.google.gson.JsonParser
 internal object ImmediateContact {
     const val NAME="companion_contact"
     fun same(a:RoleFuture,b:RoleFuture)=a.copy(timing=a.timing.copy(expiresAt=0))==b.copy(timing=b.timing.copy(expiresAt=0))
-    fun definition(source:Long,now:Long,zone:java.time.ZoneId=java.time.ZoneId.systemDefault()):Map<String,Any> {
+    private fun parameterField()=mapOf("type" to "object","description" to "用户明确要求的参数建议，仍须用户确认")
+    fun definition(source:Long,now:Long,zone:java.time.ZoneId=java.time.ZoneId.systemDefault(),scheduling:Boolean=true):Map<String,Any> {
+        // Scheduling is its own exposure; when off the same tool only carries the confirmation-gated suggestion.
+        if(!scheduling)return mapOf("type" to "function","function" to mapOf(
+            "name" to NAME,
+            "description" to "仅当本轮用户明确提出更改主动联系的语气时，提出待用户确认的参数建议；不会直接修改设置。当前来源=$source。用户没有提出就不要调用；只是建议，不能声称已经改好。\n"+RelationParameterContract.parameterInstruction,
+            "parameters" to mapOf("type" to "object","additionalProperties" to false,"properties" to mapOf("改主动参数" to parameterField()),"required" to listOf("改主动参数"))))
         val sourceField=mapOf("type" to "integer","description" to "本轮已提供的有效用户消息编号；当前编号为$source")
         fun evidence(layer:String,extra:Map<String,Any> = emptyMap())=mapOf("type" to "object","properties" to mapOf("source" to sourceField,"layer" to mapOf("type" to "string","enum" to listOf(layer)))+extra,
             "required" to listOf("source","layer")+extra.keys,"additionalProperties" to false)
@@ -21,11 +27,12 @@ internal object ImmediateContact {
                 "properties" to mapOf("kind" to mapOf("type" to "string","enum" to listOf("interest_share","shared_continuation","follow_up","actual_result")),
                     "reason" to mapOf("type" to "string","minLength" to 1,"maxLength" to 1200),"when" to mapOf("type" to "string","description" to ContactTime.GUIDE),"evidence" to proof),
                 "required" to listOf("kind","reason","when","evidence")),
-            "改主动参数" to mapOf("type" to "object","description" to "用户明确要求的参数建议，仍须用户确认")))))
+            "改主动参数" to parameterField()))))
     }
     data class Request(val flow:RoleUnderstanding?,val parameters:RelationParameterProposal?)
-    fun parse(raw:String,input:String,context:RoleContext,now:Long,zone:java.time.ZoneId=java.time.ZoneId.systemDefault()):Request {
+    fun parse(raw:String,input:String,context:RoleContext,now:Long,zone:java.time.ZoneId=java.time.ZoneId.systemDefault(),scheduling:Boolean=true):Request {
         val root=JsonParser.parseString(raw).asJsonObject
+        if(!scheduling&&root.keySet().any{it!="改主动参数"})throw RoleContractViolation("SCHEDULING_DISABLED")
         require(root.keySet().all{it in setOf("future","改主动参数")})
         val future=root.get("future")?.takeUnless{it.isJsonNull}
         if(future!=null){val value=future.asJsonObject;val at=ContactTime.field(value,"when","notBefore",now,zone);value.remove("when");value.addProperty("notBefore",at)}
@@ -44,6 +51,10 @@ internal object ImmediateContact {
         }
         val parameters=RelationParameterContract.parse(root.get("改主动参数"),context.current,input,now)
         require(!root.has("改主动参数")||parameters!=null){"INVALID_CONTACT_PARAMETERS"}
+        if(!scheduling){
+            require(parameters!=null){"PARAMETER_SUGGESTION_REQUIRED"}
+            return Request(null,parameters)
+        }
         require(flow!=null||parameters!=null){"EMPTY_CONTACT"}
         return Request(flow,parameters)
     }

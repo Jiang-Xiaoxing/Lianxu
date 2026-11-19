@@ -44,7 +44,8 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
 @Composable fun ModelConfigScreen(onBack:()->Unit,state:ModelConfigState=viewModel(),saveForPurpose:ModelPurpose?=null) {
     LaunchedEffect(state.vaultVersion){state.refresh()}
     var screen by remember {mutableStateOf("overview")}
-    var overviewTab by rememberSaveable {mutableIntStateOf(0)}
+    val tabs=rememberPageTabs(2)
+    val overviewTab=tabs.selected
     val servicesScroll=rememberLazyListState()
     val purposesScroll=rememberLazyListState()
     var embeddingEditor by remember {mutableStateOf(false)}
@@ -110,21 +111,22 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
         if(screen=="overview"){
             Row(Modifier.padding(horizontal=UiSpace.page,vertical=12.dp).fillMaxWidth().selectableGroup().clip(RoundedCornerShape(28.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(4.dp)){
                 listOf("服务商","模型用途").forEachIndexed{index,label->
-                    Tab(selected=overviewTab==index,onClick={overviewTab=index},
+                    Tab(selected=overviewTab==index,onClick={tabs.select(index)},
                         modifier=Modifier.weight(1f).heightIn(min=UiSpace.action).clip(RoundedCornerShape(24.dp)).background(if(overviewTab==index)Paper else Color.Transparent).testTag(if(index==0)"config-tab-services" else "config-tab-purposes"),
                         selectedContentColor=ConfigInk,unselectedContentColor=ConfigGreen,text={Text(label,style=MaterialTheme.typography.labelLarge)})
                 }
             }
-            LazyColumn(Modifier.fillMaxSize().testTag("config-overview"),state=if(overviewTab==0)servicesScroll else purposesScroll,contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
-                if(state.status.isNotBlank())item{Notice(state.status,state.statusError)}
-                if(overviewTab==0){
-                if(state.configs.isEmpty())item{Column(Modifier.fillMaxWidth().heightIn(min=240.dp).testTag("config-services-empty"),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
+            // The visible panels have different lists and independent scroll positions.
+            PageTabContent(tabs){panel->LazyColumn(Modifier.fillMaxSize().testTag("config-overview"),state=if(panel==0)servicesScroll else purposesScroll,contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
+                if(state.status.isNotBlank())item("status"){Notice(state.status,state.statusError)}
+                if(panel==0){
+                if(state.configs.isEmpty())item("empty"){Column(Modifier.fillMaxWidth().heightIn(min=240.dp).testTag("config-services-empty"),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
                     ControlIcon("services",ConfigMuted,64.dp);Spacer(Modifier.height(20.dp))
                     Text("还没有保存的服务",style=MaterialTheme.typography.titleMedium,color=ConfigMuted)
                 }}
                 else {
-                item{SectionLabel("已保存的服务")}
-                item{Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
+                item("saved-label"){SectionLabel("已保存的服务")}
+                item("saved-services"){Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
                     state.configs.forEachIndexed {index,config->
                         val p=ProviderPresets.get(config.providerId)
                         Row(Modifier.fillMaxWidth().clickable(enabled=!state.busy&&!sharedWithOtherPurposes(config.id)){edit(config)}.testTag("config-edit-${config.id}").padding(18.dp),verticalAlignment=Alignment.CenterVertically){
@@ -139,17 +141,17 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
                                 Text(ModelStatusText.calls(call),Modifier.testTag("config-calls-${config.id}"),style=MaterialTheme.typography.bodySmall,color=if(call?.ok==false)ConfigErrorColor else ConfigMuted)
                             }
                             if(config.id==state.defaultId)Text("默认",Modifier.padding(horizontal=8.dp).clip(RoundedCornerShape(8.dp)).background(SelectedBackground).padding(horizontal=8.dp,vertical=4.dp),color=ConfigGreen,style=MaterialTheme.typography.bodySmall)
-                            ControlIcon("chevron")
                         }
                         if(index<state.configs.lastIndex)HorizontalDivider(Modifier.padding(start=72.dp,end=18.dp),color=ConfigLine)
                     }
                 }}
                 }
-                item{OutlinedButton(onClick={add()},enabled=!state.saving,modifier=Modifier.fillMaxWidth().heightIn(min=UiSpace.action).testTag("config-add")){Text("添加服务商")}}
-                if(saveForPurpose==null)item{OutlinedButton(onClick={add(true)},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).testTag("config-add-embedding")){Text("添加向量模型")}}
+                item("add-service"){OutlinedButton(onClick={add()},enabled=!state.saving,modifier=Modifier.fillMaxWidth().heightIn(min=UiSpace.action).testTag("config-add")){Text("添加服务商")}}
+                if(saveForPurpose==null)item("add-embedding"){OutlinedButton(onClick={add(true)},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).testTag("config-add-embedding")){Text("添加向量模型")}}
                 }else{
-                item{PurposeSelection(state,only=saveForPurpose)}
+                item("purposes"){PurposeSelection(state,only=saveForPurpose)}
                 }
+            }
             }
         }else if(screen=="providers"){
             OutlinedTextField(query,{query=it.take(80)},placeholder={Text("搜索服务商")},singleLine=true,leadingIcon={ControlIcon("search")},modifier=Modifier.fillMaxWidth().padding(horizontal=UiSpace.page,vertical=12.dp).testTag("provider-search"),shape=RoundedCornerShape(16.dp),colors=OutlinedTextFieldDefaults.colors(unfocusedContainerColor=Paper,focusedContainerColor=Paper,unfocusedBorderColor=Color.Transparent))
@@ -163,7 +165,7 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
                 if(groups.isEmpty())item{Text("没有找到，可选择自定义兼容服务。",Modifier.padding(20.dp),style=MaterialTheme.typography.bodyMedium,color=ConfigMuted);TextButton({choose(ProviderPresets.get("custom"))}){Text("手动填写")}}
                 items(groups,key={it.name}){group->val p=group.regions.first()
                     Row(Modifier.fillMaxWidth().clickable{if(group.regions.size==1)choose(p) else regionGroup=group}.testTag("provider-${p.id}").padding(horizontal=18.dp,vertical=14.dp),verticalAlignment=Alignment.CenterVertically){
-                        ProviderMark(p);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(group.name,style=MaterialTheme.typography.titleSmall);val detail=if(p.id=="custom")"手填地址与模型 ID" else group.regions.map{regionName(it)}.filter{it.isNotBlank()}.joinToString(" / ");if(detail.isNotBlank())Text(detail,style=MaterialTheme.typography.labelSmall,color=ConfigMuted,modifier=Modifier.padding(top=3.dp))};ControlIcon("chevron")
+                        ProviderMark(p);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(group.name,style=MaterialTheme.typography.titleSmall);val detail=if(p.id=="custom")"手填地址与模型 ID" else group.regions.map{regionName(it)}.filter{it.isNotBlank()}.joinToString(" / ");if(detail.isNotBlank())Text(detail,style=MaterialTheme.typography.labelSmall,color=ConfigMuted,modifier=Modifier.padding(top=3.dp))}
                     };HorizontalDivider(Modifier.padding(start=72.dp,end=18.dp),color=ConfigLine)
                 }
                 if(!allProviders&&query.isBlank())item{TextButton({allProviders=true},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).testTag("providers-all")){Text("全部服务")}}

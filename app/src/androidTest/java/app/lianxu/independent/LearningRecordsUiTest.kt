@@ -1,6 +1,8 @@
 package app.lianxu.independent
 
 import android.graphics.Bitmap
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.core.view.WindowInsetsCompat
@@ -34,6 +36,30 @@ class LearningRecordsUiTest {
         val bitmap=instrument.uiAutomation.takeScreenshot()
         File(dir,"$name.png").outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}
         bitmap.recycle()
+    }
+    @Test fun allFourChipsAlsoSwipeAndKeepSearchAndIndependentListPositions(){
+        start()
+        runBlocking{val seed=LearningRecordsFixture(vm.processing.store)
+            for(kind in listOf("viewpoint","interest","habit"))repeat(7){index->
+                seed.event("seed-lin","合成${kind}来源$index"){wire,c->wire.put("learning",seed.learning("","propose",org.json.JSONArray().put(seed.evidence(c.current.turnId)),"合成${kind}记录$index").put("kind",kind))}
+            };vm.refreshProcessing()}
+        val before=runBlocking{vm.companion.learningRecords("seed-lin")};assertEquals(21,before.size)
+        ui.runOnIdle{vm.open("role-learning","seed-lin")};awaitTag("learning-list")
+        ui.onNodeWithTag("learning-search").performTextInput("合成")
+        ui.runOnIdle{WindowInsetsControllerCompat(ui.activity.window,ui.activity.window.decorView).hide(WindowInsetsCompat.Type.ime())}
+        fun swipe(left:Boolean){ui.onNodeWithTag("learning-list").performTouchInput{swipe(Offset(width*(if(left).8f else .2f),height*.7f),Offset(width*(if(left).2f else .8f),height*.7f),400)}}
+        fun scroll()=ui.onNodeWithTag("learning-list").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+        ui.capturePagerDrag("learning")
+        ui.onNodeWithTag("learning-filter-all").assertIsSelected();swipe(false);ui.onNodeWithTag("learning-filter-all").assertIsSelected();shot("swipe-all-chips")
+        ui.onNodeWithTag("learning-list").performScrollToIndex(7);val allPosition=scroll();assertTrue(allPosition>0)
+        swipe(true);ui.onNodeWithTag("learning-filter-viewpoint").assertIsSelected();ui.onNodeWithTag("learning-list").performScrollToIndex(6);val viewPosition=scroll()
+        swipe(true);ui.onNodeWithTag("learning-filter-interest").assertIsSelected();swipe(true);ui.onNodeWithTag("learning-filter-habit").assertIsSelected();swipe(true);ui.onNodeWithTag("learning-filter-habit").assertIsSelected();shot("swipe-habit")
+        swipe(false);swipe(false);assertEquals(viewPosition,scroll(),2f);swipe(false);assertEquals(allPosition,scroll(),2f)
+        ui.onNodeWithTag("learning-list").performScrollToIndex(0);ui.onNodeWithTag("learning-search").assertTextContains("合成")
+        repeat(2){ui.onNodeWithTag("learning-filter-habit").performScrollTo().performClick();swipe(false);ui.onNodeWithTag("learning-filter-interest").assertIsSelected();ui.onNodeWithTag("learning-filter-all").performClick();ui.onNodeWithTag("learning-filter-all").assertIsSelected()}
+        ui.onNodeWithTag("learning-list").performTouchInput{swipeUp()};ui.onNodeWithTag("learning-list").performScrollToIndex(0);ui.onNodeWithTag("learning-filter-all").assertIsSelected()
+        ui.onNodeWithTag("learning-list").performTouchInput{swipe(Offset(width-1f,height*.7f),Offset(width*.3f,height*.7f),400)};ui.onNodeWithTag("learning-filter-all").assertIsSelected()
+        assertEquals(before,runBlocking{vm.companion.learningRecords("seed-lin")});assertEquals(0,calls.get())
     }
     @Test fun roleEntrySearchDetailAndHistoryAreReadOnly(){
         start()

@@ -12,7 +12,7 @@ internal class MemoryNumberedReferences(private val targets:List<SourceDialogue>
     private val sources=targets.flatMap{s->listOfNotNull(Item(s,"user"),if(s.assistant!=null)Item(s,"assistant")else null)+s.imageObservations.map{Item(s,"image",it)}}
     private val memories=existingIds.sorted()
     fun sourceRows()=JSONArray().apply{sources.forEachIndexed{i,item->
-        put(JSONObject().put("ref","S${i+1}").put("side",item.side).put("content",item.text).put("at",item.at).put("zone",item.source.zone).apply{item.observation?.let{put("origin","模型图片观察，非用户原话");put("image",it.evidence.json())}})
+        put(JSONObject().put("ref","S${i+1}").put("side",item.side).put("content",item.text).put("at",item.at).put("zone",item.source.zone).apply{item.observation?.let{put("origin","模型图片或视频观察，非用户原话");put("image",it.evidence.json())}})
     }}
     fun memoryRef(id:String)="M${memories.indexOf(id)+1}"
     fun normalize(operation:JSONObject):JSONObject {

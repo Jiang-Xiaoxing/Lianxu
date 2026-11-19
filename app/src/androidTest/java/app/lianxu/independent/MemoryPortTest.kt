@@ -342,8 +342,8 @@ class MemoryPortTest {
         withTimeout(10000){while(runner.sending.isNotEmpty())delay(20)}
         assertEquals(2,calls);assertEquals(1,repo.memories("a").size);assertEquals(TurnState.COMPLETED,ChatLedger(store).all().single().state)
         // Assertions stay on the instrumentation thread; a mismatch must fail this test, not kill its process.
-        assertEquals(0,structuredCalls);assertTrue(firstReply!!.messages.last().turnContext)
-        assertTrue(firstReply!!.messages.last().content.contains("时间"))
+        assertEquals(0,structuredCalls);assertTrue(firstReply!!.messages.single{it.turnContext}.content.contains("时间"));assertTrue(firstReply!!.messages.last().thinkingContext)
+        assertEquals("我喜欢花园",firstReply!!.messages.last{it.role=="user"}.content)
         assertEquals("Synthetic final",store.messages().single{!it.mine}.text)
     }
     @Test fun relativeDateRenderingKeepsUnknownsAndCrossYearDatesExplicit(){
@@ -364,7 +364,11 @@ class MemoryPortTest {
                 assertTrue(r.messages.first().content.contains(expected))
                 assertEquals(recall,r.tools.any{toolNameOf(it)=="agent_history_search"})
                 assertEquals(write,r.tools.any{toolNameOf(it)=="agent_memory_update"})
-                assertTrue(r.messages.last().turnContext);assertFalse(r.messages.last().content.contains("内部判断提示"))
+                val system=r.messages.filter{it.role=="system"}.joinToString("\n"){it.content}
+                assertEquals(recall,CompanionRecallBudget.QUERY_RULES in system)
+                assertEquals(write,"[记忆工具编号]" in system)
+                assertEquals(write,"S1 ->" in system)
+                assertTrue(r.messages.single{it.turnContext}.content.contains("程序时间参考"));assertTrue(r.messages.last().thinkingContext);assertFalse(r.messages.last().content.contains("内部判断提示"))
                 TextChatResult.Success("final")
             })
             assertTrue(result is TextChatResult.Success);assertTrue(ChatLedger(store).finish(t.id,t.attempt,"final"))
@@ -375,7 +379,7 @@ class MemoryPortTest {
             repo.saveMemoryRules(MemoryRules(proactiveRecall=true,recallRounds=2))
             val t=ChatLedger(store).begin("a","garden",config.id);val original=assembled();var calls=0
             val result=runtime(t).run(config,"synthetic-only",original,client{r->
-                assertEquals(original.messages.last(),r.messages.last());assertEquals(1,r.messages.count{it.turnContext})
+                assertEquals(original.messages.last(),r.messages.last());assertEquals(1,r.messages.count{it.turnContext});assertEquals(1,r.messages.count{it.thinkingContext})
                 assertFalse(r.messages.last().content.contains("内部判断提示"))
                 val pairs=r.messages.filter{it.role=="assistant"||it.role=="tool"}
                 assertEquals(calls*2,pairs.size)
@@ -387,6 +391,25 @@ class MemoryPortTest {
             assertTrue(result is TextChatResult.Success);assertEquals(3,calls);assertTrue(ChatLedger(store).finish(t.id,t.attempt,"final"))
         }
     }
+    @Test fun exhaustedWriteBatchesRemoveOnlyTheWriteGuidance()=runBlocking {
+        val turn=ChatLedger(store).begin("a","garden",config.id)
+        val tools=runtime(turn)
+        var batches=0
+        val result=tools.run(config,"synthetic-only",assembled(),client{r->
+            val system=r.messages.filter{it.role=="system"}.joinToString("\n"){it.content}
+            assertTrue(CompanionRecallBudget.QUERY_RULES in system)
+            val canWrite=batches<7
+            assertEquals(canWrite,r.tools.any{toolNameOf(it)=="agent_memory_update"})
+            assertEquals(canWrite,"[记忆工具编号]" in system)
+            assertEquals(canWrite,"S1 ->" in system)
+            if(canWrite){
+                batches++
+                TextChatResult.Success("",listOf(ChatToolCall("attempt-$batches","agent_memory_update","{}")))
+            }else TextChatResult.Success("final")
+        })
+        assertEquals(7,batches)
+        assertTrue(result is TextChatResult.Success)
+    }
     @Test fun actualUnsupportedFallbackRemovesCapabilityClaimAndKeepsTail()=runBlocking {
         val t=ChatLedger(store).begin("a","garden",config.id);val original=assembled();var calls=0
         val result=runtime(t).run(config,"synthetic-only",original,client{r->
@@ -394,7 +417,8 @@ class MemoryPortTest {
             if(calls==1){assertTrue(r.messages.first().content.contains("本次提供记忆回查与写入工具"));TextChatResult.Failure(ChatFailure.UNSUPPORTED_TOOLS)}
             else {
                 assertTrue(r.tools.isEmpty())
-                assertEquals(original.messages.drop(1),r.messages.drop(1).map{it.copy(content=it.content.removeSuffix("\n\n"+CompanionPrompt.THINKING_REMINDER))})
+                assertEquals(CompanionPrompt.forSend(original,emptyList()).messages,r.messages)
+                assertFalse(r.messages.any{CompanionRecallBudget.QUERY_RULES in it.content || "[记忆工具编号]" in it.content})
                 assertFalse(r.messages.first().content.contains("本次提供记忆回查与写入工具"))
                 assertTrue(r.messages.first().content.contains(CompanionPrompt.NO_MEMORY_TOOLS))
                 TextChatResult.Success("final")

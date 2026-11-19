@@ -17,9 +17,9 @@ class CompanionPromptTest {
         val head=(CompanionPrompt.build(f,p,emptyList(),"你好") as PromptBuild.Ready).request.messages.first().content
         assertFalse(head.contains("当前程序"));assertFalse(head.contains("没法上网"));assertTrue(head.contains("目前没有可用的网页搜索或浏览工具"))
         assertTrue(head.contains("不能假称查过网页"))
-        assertTrue(head.contains("只有对方开启主动联系后"));assertTrue(head.contains("不能保证准时联系或一定送到"))
+        assertFalse(head.contains("只有对方开启主动联系后"));assertFalse(head.contains("不能保证准时联系或一定送到"))
     }
-    @Test fun orderedLayersRawUserAndOneTail(){
+    @Test fun orderedLayersRawUserAndTwoProgramTails(){
         val p=RolePrompts(expression="自定义表达 {{character}}",extra="附加要求",examples=listOf(DialogueExample("示例用户","示例回复")),examplesEnabled=true)
         val history=listOf(Message(1,"a","近期原话",true,0),Message(2,"a","近期回复",false,1))
         val result=CompanionPrompt.build(f,p,history,"当前\n用户原文",listOf(PromptReference("记忆","有效事实",true)),listOf("待确认"),Instant.parse("2026-10-25T12:00:00Z"),ZoneId.of("Asia/Shanghai")) as PromptBuild.Ready
@@ -27,16 +27,16 @@ class CompanionPromptTest {
         assertTrue(m[0].content.contains("角色固定要求"));assertTrue(m[0].content.contains("自定义表达 合成甲"));assertFalse(m[0].content.contains(CompanionPrompt.DEFAULT_EXPRESSION))
         assertFalse(m.any{"语气示例" in it.content||it.content in setOf("示例用户","示例回复")})
         assertEquals("近期原话",m[1].content);assertEquals("近期回复",m[2].content);assertEquals(0,m[1].sourcePrefix);assertTrue(m[3].content.contains("有效事实"));assertTrue(m[4].content.contains("待确认"))
-        assertEquals(WireMessage("user","当前\n用户原文"),m[5]);assertTrue(m.last().content.contains("2026年10月25日 星期日 20:00"));assertFalse(m.any{"内部判断提示" in it.content})
-        assertEquals(1,m.count{it.content.contains("[程序时间参考")});assertEquals(1,m.count{it.content=="当前\n用户原文"});assertEquals("自定义表达 {{character}}",p.expression)
+        assertEquals(WireMessage("user","当前\n用户原文"),m[5]);assertTrue(m.single{it.turnContext}.content.contains("2026年10月25日 星期日 20:00"));assertTrue(m.last().thinkingContext);assertFalse(m.any{"内部判断提示" in it.content})
+        assertEquals(1,m.count{it.content.contains("[程序时间参考")});assertEquals(1,m.count{it.content=="当前\n用户原文"});assertEquals(1,m.count{it.content.contains("[思考语言]")});assertEquals("自定义表达 {{character}}",p.expression)
     }
-    /** 「内部判断提示」已整套删掉：角色以前写过、开过的也不再拼进去，只留程序时间参考。 */
-    @Test fun oldInternalPromptIsIgnoredAndTailKeepsOnlyTime(){
+    /** 「内部判断提示」已整套删掉：角色以前写过、开过的也不再拼进去，只留程序时间和思考两条尾巴。 */
+    @Test fun oldInternalPromptIsIgnoredAndTailKeepsOnlyTimeAndThinking(){
         val old=RolePromptStore.decode("""{"expression":"","extra":"","internalPrompt":"旧的内部规则","internalEnabled":true,"thinkingNone":false}""")
         assertFalse("internalPrompt" in RolePromptStore.encode(old));assertFalse("thinkingNone" in RolePromptStore.encode(old))
         for(p in listOf(RolePrompts(),old)){
             val m=(CompanionPrompt.build(f,p,emptyList(),"hi") as PromptBuild.Ready).request.messages
-            assertFalse(m.any{"内部判断提示" in it.content||"旧的内部规则" in it.content});assertTrue(m.last().content.contains("程序时间参考"))
+            assertFalse(m.any{"内部判断提示" in it.content||"旧的内部规则" in it.content});assertTrue(m.single{it.turnContext}.content.contains("程序时间参考"));assertTrue(m.last().thinkingContext)
         }
     }
     @Test fun noSilentHistoryOrCoreTrimming(){
@@ -106,7 +106,7 @@ class CompanionPromptTest {
         assertTrue(fixed.contains(CompanionPrompt.REMEMBERING_GUIDANCE.replace("{{user}}","旅人")));assertEquals(1,fixed.split(CompanionPrompt.REMEMBERING_GUIDANCE.replace("{{user}}","旅人")).size-1);assertFalse(fixed.contains("{{user}}"))
         assertTrue(fixed.contains("别编细节"));assertTrue(fixed.contains("旅人纠正过你的事，就按旅人纠正的来。"))
         assertTrue(fixed.contains("自定义语气"));assertTrue(fixed.contains("保留附加要求"))
-        assertEquals(raw,m.single{it.role=="user"}.content);assertTrue(m.last().turnContext)
+        assertEquals(raw,m.single{it.role=="user"}.content);assertTrue(m.single{it.turnContext}.content.contains("程序时间参考"));assertTrue(m.last().thinkingContext)
         assertTrue(m.any{"拿不准的记忆，不得当作确定事实" in it.content&&"未确认建议" in it.content})
     }
 }

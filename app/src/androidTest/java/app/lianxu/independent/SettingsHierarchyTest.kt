@@ -63,6 +63,24 @@ class SettingsHierarchyTest {
         val image=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
         File(dir,"$name.png").outputStream().use{image.compress(Bitmap.CompressFormat.PNG,100,it)}
     }
+    @Test fun navigationRowsStillOpenFromTheirRightEdgeAndReturn(){
+        fun right(tag:String){ui.onNodeWithTag(tag).performScrollTo().assertHasClickAction().performTouchInput{click(androidx.compose.ui.geometry.Offset(width-4f,height*.5f))}}
+        fun back(){InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);ui.waitForIdle()}
+        shot("arrows-settings-home")
+        right("settings-models");ui.onNodeWithTag("config-overview").assertIsDisplayed();shot("arrows-model-services")
+        right("config-edit-${b.id}");ui.onNodeWithTag("config-editor").assertIsDisplayed();back()
+        ui.onNodeWithTag("config-tab-purposes").performClick();right("purpose-select-chat")
+        ui.onNodeWithTag("purpose-clear-chat").assertIsDisplayed();back();shot("arrows-model-purposes");back()
+        right("settings-processing");right("settings-memory-rules");ui.onNodeWithTag("memory-rules-page").assertIsDisplayed()
+        right("rules-review-open");ui.onNodeWithTag("rules-review-sheet").assertIsDisplayed();back();shot("arrows-memory-rules");back()
+        right("processing-friend-seed-lin");ui.onNodeWithTag("memory-browser").assertIsDisplayed();back();back()
+        right("settings-role-archive");shot("arrows-backup");right("backup-role-entry")
+        ui.onNodeWithTag("archive-export").assertIsDisplayed();back();back()
+        right("settings-updates");ui.onNodeWithTag("updates-current-toggle").assertIsDisplayed();back()
+        right("settings-info");ui.onNodeWithTag("settings-info-page").assertIsDisplayed();back()
+        ui.onNodeWithTag("settings-home").assertIsDisplayed()
+        assertEquals(a.id,vault.defaultId())
+    }
     @Test fun directoryHomeAndSecondaryRowsWithRealRotation(){
         ui.onNodeWithTag("settings-model-summary",useUnmergedTree=true).assertTextContains(a.modelId,substring=true)
         ui.onNodeWithTag("config-name").assertDoesNotExist();ui.onNodeWithTag("compact-switch").assertDoesNotExist()

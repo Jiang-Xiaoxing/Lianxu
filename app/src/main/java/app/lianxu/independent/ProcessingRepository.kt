@@ -10,9 +10,18 @@ import java.util.UUID
 class ProcessingRepository(val store:Store) {
     internal fun memoryRules(db:SQLiteDatabase):Pair<MemoryRules,Int> = db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(MemoryRules.KEY)).use{c->if(c.moveToFirst()){val j=JSONObject(c.getString(0));MemoryRules.from(j) to j.getInt("version")}else MemoryRules() to 0}
     suspend fun memoryRules()=read{memoryRules(it)}
-    suspend fun saveMemoryRules(value:MemoryRules)=tx{db->
+    suspend fun saveMemoryRules(value:MemoryRules){tx{db->saveRules(db,value)}}
+    private fun saveRules(db:SQLiteDatabase,value:MemoryRules):MemoryRules {
         require(value.valid());val old=memoryRules(db)
         if(old.first!=value||old.second==0)db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",MemoryRules.KEY);put("value",value.json().put("version",old.second+1).toString())},SQLiteDatabase.CONFLICT_REPLACE)
+        return value
+    }
+    /** Separate settings pages update only the fields they own, in the same transaction. */
+    internal suspend fun saveMemoryCounts(value:MemoryRules)=tx{db->
+        saveRules(db,memoryRules(db).first.copy(recentRounds=value.recentRounds,summaryRounds=value.summaryRounds,relatedCount=value.relatedCount,reviewRounds=value.reviewRounds))
+    }
+    internal suspend fun saveMemoryTools(recall:Boolean,write:Boolean)=tx{db->
+        saveRules(db,memoryRules(db).first.copy(proactiveRecall=recall,immediateWrite=write))
     }
     internal suspend fun <T> read(block:(SQLiteDatabase)->T):T=withContext(Dispatchers.IO){AppMutationGate.read{block(store.readableDatabase)}}
     internal suspend fun <T> tx(block:(SQLiteDatabase)->T):T=Diagnostics.span("db.transaction"){withContext(Dispatchers.IO){AppMutationGate.read{

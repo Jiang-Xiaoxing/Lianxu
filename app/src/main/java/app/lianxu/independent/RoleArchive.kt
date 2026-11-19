@@ -92,11 +92,11 @@ internal object RoleArchive {
         val f=root["character"].asJsonObject;require(f.keySet()==setOf("id","name","bio","prompt","tone")){"角色字段不支持"}
         text(f,"id",200);val name=text(f,"name",30);text(f,"bio",500);text(f,"prompt",4000,true);require(integer(f["tone"]) in 0..10)
         val p=root["prompts"].asJsonObject
-        val fields=setOf("expression","extra","examples","examplesEnabled","examplesClosed","initialRelationship","characterDefinition","opening","relationTemplate","relationStart")
+        val fields=setOf("expression","extra","examples","examplesEnabled","examplesClosed","initialRelationship","characterDefinition","opening","relationTemplate","relationStart","thinkingPrompt")
         // 已删掉的「内部判断提示」字段：旧包里有就忽略，不报错也不使用。
         val retired=setOf("internalPrompt","internalEnabled","thinkingNone")
         require(p.keySet().all{it in fields||it in retired}){"提示设置含未知字段"}
-        listOf("expression","extra","initialRelationship","characterDefinition","opening","relationTemplate","relationStart").forEach{if(p.has(it))text(p,it,if(it=="initialRelationship")4000 else 8000,true)}
+        listOf("expression","extra","initialRelationship","characterDefinition","opening","relationTemplate","relationStart","thinkingPrompt").forEach{if(p.has(it))text(p,it,if(it=="initialRelationship")4000 else 8000,true)}
         listOf("examplesEnabled","examplesClosed").forEach{if(p.has(it))require(p[it].isJsonPrimitive&&p[it].asJsonPrimitive.isBoolean)}
         if(p.has("relationTemplate"))require(text(p,"relationTemplate",40,true).let{it.isEmpty()||RelationTemplate.named(it)!=null})
         if(p.has("relationStart"))require(text(p,"relationStart",20) in RelationStart.entries.map{it.name})

@@ -1,5 +1,8 @@
 package app.lianxu.independent
 
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -24,11 +27,13 @@ import kotlinx.coroutines.launch
     var memories by remember(friend.id){mutableStateOf(emptyList<StoredMemory>())};var candidates by remember(friend.id){mutableStateOf(emptyList<ProcessingRepository.Candidate>())}
     var reviews by remember(friend.id){mutableStateOf(emptyList<MemoryBatchRepository.Review>())};var budget by remember(friend.id){mutableStateOf<CoreBudgetState?>(null)}
     var task by remember(friend.id){mutableStateOf(ProcessingRepository.TaskStatus())};var policy by remember(friend.id){mutableStateOf(ProcessingPolicy())}
-    var mine by rememberSaveable(friend.id){mutableStateOf(false)}
+    val tabs=key(friend.id){rememberPageTabs(2)}
+    val mine=tabs.selected==1
     var listMenu by remember{mutableStateOf(false)}
     var clarity by remember{mutableStateOf(emptyMap<String,Double>())}
     LaunchedEffect(memories){clarity=repo.memoryUiClarity(memories)}
-    val memoryList=rememberLazyListState()
+    val memoryLists=key(friend.id){listOf(rememberLazyListState(),rememberLazyListState())}
+
     var detailId by rememberSaveable(friend.id){mutableStateOf<String?>(null)};var mode by rememberSaveable(friend.id){mutableStateOf("browse")}
     var editing by remember(friend.id){mutableStateOf(false)};var busy by remember(friend.id){mutableStateOf(false)};var error by remember(friend.id){mutableStateOf("")}
     var versions by remember(friend.id){mutableStateOf<List<StoredMemory>?>(null)};var evidence by remember(friend.id){mutableStateOf<StoredMemory?>(null)}
@@ -113,7 +118,7 @@ import kotlinx.coroutines.launch
                 budget?.let{b->Text("核心 ${b.used} / 维护目标 ${b.goal} Token",Modifier.testTag("core-budget-status"));if(b.overGoal)Text("核心超过维护目标。人工、锁定及进行中的批次保留，请核对后选择；没有静默截断。",Modifier.testTag("core-budget-warning"),style=MaterialTheme.typography.bodySmall,color=Muted)
                     b.entries.forEach{m->Column{Text(m.text,style=MaterialTheme.typography.bodyMedium);TextButton({demote=m},enabled=!summarizing,modifier=Modifier.testTag("core-demote-${m.id}")){Text("改为普通记忆")}}}}
                 HorizontalDivider(color=Line)
-                Card(onClick={vm.open("settings-memory",friend.id)},modifier=Modifier.fillMaxWidth().testTag("memory-rules-open")){Row(Modifier.fillMaxWidth().padding(18.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("记忆规则",style=MaterialTheme.typography.titleMedium);Text("调整保留数量与记忆工具开关",style=MaterialTheme.typography.bodySmall,color=Muted)};ControlIcon("chevron")}}
+                Card(onClick={vm.open("settings-memory",friend.id)},modifier=Modifier.fillMaxWidth().testTag("memory-rules-open")){Row(Modifier.fillMaxWidth().padding(18.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("记忆规则",style=MaterialTheme.typography.titleMedium);Text("调整保留数量与回顾间隔",style=MaterialTheme.typography.bodySmall,color=Muted)}}}
                 AppField(coreGoal,{coreGoal=it.take(5)},"核心维护目标（Token）","memory-core-goal",true)
                 TextButton({action{val p=policy.copy(coreGoal=coreGoal.toIntOrNull()?:0);if(!p.valid())throw ProcessingRejected("CAPACITY");repo.savePolicy(friend.id,p);repo.maintainCore(friend.id)}},enabled=!summarizing){Text("保存核心目标")}
                 TextButton({action{sourceRows=repo.sources(friend.id)}},modifier=Modifier.testTag("processing-sources")){Text("回查聊天原话")}
@@ -130,18 +135,20 @@ import kotlinx.coroutines.launch
             }
         }else{
             val now=System.currentTimeMillis()
-            val shown=memories.filter{it.manual==mine}.sortedByDescending{it.createdAt}
-            Column(Modifier.fillMaxSize().padding(horizontal=UiSpace.page)){
-                Row(Modifier.fillMaxWidth().padding(vertical=10.dp).background(Line.copy(alpha=.35f),androidx.compose.foundation.shape.RoundedCornerShape(14.dp)).padding(4.dp)){
+            Column(Modifier.fillMaxSize().padding(horizontal=UiSpace.page).testTag("memory-browser")){
+                Row(Modifier.fillMaxWidth().selectableGroup().padding(vertical=10.dp).background(Line.copy(alpha=.35f),androidx.compose.foundation.shape.RoundedCornerShape(14.dp)).padding(4.dp)){
                     listOf(false to "她记下的",true to "我写的").forEach{(value,label)->
-                        Box(Modifier.weight(1f).background(if(mine==value)Paper else androidx.compose.ui.graphics.Color.Transparent,androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).clickable{mine=value}.padding(vertical=12.dp),contentAlignment=Alignment.Center){Text(label,color=if(mine==value)MaterialTheme.colorScheme.onSurface else Muted)}
+                        Box(Modifier.weight(1f).background(if(mine==value)Paper else androidx.compose.ui.graphics.Color.Transparent,androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).selectable(mine==value,role=androidx.compose.ui.semantics.Role.Tab){tabs.select(if(value)1 else 0)}.testTag(if(value)"memory-tab-mine"else"memory-tab-hers").padding(vertical=12.dp),contentAlignment=Alignment.Center){Text(label,color=if(mine==value)MaterialTheme.colorScheme.onSurface else Muted)}
                     }
                 }
                 if(failure!=null&&!summarizing)TextButton({mode="maintenance"},modifier=Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer.copy(alpha=.45f),androidx.compose.foundation.shape.RoundedCornerShape(14.dp)).testTag("memory-batch-failure")){Text("有一段聊天没总结成功　重试 ›",maxLines=1)}
-                LazyColumn(Modifier.weight(1f).fillMaxWidth().background(Paper,androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).testTag("memory-list"),state=memoryList,contentPadding=PaddingValues(18.dp)){
-                    if(mine)item{TextButton({editing=true},enabled=!summarizing,modifier=Modifier.testTag("memory-add")){Text("＋ 写一条想让她记住的事")}}
+                PageTabContent(tabs,Modifier.weight(1f).fillMaxWidth()){page->
+                    val manual=page==1
+                    val shown=memories.filter{it.manual==manual}.sortedByDescending{it.createdAt}
+                    LazyColumn(Modifier.fillMaxSize().background(Paper,androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).testTag("memory-list"),state=memoryLists[page],contentPadding=PaddingValues(18.dp)){
+                    if(manual)item{TextButton({editing=true},enabled=!summarizing,modifier=Modifier.testTag("memory-add")){Text("＋ 写一条想让她记住的事")}}
                     item{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End,verticalAlignment=Alignment.CenterVertically){MemoryClarityDot(0,7);Text(" 记得牢　",color=Muted,style=MaterialTheme.typography.bodySmall);MemoryClarityDot(3,7);Text(" 快忘了",color=Muted,style=MaterialTheme.typography.bodySmall)}}
-                    if(shown.isEmpty())item{Text(if(mine)"写下希望她记住的小事。" else "还没有记下什么，多聊聊吧",Modifier.padding(vertical=32.dp),color=Muted)}
+                    if(shown.isEmpty())item{Text(if(manual)"写下希望她记住的小事。" else "还没有记下什么，多聊聊吧",Modifier.padding(vertical=32.dp),color=Muted)}
                     shown.groupBy{memoryUiGroup(it.createdAt,now)}.forEach{(group,rows)->
                         item{Text(group,Modifier.padding(top=24.dp,bottom=8.dp),color=Muted,style=MaterialTheme.typography.bodySmall)}
                         items(rows,key={it.id}){m->
@@ -156,7 +163,7 @@ import kotlinx.coroutines.launch
                             }
                         }
                     }
-                }
+                }}
             }
         }
     }
@@ -164,7 +171,7 @@ import kotlinx.coroutines.launch
     deleting?.let{m->AlertDialog({deleting=null},title={Text("删除这条记忆？")},text={Text("删除后她不会再想起这件事。")},confirmButton={TextButton({action{repo.deleteMemory(friend.id,m.id);deleting=null;detailId=null}},enabled=!summarizing&&!busy,modifier=Modifier.testTag("memory-delete-confirm")){Text("删除",color=MaterialTheme.colorScheme.error)}},dismissButton={TextButton({deleting=null}){Text("取消")}})}
     if(editing)MemoryV2Editor(detail,{editing=false},!summarizing){text,c,a,t,d,l,core,lock,birthday->action{repo.manualSave(friend.id,detail?.id,text,c,core,lock,a,t,d,l,birthday);editing=false}}
     demote?.let{m->AlertDialog({demote=null},title={Text("改为普通记忆？")},text={Text("只取消核心标记，正文、来源、锁定和历史保留。")},confirmButton={TextButton({action{repo.chooseCore(friend.id,m.id,m.version,false);demote=null}},enabled=!summarizing,modifier=Modifier.testTag("core-demote-confirm")){Text("确认改为普通")}},dismissButton={TextButton({demote=null}){Text("取消")}})}
-    evidence?.let{m->AlertDialog({evidence=null},title={Text("来源快照")},text={Column(Modifier.verticalScroll(rememberScrollState())){if(!m.category.modern)Text("原分类：${m.category.label}，原文与历史保留。 ");if(m.evidence.isEmpty())Text("人工记录，没有模型原话证据。");m.evidence.forEach{e->Text("${e.source.turnId}@${e.source.version} · ${if(e.side=="image")"模型图片观察，非用户原话；原图消息 ${e.image?.imageSource?.turnId}"else e.side}\n${e.snapshot}\n")};Text("已编辑或撤回的来源仅作历史快照。")}},confirmButton={TextButton({evidence=null}){Text("关闭")}})}
+    evidence?.let{m->AlertDialog({evidence=null},title={Text("来源快照")},text={Column(Modifier.verticalScroll(rememberScrollState())){if(!m.category.modern)Text("原分类：${m.category.label}，原文与历史保留。 ");if(m.evidence.isEmpty())Text("人工记录，没有模型原话证据。");m.evidence.forEach{e->Text("${e.source.turnId}@${e.source.version} · ${if(e.side=="image")"模型图片或视频观察，非用户原话；原附件消息 ${e.image?.imageSource?.turnId}"else e.side}\n${e.snapshot}\n")};Text("已编辑或撤回的来源仅作历史快照。")}},confirmButton={TextButton({evidence=null}){Text("关闭")}})}
     versions?.let{rows->AlertDialog({versions=null},title={Text("版本历史")},text={Column(Modifier.verticalScroll(rememberScrollState())){rows.forEach{m->Text("v${m.version} · ${m.text}");TextButton({action{repo.restore(friend.id,m.id,m.version);versions=null}},enabled=!summarizing){Text("恢复为新版本")}}}},confirmButton={TextButton({versions=null}){Text("关闭")}})}
     sourceRows?.let{rows->AlertDialog({sourceRows=null},title={Text("聊天原话")},text={Column(Modifier.verticalScroll(rememberScrollState())){rows.forEach{s->Text("${s.source.turnId}@${s.source.version}\n我：${s.user.text}\n${if(s.assistant==null)"" else friend.name+"："+s.assistant.text}");TextButton({sourceRows=null;sourceEdit=s}){Text("编辑 / 撤回 / 历史")}}}},confirmButton={TextButton({sourceRows=null}){Text("关闭")}})}
     sourceEdit?.let{s->SourceEditor(repo,s,{sourceEdit=null}){impact->action{SourceChanges(repo).confirm(impact);sourceEdit=null}}}

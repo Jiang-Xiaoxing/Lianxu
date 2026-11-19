@@ -23,7 +23,7 @@ internal class ChatDraftState(text:String="",version:Long=0){
 
 class AppState @JvmOverloads constructor(application: Application, client:TextChatClient=AppServices.createTextClient(),vaultNamespace:String=AppServices.vaultNamespace) : AndroidViewModel(application) {
     internal val chatDrafts=mutableMapOf<String,ChatDraftState>()
-    override fun onCleared(){chatDrafts.values.forEach{it.image.value?.close()};super.onCleared()}
+    override fun onCleared(){chatBinding.detach(this);chatDrafts.values.forEach{it.image.value?.close()};super.onCleared()}
     internal var imagePickerRole:String?=null
     private val store = Store(application,AppServices.databaseName)
     private val ledger=ChatLedger(store)
@@ -42,16 +42,36 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     internal var companionPolicy by mutableStateOf("disabled")
     var notificationTarget by mutableStateOf<Long?>(null);private set
     internal suspend fun settleCompanion(){companionNotifications.reconcile();CompanionScheduler.enqueue(getApplication(),companion)}
-    internal fun setCompanionEnabled(enabled:Boolean,onEnabled:()->Unit={}){val role=activeId;viewModelScope.launch{
+    internal suspend fun changeCompanionPermission(role:String,enabled:Boolean){
         companion.setPolicy(role,enabled,CompanionRuntime.owner)
         if(!enabled)CompanionScheduler.cancel(getApplication(),role)
-        if(activeId==role){companionPolicy=companion.policy(role);if(enabled&&companionPolicy=="enabled")onEnabled()}
+        if(activeId==role)companionPolicy=companion.contactPolicies()[role]?:"disabled"
         settleCompanion();reload()
+    }
+    internal fun setCompanionEnabled(enabled:Boolean,onEnabled:()->Unit={}){val role=activeId;viewModelScope.launch{
+        try{changeCompanionPermission(role,enabled);if(activeId==role&&enabled&&companionPolicy=="enabled")onEnabled()}
+        catch(e:CancellationException){throw e}catch(_:Exception){error="主动联系操作未完整完成，请核对当前开关后重试。"}
+    }}
+    internal fun updateCompanionPermission(role:String,enabled:Boolean,done:(Result<String>)->Unit){viewModelScope.launch{
+        try{changeCompanionPermission(role,enabled);done(Result.success(requireNotNull(companion.contactPolicies()[role])))}
+        catch(e:CancellationException){throw e}catch(e:Exception){done(Result.failure(e))}
+    }}
+    internal fun retryCompanionContact(role:String,done:(Result<Int>)->Unit){viewModelScope.launch{
+        try{companion.retryFailed(role);settleCompanion();done(Result.success(companion.retryable(role)))}
+        catch(e:CancellationException){throw e}catch(e:Exception){done(Result.failure(e))}
+    }}
+    internal fun saveToolboxOrder(order:List<String>,done:(Boolean)->Unit){viewModelScope.launch{
+        try{ToolboxPreferences.saveOrder(processing.store,order);done(true)}
+        catch(e:CancellationException){throw e}catch(_:Exception){done(false)}
+    }}
+    internal fun saveVideoMode(mode:ToolboxPreferences.VideoMode,done:(Boolean)->Unit){viewModelScope.launch{
+        try{ToolboxPreferences.saveVideoMode(processing.store,mode);done(true)}
+        catch(e:CancellationException){throw e}catch(_:Exception){error="保存视频方式失败，请重试。";done(false)}
     }}
     internal fun companionRead(role:String,id:Long,stillVisible:()->Boolean){viewModelScope.launch{companion.markRead(role,id){page=="chat"&&activeId==role&&stillVisible()};companionReceipts=companion.receipts();companionNotifications.reconcile()}}
     internal fun sourceControl(messageId:Long,forget:Boolean){val role=activeId;viewModelScope.launch{
         val id=companion.sourceOfMessage(role,messageId)?:return@launch
-        runner.cancel(role)
+        runner.cancel(role,"source_control")
         if(forget)companion.forget(role,id)else companion.stopReminder(role,id)
         settleCompanion();reload()
     }}
@@ -82,23 +102,27 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     internal suspend fun exportBackup(id:String?,includeKeys:Boolean,password:CharArray?=null)=Diagnostics.span("backup.export",mapOf("scope" to if(id==null)"all" else "role","include_keys" to includeKeys)) {backup.export(id,includeKeys,password)}
     internal suspend fun importBackup(plan:BackupRepository.Preview,confirmed:Boolean,lease:ChatAttemptLease,password:CharArray?=null):List<String> = withContext(NonCancellable){Diagnostics.span("backup.import",mapOf("mode" to plan.mode,"scope" to if(plan.pack.all)"all" else "role")) {
         val ids=if(plan.mode=="REPLACE"&&plan.pack.all)diagnosticSave.withLock{
-            val detailed=plan.pack.root["preferences"].asJsonObject["diagnostic-detailed"]?.asString=="1"
+            val detailed=plan.pack.root["preferences"].asJsonObject[EXPORT_DETAIL_PREF]?.asString!="0"
             val restored=backup.commit(plan,confirmed,lease,password=password)
-            diagnosticChoice++;diagnosticDetailed=detailed;savedDiagnosticDetailed=detailed;Diagnostics.detailed=detailed
+            diagnosticChoice++;selectDetailedExport(detailed);savedDiagnosticDetailed=detailed
             restored
         }else backup.commit(plan,confirmed,lease,password=password)
         if(plan.mode=="REPLACE"){
             val replaced=if(plan.pack.all)friends.map{it.id}else listOf(requireNotNull(plan.target))
-            replaced.forEach{runner.cancel(it);memory.cancel(it)}
+            replaced.forEach{runner.cancel(it,"backup_replacement");memory.cancel(it)}
         }
         avatarCache.reset();messagePrints=emptyMap();reload();persona=store.persona();refreshUserAvatar();ids
     }}
-    internal val memory=MemoryEngine(viewModelScope,processing,modelAccess,diagnosticClient,{reload()})
+    internal val memory:MemoryEngine get()=chatBinding.memory
     private val manualMemoryJobs=mutableMapOf<String,Job>()
-    private val runner=ConversationRunner(viewModelScope,store,modelVault,diagnosticClient,processing,memory,{reload()},{error=it},{settleCompanion()},displayReplies=true)
+    private val chatBinding=ChatRunnerBinding.acquire(store,modelVault,diagnosticClient,processing,this)
+    private val runner get()=chatBinding.runner
+    internal suspend fun refreshChat(){reload()}
+    internal fun chatNotice(message:String){error=message}
     var processingRevision by mutableIntStateOf(0);private set
     var turns by mutableStateOf(emptyList<ChatTurn>());private set
-    val chatSending get()=activeId in runner.sending
+    internal fun isReplying(role: String) = role in runner.sending
+    val chatSending get()=isReplying(activeId)
     internal val chatPreview get()=runner.previews[activeId]
     val busy get()=saving||chatSending
     val chatInputAvailable get()=!saving
@@ -127,16 +151,20 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     var persona by mutableStateOf(UserPersona());private set
     val nickname get()=persona.displayName
     var ready by mutableStateOf(false); private set
-    /** One switch: detailed journal mode records reasoning text and exports detailed rows. */
-    internal var diagnosticDetailed by mutableStateOf(false); private set
-    private var savedDiagnosticDetailed=false
+    /** Changing format invalidates a pending detailed export, even after switching back. */
+    internal var detailedExportSession: Any? by mutableStateOf(Any()); private set
+    internal val diagnosticDetailed get() = detailedExportSession != null
+    private var savedDiagnosticDetailed=true
+    private fun selectDetailedExport(value:Boolean) {
+        if(value != diagnosticDetailed) detailedExportSession = if(value) Any() else null
+    }
     private var diagnosticChoice=0L
     private val diagnosticSave=Mutex()
     /** Test seam: lets device tests inject a slow or failing save without touching real preferences. */
     internal var diagnosticPersist: (suspend (String)->Unit)?=null
     internal fun setDiagnosticDetailed(value:Boolean){
         val choice=++diagnosticChoice
-        diagnosticDetailed=value;Diagnostics.detailed=value
+        selectDetailedExport(value)
         viewModelScope.launch{
             // Saves are serialized and write the value current at write time, so a fast on→off cannot
             // resurrect "on" after restart; a failed save rolls the switch back to what is really stored.
@@ -144,19 +172,21 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
                 val current=diagnosticDetailed
                 val raw=if(current)"1" else "0"
                 diagnosticPersist?.invoke(raw)
-                store.savePreference("diagnostic-detailed",raw)
+                store.savePreference(EXPORT_DETAIL_PREF,raw)
                 current
             }}.getOrNull()}
             // The disk always reflects the newest completed write, whatever the switch shows now.
             if(written!=null)savedDiagnosticDetailed=written
             // A newer choice owns the switch now: an older save may not roll it back.
             if(choice!=diagnosticChoice)return@launch
-            if(written==null){Diagnostics.event("diagnostic.preference.failed");diagnosticDetailed=savedDiagnosticDetailed;Diagnostics.detailed=savedDiagnosticDetailed}
+            if(written==null){Diagnostics.event("diagnostic.preference.failed");selectDetailedExport(savedDiagnosticDetailed)}
         }
     }
     init { viewModelScope.launch { runCatching { val savedDetailed=withContext(Dispatchers.IO){
-        val saved=runCatching{store.preference("diagnostic-detailed","0")}.getOrDefault("0")=="1";Diagnostics.detailed=saved;saved
-    };diagnosticDetailed=savedDetailed;savedDiagnosticDetailed=savedDetailed;withContext(Dispatchers.IO){Diagnostics.configure(java.io.File(application.filesDir,"diagnostics/$vaultNamespace"),application.packageManager.getPackageInfo(application.packageName,0).versionName.orEmpty())};ledger.recoverInterrupted();companion.checkContinuity(CompanionRuntime.owner);reload();  persona=store.persona();refreshUserAvatar(); ready=true;settleCompanion();recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
+        Diagnostics.startLocalRecording(application, vaultNamespace)
+        modelVault.list() // Register persisted model credentials before accepting user input.
+        store.preference(EXPORT_DETAIL_PREF,"1")=="1"
+    };selectDetailedExport(savedDetailed);savedDiagnosticDetailed=savedDetailed;ledger.recoverInterrupted();companion.checkContinuity(CompanionRuntime.owner);runner.restoreReceived();reload();  persona=store.persona();refreshUserAvatar(); ready=true;settleCompanion();recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
     private var reloadSerial=0L
     private val avatarCache=RoleAvatarCache()
     private var messagePrints=emptyMap<String,MessageFingerprint>()
@@ -184,8 +214,8 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     private suspend fun recoverProcessing(){memory.recover();ReplyAccountingScheduler.recover(store)}
     fun foreground(){if(ready)viewModelScope.launch{runCatching{companion.checkContinuity(CompanionRuntime.owner);settleCompanion();reload();recoverProcessing()}}}
     // A chat attempt belongs to its role, not to the currently visible page.
-    fun open(page: String, id: String = "") { if(this.page=="chat"&&(page!="chat"||id!=activeId))runner.cancelImageAttempt(activeId); if(page=="detail") detailReturn=this.page;if(page=="settings-memory")memorySettingsReturn=this.page;if(page=="processing-role")processingReturn=if(this.page=="detail")"detail" else "processing"; cancelSearch(); this.page=page; activeId=id; error="" }
-    fun back() { if(page=="chat")runner.cancelImageAttempt(activeId); if(page=="chat" && memoryChatReturn){memoryChatReturn=false;memoryChatRequest.consume();page="processing-role";return}; if(page=="search-detail")page="search" else if(page=="settings-memory")page=memorySettingsReturn else if(page=="role-prompts"||page=="role-learning"||page=="role-relationship"||page=="role-companion")page="detail" else if(page=="processing-role")page=processingReturn else if(page=="detail") page=detailReturn else { cancelSearch(); page="home" }; error="" }
+    fun open(page: String, id: String = "") { if(page=="detail") detailReturn=this.page;if(page=="settings-memory")memorySettingsReturn=this.page;if(page=="processing-role")processingReturn=if(this.page=="detail")"detail" else "processing"; cancelSearch(); this.page=page; activeId=id; error="" }
+    fun back() { if(page=="chat" && memoryChatReturn){memoryChatReturn=false;memoryChatRequest.consume();page="processing-role";return}; if(page=="search-detail")page="search" else if(page=="settings-memory")page=memorySettingsReturn else if(page=="role-companion")page="toolbox-contact" else if(page.startsWith("toolbox-"))page="toolbox" else if(page=="role-prompts"||page=="role-learning"||page=="role-relationship")page="detail" else if(page=="processing-role")page=processingReturn else if(page=="detail") page=detailReturn else { cancelSearch(); page="home" }; error="" }
     fun home() {cancelSearch(); page="home"; error="" }
     fun startSearch(){cancelSearch();page="search";error=""}
     fun updateSearchRequirements(value:String){searchRequirements=value.take(2000)}
@@ -235,7 +265,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
             val id=plan.friendId
             store.memorySummary.requireEditable(id)
             backup.deleteRole(plan,true)
-            runner.cancel(id);memory.cancel(id);manualMemoryJobs[id]?.cancel()
+            runner.cancel(id,"role_deleted");memory.cancel(id);manualMemoryJobs[id]?.cancel()
             if(activeId==id){activeId="";page="home"}
             reload()
         }
@@ -267,9 +297,9 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
         catch(e:CancellationException){throw e}
         catch(e:Exception){error="角色已保存，打开未完成，请重试。"}
     }
-    fun saveCharacter(id:String,name:String,definition:String,expression:String,opening:String,extra:String,initialRelationship:String){
+    fun saveCharacter(id:String,name:String,definition:String,expression:String,opening:String,extra:String,initialRelationship:String,thinkingPrompt:String){
         if(name.isBlank()||definition.isBlank()){error="请填写名字和角色设定。";return}
-        save{store.saveConfigured(id,name){old->old.copy(characterDefinition=definition,expression=expression,opening=opening,extra=extra,initialRelationship=initialRelationship)};reload();back()}
+        save{store.saveConfigured(id,name){old->old.copy(characterDefinition=definition,expression=expression,opening=opening,extra=extra,initialRelationship=initialRelationship,thinkingPrompt=thinkingPrompt.ifBlank{""})};reload();back()}
     }
     fun setRoleAvatar(id:String,mime:String,bytes:ByteArray){
         if(friends.none{it.id==id})return

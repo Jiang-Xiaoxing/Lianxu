@@ -59,12 +59,20 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
     }
     suspend fun policy(role:String)=repo.tx{state(it,role).third}
     suspend fun setPolicy(role:String,enabled:Boolean,owner:String)=repo.tx{db->
+        check(db.rawQuery("SELECT 1 FROM friends WHERE id=?",arrayOf(role)).use{it.moveToFirst()}){"角色已不存在"}
         state(db,role);bump(db,role)
         db.execSQL("UPDATE companion_state SET policy=?,policy_version=policy_version+1,owner=? WHERE role=?",arrayOf<Any>(if(enabled)"enabled"else"paused_by_user",owner,role))
         // Explicit permission changes never revive a cancelled reason.
     }
+    /** The toolbox list must not create states merely by displaying roles. */
+    internal suspend fun contactPolicies()=repo.read{db->db.rawQuery("SELECT f.id,COALESCE(c.policy,'disabled') FROM friends f LEFT JOIN companion_state c ON c.role=f.id",null).use{c->buildMap{while(c.moveToNext())put(c.getString(0),c.getString(1))}}}
     suspend fun checkContinuity(owner:String)=repo.tx{db->
         // Owner is process execution identity; permission/version survive normal recreation.
+        // A local result survives process identity rollover only if it matched the role before rollover.
+        db.execSQL("""UPDATE received_chat_replies SET companion_epoch=companion_epoch+1 WHERE EXISTS(
+            SELECT 1 FROM chat_turns t JOIN companion_state s ON s.role=t.friend_id
+            WHERE t.id=received_chat_replies.turn_id AND t.attempt=received_chat_replies.attempt
+            AND t.state='PENDING' AND s.owner<>? AND s.epoch=received_chat_replies.companion_epoch)""",arrayOf<Any>(owner))
         db.execSQL("UPDATE companion_state SET epoch=epoch+1,owner=? WHERE owner<>?",arrayOf<Any>(owner,owner))
         opportunities(db,"state='running' AND owner<>?",arrayOf(owner)).forEach{requeue(db,it)}
         opportunities(db,"state='queued'",emptyArray()).forEach{settlePermission(db,it)}
@@ -97,6 +105,7 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
         // The reply round uses this body without the tone line; the control lookup keeps the full body.
         // Reply and proactive contact share the same state/evidence, without a prescribed tone.
         val contactFacts=contactFacts(db,role,materialNow)
+        val contactBoundary=if(s.third=="enabled")ExperiencePresentation.permission(s.third)+"；记下的时间只是再次考虑的机会，不保证提醒或送达。" else ""
         fun legacy(includeTone:Boolean,includeMessageState:Boolean=true)=buildString{
             append("[${RelationshipPrompt.LABEL}]\n").append(relation.modelMaterial).append("\n")
             if(includeTone)append(relation.template.prompt(relation.parameters)).append("\n")
@@ -105,7 +114,7 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
             if(latest!=null)append("${ExperiencePresentation.at(latest.second,materialNow)}，当时观察到对方看起来${ExperiencePresentation.emotion(latest.third.first.emotion)}；这是过去的观察，不能断言现在仍然如此。\n${ExperiencePresentation.REFS}\n这次心情观察：${ExperiencePresentation.reference(latest.first)}\n")
             append("用户表达记录：${support.size}条明确感谢；${boundary}条明确边界。这不是角色感受、亲密分或信任分；不能靠计数替代角色评价。未回复不扣信任，不能威胁或惩罚。\n")
             if(!repo.memoryRules(db).first.adaptiveContext)append(roleState.prompt(materialNow)).append('\n')
-            append("${ExperiencePresentation.permission(s.third)}；记下的时间只是再次考虑的机会，不保证提醒或送达。${ExperiencePresentation.READ_STATE_RULE}")
+            append("$contactBoundary${ExperiencePresentation.READ_STATE_RULE}")
             if(includeMessageState)append('\n').append(contactFacts)
         }
         val legacyPrompt=legacy(true)
@@ -121,7 +130,7 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
         val stateView=if(adaptive)AdaptiveContext.roleView(roleState,query,viewBudget/2,semantic)else roleState
         val contextRefs=buildList{
             add(PromptReference(RelationshipPrompt.LABEL,relation.modelMaterial,true));add(PromptReference(CompanionPrompt.TONE_LABEL,relation.template.prompt(relation.parameters),true))
-            add(PromptReference("当前权限与交流边界","${ExperiencePresentation.permission(s.third)}；记下的时间只是再次考虑的机会，不保证提醒或送达。${ExperiencePresentation.READ_STATE_RULE}未回复不扣信任，不能威胁或惩罚。",true))
+            add(PromptReference("当前权限与交流边界","$contactBoundary${ExperiencePresentation.READ_STATE_RULE}未回复不扣信任，不能威胁或惩罚。",true))
             if(contactFacts.isNotBlank())add(PromptReference(ExperiencePresentation.MESSAGE_STATE_LABEL,contactFacts,true))
             add(PromptReference("本轮可用的角色状态","下面是过去的理解，以及仍有效的看法和习惯；没有提到的事不代表从未发生。\n"+stateView.prompt(materialNow),priority=1.1))
             facts.forEach{(ref,created,p)->add(PromptReference("${ExperiencePresentation.at(created,materialNow)}记下的经历",p.first.memory+"\n${ExperiencePresentation.REFS}\n这段经历：${ExperiencePresentation.reference(ref)}",mandatory=p.first.relationship=="boundary",memoryId="experience:${ref.turnId}@${ref.version}",related=true,sources=setOf(ref),priority=maxOf(semantic[ref]?:0.0,MemoryRecall.relevance(query,p.first.memory))))}

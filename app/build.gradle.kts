@@ -1,4 +1,5 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.plugin.compose") }
+val localTestCode = providers.gradleProperty("lianxuLocalTestCode").orNull?.toInt()
 android {
     namespace = "app.lianxu.independent"
     compileSdk = 37
@@ -6,14 +7,25 @@ android {
         applicationId = "app.lianxu.independent"
         minSdk = 26
         targetSdk = 37
-        versionCode = 62
-        versionName = "1.0.3"
+        versionCode = localTestCode ?: 62
+        versionName = if (localTestCode == null) "1.0.3" else
+            "1.0.3-test.$localTestCode+" + providers.gradleProperty("lianxuSourceTree").get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
-    buildTypes { getByName("debug") { applicationIdSuffix = ".companionstage1" } }
+    buildTypes {
+        getByName("debug") { applicationIdSuffix = ".companionstage1" }
+        create("localTest") {
+            applicationIdSuffix = ".testing"
+            matchingFallbacks += "release"
+        }
+    }
+    if (localTestCode != null) testBuildType = "localTest"
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     lint { abortOnError = true }
+}
+androidComponents.beforeVariants { variant ->
+    variant.enable = (variant.buildType == "localTest") == (localTestCode != null)
 }
 tasks.withType<Test>().configureEach { maxHeapSize = "160m"; maxParallelForks = 1 }
 dependencies {
@@ -34,4 +46,5 @@ dependencies {
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.work:work-testing:2.12.0")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    "localTestImplementation"("androidx.compose.ui:ui-test-manifest")
 }

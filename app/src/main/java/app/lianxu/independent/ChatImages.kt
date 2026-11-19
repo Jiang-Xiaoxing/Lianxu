@@ -27,12 +27,15 @@ class PendingChatImage private constructor(val mime:String,internal val source:I
 }
 
 data class ChatImageRef(val friendId:String,val messageId:Long,val path:String,val mime:String,val hash:String,val width:Int,val height:Int,val revision:Long=1,val storageKind:String="legacy-normalized")
-class WireImage private constructor(val mime:String,private val data:ByteArray?,private val file:java.io.File?,val description:String) {
-    constructor(mime:String,bytes:ByteArray,description:String=""):this(mime,bytes,null,description)
+class WireImage private constructor(val mime:String,private val data:ByteArray?,private val file:java.io.File?,val description:String,internal val videoFrame:Boolean=false) {
+    constructor(mime:String,bytes:ByteArray,description:String=""):this(mime,bytes,null,description,false)
     internal val size:Long get()=data?.size?.toLong()?:requireNotNull(file).length()
     internal val bytes:ByteArray get()=data?:requireNotNull(file).readBytes()
     internal fun input():InputStream=data?.inputStream()?:requireNotNull(file).inputStream()
-    internal companion object { fun file(mime:String,file:java.io.File,description:String)=WireImage(mime,null,file,description) }
+    internal companion object {
+        fun file(mime:String,file:java.io.File,description:String)=WireImage(mime,null,file,description)
+        fun videoFrame(file:java.io.File,description:String)=WireImage("image/jpeg",null,file,description,true)
+    }
     override fun toString()="WireImage($mime,$size bytes)"
 }
 
@@ -73,7 +76,9 @@ internal object ChatImages {
     fun put(db:SQLiteDatabase,friendId:String,messageId:Long,image:PendingChatImage){
         require(image.source.size>0&&image.hash==image.source.hash())
         image.source.file?.parentFile?.let{ImageDisk.space(it,image.source.size*2)}
-        val large=image.source.size>ImagePolicy.ORIGINAL_LIMIT
+        val video=VideoPolicy.isVideo(image.mime)
+        if(video&&ToolboxPreferences.videoMode(db)==ToolboxPreferences.VideoMode.ORIGINAL)VideoPolicy.requireSize(image.source.size)
+        val large=video||image.source.size>ImagePolicy.ORIGINAL_LIMIT
         val path="chat-images/${UUID.randomUUID()}/"+if(large)"original.json"else "original."+when(image.mime){"image/png"->"png";"image/webp"->"webp";else->"jpg"}
         if(large)OriginalChunks.put(db,friendId,path,image.source,image.hash)
         else db.insertOrThrow("role_assets",null,ContentValues().apply{put("friend_id",friendId);put("path",path);put("kind","attachment");put("mime",image.mime);put("data",image.source.bytes())})
@@ -101,9 +106,10 @@ internal object ChatImages {
     fun read(db:SQLiteDatabase,ref:ChatImageRef):ByteArray=source(db,ref).bytes()
     fun setting(db:SQLiteDatabase,key:String)=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(key)).use{if(it.moveToFirst())it.getString(0)else ""}
     fun enabled(db:SQLiteDatabase)=setting(db,SWITCH)=="1"
-    fun routeStamp(db:SQLiteDatabase)=setting(db,SWITCH)+":"+setting(db,SWITCH_REVISION)
+    fun routeStamp(db:SQLiteDatabase)=listOf(SWITCH,SWITCH_REVISION,ToolboxPreferences.VIDEO_KEY,ToolboxPreferences.VIDEO_REVISION).joinToString(":"){setting(db,it)}
     fun setEnabled(db:SQLiteDatabase,value:Boolean){
         db.beginTransaction();try{for((k,v) in listOf(SWITCH to if(value)"1"else"0",SWITCH_REVISION to UUID.randomUUID().toString()))db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",k);put("value",v)},SQLiteDatabase.CONFLICT_REPLACE);db.setTransactionSuccessful()}finally{db.endTransaction()}
     }
     fun redact(value:String)=value.replace(Regex("""data(?::|\\u003a)image(?:\\*/|\\u002f)[^\s"'<>]*""",RegexOption.IGNORE_CASE),"[图片数据已省略]")
+        .replace(Regex("""data(?::|\\u003a)video(?:\\*/|\\u002f)[^\s"'<>]*""",RegexOption.IGNORE_CASE),"[视频数据已省略]")
 }

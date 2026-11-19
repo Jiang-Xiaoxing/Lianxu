@@ -26,6 +26,7 @@ internal class HttpsMemoryEmbeddingClient(private val factory:HttpsConnectionFac
         Diagnostics.event("embedding.http.request",mapOf("endpoint" to credential.config.baseUrl,"provider" to credential.config.providerId,"model" to credential.config.modelId,"input_count" to texts.size,"input_chars" to texts.map{it.length},"timeout_ms" to timeout),secrets=listOf(credential.key))
         require(ProviderCatalog.modelKind(credential.config)!=ProviderModelKind.OTHER_PROTOCOL){"embedding_protocol_not_adapted"}
         require(ConfigRules.validate(credential.config,credential.key)==null&&texts.size in 1..2048)
+        diagnosticRequest?.phase("open_connection_object")
         val c=try{factory.open(URL(credential.config.baseUrl.trimEnd('/')+"/embeddings"))}catch(e:Exception){diagnosticRequest?.failure("embedding.http.open_failed",e);throw e}
         var failureStage="request"
         try{
@@ -34,9 +35,21 @@ internal class HttpsMemoryEmbeddingClient(private val factory:HttpsConnectionFac
             c.setRequestProperty("Content-Type","application/json; charset=utf-8")
             val bytes=JSONObject().put("model",credential.config.modelId).put("input",JSONArray(texts)).toString().toByteArray(Charsets.UTF_8)
             failureStage="request_size"
-            require(bytes.size<=256*1024);failureStage="request";c.setFixedLengthStreamingMode(bytes.size);c.outputStream.use{it.write(bytes)};bytes.fill(0)
+            require(bytes.size<=256*1024)
+            failureStage="request"
+            c.setFixedLengthStreamingMode(bytes.size)
+            diagnosticRequest?.phase("acquire_output_stream",mapOf("planned_body_bytes" to bytes.size))
+            try {
+                c.outputStream.use { out ->
+                    diagnosticRequest?.phase("write_body")
+                    (diagnosticRequest?.observe(out) ?: out).write(bytes)
+                    diagnosticRequest?.phase("close_output_stream")
+                }
+            } finally { bytes.fill(0) }
             diagnosticRequest?.stage("embedding.http.request_sent",mapOf("request_bytes" to bytes.size))
+            diagnosticRequest?.phase("await_response_headers")
             val status=c.responseCode;Diagnostics.event("embedding.http.status",mapOf("status" to status),secrets=listOf(credential.key))
+            diagnosticRequest?.phase("read_response_body",mapOf("http_status" to status))
             failureStage="status"
             require(status in 200..299){"embedding_response"}
             failureStage="read"

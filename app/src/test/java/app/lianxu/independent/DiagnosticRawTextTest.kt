@@ -16,8 +16,12 @@ class DiagnosticRawTextTest {
     }
     @Test fun onKeepsTheOriginal(){
         Diagnostics.detailed=true
-        assertEquals("今天好累啊",Diagnostics.raw("今天好累啊"))
+        assertEquals("今天好累啊",(Diagnostics.raw("今天好累啊") as DiagnosticPayload).current())
         val payload=mapOf("memories" to listOf("她喜欢吃粥"))
-        assertSame(payload,Diagnostics.rawJson(payload))
+        val field=Diagnostics.rawJson(payload) as DiagnosticPayload
+        assertSame(payload,field.current())
+        Diagnostics.detailed=false
+        Diagnostics.detailed=true
+        assertFalse(field.current()===payload)
     }
 }

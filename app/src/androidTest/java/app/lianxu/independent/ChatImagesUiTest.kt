@@ -81,8 +81,7 @@ class ChatImagesUiTest {
         assertEquals(0,calls.get());assertTrue(launches>=3)
     }
     @Test fun auxiliarySwitchIsExplicitAndPersistsWithoutNetwork(){
-        show();ui.runOnIdle{vm.back();vm.open("models")}
-        ui.onNodeWithTag("config-tab-purposes").performClick()
+        show();ui.runOnIdle{vm.back();vm.open("toolbox-image")}
         ui.onNodeWithTag("auxiliary-vision-switch").performScrollTo().assertIsOff().performClick()
         ui.waitUntil(10000){runBlocking{vm.processing.read{ChatImages.enabled(it)}}}
         ui.onNodeWithTag("auxiliary-vision-switch").assertIsOn();assertEquals(0,calls.get());shot("05-auxiliary-setting")

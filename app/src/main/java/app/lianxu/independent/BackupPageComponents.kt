@@ -39,7 +39,6 @@ import androidx.compose.ui.unit.dp
             Text(title,style=MaterialTheme.typography.titleSmall,color=Ink)
             Text(description,style=MaterialTheme.typography.bodySmall,color=Muted)
         }
-        ControlIcon("chevron")
     }
 }
 
@@ -47,8 +46,8 @@ import androidx.compose.ui.unit.dp
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper).toggleable(value=value,enabled=enabled,role=Role.Switch,onValueChange=change).testTag("backup-detailed").padding(18.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(14.dp)){
         NavigationIcon(2,false)
         Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
-            Text("详细诊断",style=MaterialTheme.typography.titleSmall,color=Ink)
-            Text("记录更详细的运行信息",style=MaterialTheme.typography.bodySmall,color=Muted)
+            Text("导出详细内容",style=MaterialTheme.typography.titleSmall,color=Ink)
+            Text(if(value) "导出前会再次确认，文件可能含聊天原文" else "简版仅含排错摘要",style=MaterialTheme.typography.bodySmall,color=Muted)
         }
         Switch(value,null)
     }
@@ -58,8 +57,8 @@ import androidx.compose.ui.unit.dp
     AlertDialog(onDismissRequest=close,title={Text(if(diagnostics)"诊断日志说明"else"备份与恢复说明")},text={Column(Modifier.heightIn(max=420.dp).verticalScroll(rememberScrollState()).testTag("backup-help-content"),verticalArrangement=Arrangement.spacedBy(12.dp)){
         if(diagnostics){
             Text("日志仅在本机滚动保留最近7天、最多10 MiB，不自动上传。密钥和令牌始终脱敏。")
-            Text("开启详细诊断后才记录聊天原话、记忆正文、发给模型的提示词和回复等原文；关闭时这些只记字数。详细日志可能含私密资料，请勿随意分享。")
-            Text("遇到问题时，可开启详细诊断后重现问题，再导出日志。保存失败时开关会退回已保存的状态。")
+            Text("应用运行时会在本机记录聊天、记忆、发给模型的提示词、返回内容和连接状态，遇到问题后可直接导出。")
+            Text("“导出详细内容”只选择文件内容。详细文件可能含私密原文，确认后才生成；简版只导出排错摘要。")
         }else{
             Text("单角色备份带出该角色全部已保存的人设、提示词、聊天、记忆与来源、候选及关联、关系及快照、语气示例和资源，不含其他角色、本人头像或全局密钥。")
             Text("全部备份包含全部角色、资源和软件设置、API服务及模型配置。不包含密钥也会保留服务和模型设置。包含密钥时需要备份密码，只有密钥使用密码加密；请保管好备份和密码。")

@@ -27,6 +27,7 @@ class HttpsModelClient(
         val deadline=System.nanoTime()+timeoutMillis*3L*1_000_000L
         try {
             ensureActive()
+            requestDiagnostics?.phase("open_connection_object",mapOf("method" to "GET"))
             connection=factory.open(URL(url))
             val opened=connection
             cancellationWatcher=launch(start=CoroutineStart.UNDISPATCHED){
@@ -39,7 +40,9 @@ class HttpsModelClient(
             connection.connectTimeout=timeoutMillis; connection.readTimeout=timeoutMillis;connection.requestMethod="GET"
             connection.setRequestProperty(provider.authHeader,if(provider.authHeader=="Authorization") "Bearer $key" else key)
             connection.setRequestProperty("Accept","application/json")
+            requestDiagnostics?.phase("await_response_headers")
             val status=connection.responseCode
+            requestDiagnostics?.phase("read_response_body",mapOf("http_status" to status))
             Diagnostics.event("model.http.status",mapOf("status" to status),secrets=listOf(key))
             if(status !in 200..299){DiagnosticHttp.errorBody(connection,deadline,key);return@withContext ConfigResult.Failure(when(status) {401->ConfigError.UNAUTHORIZED;403->ConfigError.FORBIDDEN;429->ConfigError.RATE_LIMIT;in 300..399->ConfigError.REDIRECT;else->ConfigError.HTTP},status)}
             // Bound untrusted directory responses; never show raw server errors or exception text.
@@ -56,7 +59,7 @@ class HttpsModelClient(
             }
             if(bytes.size>1024*1024) return@withContext ConfigResult.Failure(ConfigError.FORMAT)
             val body=JSONObject(String(bytes,Charsets.UTF_8))
-            Diagnostics.event("model.http.response",mapOf("response_bytes" to bytes.size,"response" to body.toString()),secrets=listOf(key))
+            Diagnostics.event("model.http.response",mapOf("response_bytes" to bytes.size,"response" to Diagnostics.raw(body.toString())),secrets=listOf(key))
             if(!fetchModels) {
                 if((path=="key" && body.optJSONObject("data")==null) || (path!="key" && body.optJSONArray("data")==null)) ConfigResult.Failure(ConfigError.FORMAT) else ConfigResult.Success()
             } else {

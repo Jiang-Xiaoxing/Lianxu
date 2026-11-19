@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
@@ -64,7 +65,10 @@ import kotlin.coroutines.coroutineContext
     onBack:()->Unit
 ){
     var query by rememberSaveable(friend.id){mutableStateOf("")}
-    var kind by rememberSaveable(friend.id){mutableStateOf("")}
+    val tabs=key(friend.id){rememberPageTabs(4)}
+    val kinds=listOf("","viewpoint","interest","habit")
+    val lists=key(friend.id){listOf(rememberLazyListState(),rememberLazyListState(),rememberLazyListState(),rememberLazyListState())}
+
     var detailId by rememberSaveable(friend.id){mutableStateOf<String?>(null)}
     fun back(){if(detailId!=null)detailId=null else onBack()}
     BackHandler(detailId!=null){back()}
@@ -92,46 +96,48 @@ import kotlin.coroutines.coroutineContext
                 }
             }
             else->{
-                val search=query.trim()
-                val shown=records.filter{record->
-                    (kind.isEmpty()||record.state.kind==kind)&&
-                        (search.isEmpty()||record.state.content.contains(search,true)||record.state.scope.contains(search,true))
-                }
-                LazyColumn(Modifier.fillMaxSize().background(Paper).testTag("learning-list"),contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(12.dp)){
-                    item("intro"){
-                        Text("从相处中留下的看法、兴趣与习惯",style=MaterialTheme.typography.bodyMedium,color=Muted)
+                PageTabContent(tabs){page->
+                    val kind=kinds[page]
+                    val search=query.trim()
+                    val shown=records.filter{record->
+                        (kind.isEmpty()||record.state.kind==kind)&&
+                            (search.isEmpty()||record.state.content.contains(search,true)||record.state.scope.contains(search,true))
                     }
-                    item("search"){AppField(query,{query=it},"搜索内容或适用情况","learning-search",singleLine=true)}
-                    item("filters"){
-                        Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                            listOf("" to "全部","viewpoint" to "看法","interest" to "兴趣","habit" to "相处习惯").forEach{(value,label)->
-                                FilterChip(selected=kind==value,onClick={kind=value},label={Text(label)},
-                                    modifier=Modifier.heightIn(min=UiSpace.action).testTag("learning-filter-${value.ifEmpty{"all"}}"),
-                                    colors=FilterChipDefaults.filterChipColors(selectedContainerColor=SelectedBackground,selectedLabelColor=GreenText))
+                    LazyColumn(Modifier.fillMaxSize().background(Paper).testTag("learning-list"),state=lists[page],contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(12.dp)){
+                        item("intro"){
+                            Text("从相处中留下的看法、兴趣与习惯",style=MaterialTheme.typography.bodyMedium,color=Muted)
+                        }
+                        item("search"){AppField(query,{query=it},"搜索内容或适用情况","learning-search",singleLine=true)}
+                        item("filters"){
+                            Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                                listOf("" to "全部","viewpoint" to "看法","interest" to "兴趣","habit" to "相处习惯").forEach{(value,label)->
+                                    FilterChip(selected=kind==value,onClick={tabs.select(kinds.indexOf(value))},label={Text(label)},
+                                        modifier=Modifier.heightIn(min=UiSpace.action).testTag("learning-filter-${value.ifEmpty{"all"}}"),
+                                        colors=FilterChipDefaults.filterChipColors(selectedContainerColor=SelectedBackground,selectedLabelColor=GreenText))
+                                }
                             }
                         }
-                    }
-                    item("count"){Text("${shown.size} 条学习记录",style=MaterialTheme.typography.labelLarge,color=Muted)}
-                    if(shown.isEmpty())item("empty"){
-                        Column(Modifier.fillMaxWidth().padding(vertical=24.dp).testTag("learning-empty"),verticalArrangement=Arrangement.spacedBy(8.dp)){
-                            Text(if(records.isEmpty())"还没有学习记录"else"没有找到匹配的记录",style=MaterialTheme.typography.titleSmall)
-                            Text(if(records.isEmpty())"有了可保留的看法、兴趣或相处习惯后，会在这里显示。聊天不一定每轮都产生新记录。"else"试试其他关键词，或切换到全部分类。",style=MaterialTheme.typography.bodyMedium,color=Muted)
-                        }
-                    }
-                    items(shown,key={it.state.id}){record->
-                        Column(Modifier.fillMaxWidth().clickable{detailId=record.state.id}.testTag("learning-item-${record.state.id}").padding(vertical=14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
-                            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically){
-                                Text(learningKindLabel(record.state.kind),Modifier.weight(1f),style=MaterialTheme.typography.labelLarge,color=GreenText)
-                                Text(learningStateLabel(record.state.state),style=MaterialTheme.typography.labelMedium,color=Muted)
-                                ControlIcon("chevron",Muted)
+                        item("count"){Text("${shown.size} 条学习记录",style=MaterialTheme.typography.labelLarge,color=Muted)}
+                        if(shown.isEmpty())item("empty"){
+                            Column(Modifier.fillMaxWidth().padding(vertical=24.dp).testTag("learning-empty"),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                                Text(if(records.isEmpty())"还没有学习记录"else"没有找到匹配的记录",style=MaterialTheme.typography.titleSmall)
+                                Text(if(records.isEmpty())"有了可保留的看法、兴趣或相处习惯后，会在这里显示。聊天不一定每轮都产生新记录。"else"试试其他关键词，或切换到全部分类。",style=MaterialTheme.typography.bodyMedium,color=Muted)
                             }
-                            Text(record.state.content,style=MaterialTheme.typography.bodyLarge,maxLines=3,overflow=TextOverflow.Ellipsis)
-                            Text("适用情况：${record.state.scope}",style=MaterialTheme.typography.bodyMedium,color=Muted,maxLines=2,overflow=TextOverflow.Ellipsis)
-                            Text("更新时间：${learningDate(record.updatedAt)}",style=MaterialTheme.typography.bodySmall,color=Muted)
                         }
-                        HorizontalDivider(color=Line,thickness=.5.dp)
-                    }
-                }
+                        items(shown,key={it.state.id}){record->
+                            Column(Modifier.fillMaxWidth().clickable{detailId=record.state.id}.testTag("learning-item-${record.state.id}").padding(vertical=14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+                                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically){
+                                    Text(learningKindLabel(record.state.kind),Modifier.weight(1f),style=MaterialTheme.typography.labelLarge,color=GreenText)
+                                    Text(learningStateLabel(record.state.state),style=MaterialTheme.typography.labelMedium,color=Muted)
+                                    ControlIcon("chevron",Muted)
+                                }
+                                Text(record.state.content,style=MaterialTheme.typography.bodyLarge,maxLines=3,overflow=TextOverflow.Ellipsis)
+                                Text("适用情况：${record.state.scope}",style=MaterialTheme.typography.bodyMedium,color=Muted,maxLines=2,overflow=TextOverflow.Ellipsis)
+                                Text("更新时间：${learningDate(record.updatedAt)}",style=MaterialTheme.typography.bodySmall,color=Muted)
+                            }
+                            HorizontalDivider(color=Line,thickness=.5.dp)
+                        }
+                }}
             }
         }
     }

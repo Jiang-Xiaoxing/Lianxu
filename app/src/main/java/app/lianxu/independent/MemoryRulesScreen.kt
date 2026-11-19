@@ -22,18 +22,15 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun MemoryRulesScreen(vm:AppState){
     var recent by rememberSaveable{mutableStateOf("")};var summary by rememberSaveable{mutableStateOf("")};var related by rememberSaveable{mutableStateOf("")}
-    var recall by rememberSaveable{mutableStateOf(false)};var write by rememberSaveable{mutableStateOf(false)}
-    var rounds by rememberSaveable{mutableStateOf("3")};var tokens by rememberSaveable{mutableStateOf("4000")};var perCall by rememberSaveable{mutableStateOf("1500")}
     var reviewRounds by rememberSaveable{mutableIntStateOf(5)}
     var reviewSheet by rememberSaveable{mutableStateOf(false)};var reviewDraft by rememberSaveable{mutableStateOf("5")}
-    var help by rememberSaveable{mutableStateOf("")}
     var loaded by remember{mutableStateOf(MemoryRules())}
     var ready by remember{mutableStateOf(false)};var busy by remember{mutableStateOf(false)};var status by rememberSaveable{mutableStateOf("")};var failed by remember{mutableStateOf(false)}
     val scope=rememberCoroutineScope()
-    LaunchedEffect(Unit){val r=vm.processing.memoryRules().first;loaded=r;if(recent.isEmpty()){recent=r.recentRounds.toString();summary=r.summaryRounds.toString();related=r.relatedCount.toString();recall=r.proactiveRecall;write=r.immediateWrite;rounds=r.recallRounds.toString();tokens=r.recallTokens.toString();perCall=r.recallPerCall.toString();reviewRounds=r.reviewRounds};ready=true}
-    fun save(){if(busy||!ready)return;val r=loaded.copy(recentRounds=recent.toIntOrNull()?:0,summaryRounds=summary.toIntOrNull()?:0,relatedCount=related.toIntOrNull()?:0,proactiveRecall=recall,immediateWrite=write,recallRounds=rounds.toIntOrNull()?:0,recallTokens=tokens.toIntOrNull()?:0,recallPerCall=perCall.toIntOrNull()?:0,reviewRounds=reviewRounds)
-        if(!r.valid()){failed=true;status="请检查正整数及范围：总结记忆轮数不超过近期轮数；回查1–100轮，总额256–64000，单次128至总额。";return}
-        busy=true;failed=false;status="";scope.launch{try{vm.processing.saveMemoryRules(r);if(loaded.reviewRounds!=r.reviewRounds)ReplyAccountingScheduler.recover(vm.processing.store);loaded=r;vm.refreshProcessing();status="已保存，所有AI使用这套规则。"}catch(_:Exception){failed=true;status="保存未完成，请重试。"}finally{busy=false}}
+    LaunchedEffect(Unit){val r=vm.processing.memoryRules().first;loaded=r;if(recent.isEmpty()){recent=r.recentRounds.toString();summary=r.summaryRounds.toString();related=r.relatedCount.toString();reviewRounds=r.reviewRounds};ready=true}
+    fun save(){if(busy||!ready)return;val r=loaded.copy(recentRounds=recent.toIntOrNull()?:0,summaryRounds=summary.toIntOrNull()?:0,relatedCount=related.toIntOrNull()?:0,reviewRounds=reviewRounds)
+        if(!r.valid()){failed=true;status="请填写正整数，总结记忆轮数不能超过近期轮数。";return}
+        busy=true;failed=false;status="";scope.launch{try{val saved=vm.processing.saveMemoryCounts(r);if(loaded.reviewRounds!=saved.reviewRounds)ReplyAccountingScheduler.recover(vm.processing.store);loaded=saved;vm.refreshProcessing();status="已保存，所有AI使用这套规则。"}catch(_:Exception){failed=true;status="保存未完成，请重试。"}finally{busy=false}}
     }
     Column(Modifier.fillMaxSize().background(Chrome).testTag("memory-rules-page")){
         AppTopBar("记忆规则",{vm.back()},extra={TextButton({save()},enabled=ready&&!busy,modifier=Modifier.heightIn(min=48.dp).testTag("memory-rules-save")){Text(if(busy)"保存中" else "保存")}})
@@ -50,12 +47,7 @@ import kotlinx.coroutines.launch
             Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clickable(enabled=ready&&!busy){reviewDraft=reviewRounds.toString();reviewSheet=true}.testTag("rules-review-open"),verticalAlignment=Alignment.CenterVertically){
                 Text("心情与关系回顾",Modifier.weight(1f),style=MaterialTheme.typography.bodyLarge)
                 Text("每 $reviewRounds 轮",color=Muted,style=MaterialTheme.typography.bodyMedium)
-                Text("›",Modifier.padding(start=12.dp),color=Muted,style=MaterialTheme.typography.titleLarge)
             }
-            HorizontalDivider(color=Line)
-            Row(verticalAlignment=Alignment.CenterVertically){Text("主动回查");IconButton({help="主动回查"},Modifier.size(48.dp).testTag("rules-recall-info").semantics{contentDescription="主动回查说明"}){Text("ⓘ",color=Muted)};Spacer(Modifier.weight(1f));Switch(recall,{recall=it},enabled=ready&&!busy,modifier=Modifier.testTag("rules-recall-enabled"))}
-            Row(verticalAlignment=Alignment.CenterVertically){Text("当场写记忆");IconButton({help="当场写记忆"},Modifier.size(48.dp).testTag("rules-write-info").semantics{contentDescription="当场写记忆说明"}){Text("ⓘ",color=Muted)};Spacer(Modifier.weight(1f));Switch(write,{write=it},enabled=ready&&!busy,modifier=Modifier.testTag("rules-write-enabled"))}
-            Text("按需回查，资料足够就回答；重复查询或没有新内容时停止。程序仍保留超时、上下文与工具步数保护，无需设置回查额度。",Modifier.testTag("recall-adaptive-info"),style=MaterialTheme.typography.bodySmall,color=Muted)
             HorizontalDivider(color=Line)
             Text("容量不足时会明确提示",style=MaterialTheme.typography.titleSmall)
             Text("模型总容量仍有限。装不下完整原话、相关记忆或总结记忆批次时，请选择更大容量模型，或主动调整上述数量；不会暗中缩小批次或截断核心。",style=MaterialTheme.typography.bodySmall,color=Muted)
@@ -63,7 +55,6 @@ import kotlinx.coroutines.launch
             if(status.isNotEmpty())Text(status,Modifier.testTag("memory-rules-status"),style=MaterialTheme.typography.bodyMedium,color=if(failed)MaterialTheme.colorScheme.error else GreenText)
         }
     }
-    if(help.isNotEmpty())AlertDialog(onDismissRequest={help=""},title={Text(help)},text={Text(if(help=="主动回查")"聊天时，她可以主动查找相关记忆和过往聊天。"else"聊天时，她可以根据你当下说的话保存或更新记忆，不必等总结；写入成功才算记住，不确定或受保护的内容会留待确认。")},confirmButton={TextButton({help=""},Modifier.testTag("rules-help-close")){Text("知道了")}})
     if(reviewSheet)ModalBottomSheet(onDismissRequest={reviewSheet=false},containerColor=Paper){
         val value=reviewDraft.toIntOrNull()
         Column(Modifier.fillMaxWidth().imePadding().padding(horizontal=UiSpace.page).padding(bottom=24.dp).testTag("rules-review-sheet"),verticalArrangement=Arrangement.spacedBy(20.dp)){

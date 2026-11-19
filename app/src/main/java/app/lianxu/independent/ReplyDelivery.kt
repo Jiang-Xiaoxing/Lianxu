@@ -21,6 +21,19 @@ internal class ReplyDelivery {
         earlier += ChatBubbleSegments.capped(restored)
     }
 
+    /** The ledger restored the already shown prefix before the durable tail becomes displayable. */
+    fun restoreFinal(bubbles:List<String>){
+        check(current.isEmpty()&&!finished&&!stopped)
+        val transcript=earlier.joinToString("\n\n")
+        val count=(0..bubbles.size).firstOrNull{bubbles.take(it).joinToString("\n\n")==transcript}
+            ?:error("stored_reply_prefix_mismatch")
+        earlier.clear()
+        earlier+=bubbles.take(count)
+        current=bubbles.drop(count)
+        finished=true
+        settle()
+    }
+
     fun update(text: String, final: Boolean = false) {
         if (stopped) return
         val raw = ChatBubbleSegments.split(text)

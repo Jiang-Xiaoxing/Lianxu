@@ -35,7 +35,8 @@ internal class SseStreamGuard(val maxWireBytes:Int=MAX_WIRE_BYTES) {
     /** Content and reasoning lengths are reported by the parser; they never gate the wire cap. */
     var contentChars=0;private set
     var reasoningChars=0;private set
-    private var sample=""
+    private var sample:Any=""
+    private var sampled=false
     private var lineBytes=0
     /** 0 = still undecided, 1 = SSE-shaped opening seen, -1 = definitely not SSE. */
     private var headState=0
@@ -67,7 +68,14 @@ internal class SseStreamGuard(val maxWireBytes:Int=MAX_WIRE_BYTES) {
             raw.startsWith(":")->commentLines++
             raw.startsWith("data:")->{dataLines++;dataChars+=raw.length}
             raw.startsWith("event:")||raw.startsWith("id:")||raw.startsWith("retry:")->fieldLines++
-            else->{otherLines++;if(sample.isEmpty())sample=raw.take(SAMPLE_CHARS)}
+            else->{
+                otherLines++
+                if(!sampled) {
+                    sampled=true
+                    val prefix=raw.take(SAMPLE_CHARS)
+                    sample=Diagnostics.raw(if(raw.length>prefix.length)Diagnostics.protectTail(prefix) else prefix) ?: ""
+                }
+            }
         }
         // Blank lines alone never prove SSE: an error page may carry them too.
         return if(dataLines==0&&fieldLines==0&&commentLines==0&&otherLines>0&&bytes>=PROBE_BYTES)"protocol_probe" else null
@@ -79,7 +87,7 @@ internal class SseStreamGuard(val maxWireBytes:Int=MAX_WIRE_BYTES) {
     fun snapshot():Map<String,Any?> =mapOf("bytes" to bytes,"limit" to maxWireBytes,"data_lines" to dataLines,
         "blank_lines" to blankLines,"comment_lines" to commentLines,"field_lines" to fieldLines,"other_lines" to otherLines,
         "longest_line" to longestLine,"line_bytes" to lineBytes,"data_chars" to dataChars,
-        "content_chars" to contentChars,"reasoning_chars" to reasoningChars,"sample" to if(sample.isEmpty())sample else Diagnostics.raw(sample))
+        "content_chars" to contentChars,"reasoning_chars" to reasoningChars,"sample" to sample)
 
     /** The first meaningful byte decides whether this can be an SSE body at all. */
     private fun headVerdict(b:ByteArray,off:Int,len:Int):String? {

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalDensity
@@ -72,6 +73,42 @@ class ModelConfigTabsUiTest {
     private fun back(){InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);ui.waitForIdle()}
     private fun services(){ui.onNodeWithTag("config-tab-services").performClick().assertIsSelected()}
     private fun purposes(){ui.onNodeWithTag("config-tab-purposes").performClick().assertIsSelected()}
+    private fun swipeTab(left:Boolean){ui.onNodeWithTag("config-overview").performTouchInput{swipe(Offset(width*(if(left).8f else .2f),height*.55f),Offset(width*(if(left).2f else .8f),height*.55f),400)}}
+    @Test fun swipesClicksEdgesAndVerticalListsKeepPurposeAndScrollState(){
+        seed()
+        repeat(10){vault.save(chat.copy(id="scroll-$it",name="滚动合成配置$it"),"synthetic-only")}
+        ui.runOnIdle{state.refresh()};ui.waitUntil(15000){state.configs.size==12}
+        ui.capturePagerDrag("models")
+        ui.onNodeWithTag("config-tab-services").assertIsSelected();swipeTab(false);ui.onNodeWithTag("config-tab-services").assertIsSelected()
+        ui.onNodeWithTag("config-overview").performTouchInput{swipeUp()};ui.onNodeWithTag("config-tab-services").assertIsSelected()
+        ui.onNodeWithTag("config-add-embedding").performScrollTo()
+        fun scroll()=ui.onNodeWithTag("config-overview").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+        val before=scroll();assertTrue(before>0)
+        val beforeBounds=ui.onNodeWithTag("config-add-embedding").fetchSemanticsNode().boundsInRoot
+        shot("swipe-services-before",true)
+        swipeTab(true);ui.onNodeWithTag("config-tab-purposes").assertIsSelected();swipeTab(true);ui.onNodeWithTag("config-tab-purposes").assertIsSelected()
+        ui.onNodeWithTag("purpose-select-memory").performScrollTo().performClick();ui.onNodeWithTag("purpose-clear-memory").performClick()
+        ui.waitUntil(10000){!state.busy&&state.purposes[ModelPurpose.MEMORY].orEmpty().isEmpty()}
+        swipeTab(false);ui.onNodeWithTag("config-tab-services").assertIsSelected()
+        shot("swipe-services-return-diagnostic",true)
+        println("scroll_before=$before scroll_after=${scroll()}")
+        ui.onNodeWithTag("config-add-embedding").assertIsDisplayed();assertEquals(beforeBounds.top,ui.onNodeWithTag("config-add-embedding").fetchSemanticsNode().boundsInRoot.top,2f)
+        repeat(3){purposes();swipeTab(false);services();swipeTab(true)}
+        ui.onNodeWithTag("config-tab-purposes").assertIsSelected();assertEquals("",vault.purposeId(ModelPurpose.MEMORY))
+        ui.onNodeWithTag("config-overview").performTouchInput{swipe(Offset(1f,height*.5f),Offset(width*.7f,height*.5f),400)};ui.onNodeWithTag("config-tab-purposes").assertIsSelected()
+        services();ui.onNodeWithTag("config-overview").performTouchInput{swipe(Offset(width-1f,height*.5f),Offset(width*.3f,height*.5f),400)};ui.onNodeWithTag("config-tab-services").assertIsSelected()
+        shot("swipe-services-returned",true);purposes();shot("swipe-purposes",true)
+    }
+    @Test fun swipeOutsideOverviewDoesNotDiscardEditorDraft(){
+        seed();ui.onNodeWithTag("config-edit-${chat.id}").performClick()
+        ui.onNodeWithTag("config-name").performTextReplacement("切页不应丢失的编辑草稿")
+        ui.onRoot().performTouchInput{swipeLeft()}
+        ui.onNodeWithTag("config-name").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText,androidx.compose.ui.text.AnnotatedString("切页不应丢失的编辑草稿")))
+        ui.onNodeWithTag("config-tab-purposes").assertDoesNotExist()
+        ui.activityRule.scenario.onActivity{it.getSystemService(android.view.inputmethod.InputMethodManager::class.java).hideSoftInputFromWindow(it.window.decorView.windowToken,0)}
+        ui.waitForIdle();android.os.SystemClock.sleep(300)
+        back();ui.onNodeWithTag("config-tab-services").assertIsSelected();assertEquals(chat,vault.list().single{it.id==chat.id})
+    }
     @Test fun emptyTabsKeepBothTextAddEntrancesAndNativeTabSemantics(){
         ui.onNodeWithTag("config-services-empty").assertIsDisplayed()
         ui.onNodeWithTag("config-add-top").assertDoesNotExist()
@@ -103,10 +140,11 @@ class ModelConfigTabsUiTest {
         ui.onNodeWithTag("purpose-help-memory").performScrollTo().performClick()
         ui.onNodeWithText("主动总结记忆使用所选总结记忆模型；未选择时沿用聊天模型。").assertIsDisplayed()
         ui.onNodeWithTag("purpose-help-close").performClick()
-        ui.onNodeWithTag("auxiliary-vision-switch",useUnmergedTree=true).performScrollTo().assertIsDisplayed()
+        ui.onNodeWithTag("auxiliary-vision-switch",useUnmergedTree=true).assertDoesNotExist()
+        back();ui.onNodeWithTag("settings-toolbox").performScrollTo().performClick();ui.onNodeWithTag("tool-card-image").performClick()
         ui.onNodeWithTag("purpose-help-aux-vision").performScrollTo().performClick()
         ui.onNodeWithText("辅助看图开启时，所选辅助模型接收图片并提供观察，聊天模型接收观察与文字；关闭时图片直接发给所选聊天模型。不检测模型能力，不自动换模型或回退。图片只在发送时上传。").assertIsDisplayed()
-        back();back();ui.onNodeWithTag("settings-home").assertIsDisplayed()
+        back();back();back();ui.onNodeWithTag("settings-home").assertIsDisplayed()
     }
     @Test fun savedModelsPurposesAndTabSurviveRotationAndNavigation(){
         seed()
@@ -123,11 +161,14 @@ class ModelConfigTabsUiTest {
         ui.waitUntil(15000){ui.activity.resources.configuration.orientation==Configuration.ORIENTATION_PORTRAIT}
         ui.onNodeWithTag("config-tab-purposes").assertIsSelected()
         services();purposes()
-        ModelPurpose.entries.forEach{purpose->
+        ModelPurpose.entries.filter{it!=ModelPurpose.AUX_VISION}.forEach{purpose->
             ui.onNodeWithTag("purpose-select-${purpose.key}").performScrollTo().assertTextContains(if(purpose==ModelPurpose.EMBEDDING)embedding.modelId else chat.modelId,substring=true)
         }
         assertEquals(listOf(chat,embedding).toSet(),vault.list().toSet())
+        ui.onNodeWithTag("purpose-select-aux-vision").assertDoesNotExist()
         back();ui.onNodeWithTag("settings-home").assertIsDisplayed()
+        ui.onNodeWithTag("settings-toolbox").performScrollTo().performClick();ui.onNodeWithTag("tool-card-image").performClick()
+        ui.onNodeWithTag("purpose-select-aux-vision").assertTextContains(chat.modelId,substring=true);back();back()
         ui.onNodeWithTag("settings-models").performClick();ui.onNodeWithTag("config-tab-services").assertIsSelected()
         assertEquals(chat.id,vault.purposeId(ModelPurpose.CHAT));assertEquals(embedding.id,vault.purposeId(ModelPurpose.EMBEDDING))
     }
@@ -168,14 +209,15 @@ class ModelConfigTabsUiTest {
                 ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-add-embedding"))
                 ui.onNodeWithTag("config-add-embedding").assertIsDisplayed()
                 purposes();ui.onNodeWithTag("purpose-select-embedding").performScrollTo().assertIsDisplayed();shot("purposes",saved)
-                ui.onNodeWithTag("auxiliary-vision-switch",useUnmergedTree=true).performScrollTo().assertIsDisplayed();shot("vision-limit",saved)
+                ui.onNodeWithTag("auxiliary-vision-switch",useUnmergedTree=true).assertDoesNotExist()
             }
         }
     }
     private fun shot(page:String,saved:Boolean){
         ui.mainClock.advanceTimeBy(500);ui.waitForIdle();android.os.SystemClock.sleep(250)
         val name="$page-${if(saved)"saved" else "empty"}-${if(dark)"dark" else "light"}-$width-font$scale.png"
-        val bitmap=ui.onNodeWithTag("model-tabs-viewport").captureToImage().asAndroidBitmap()
+        val viewport=if(ui.onAllNodesWithTag("model-tabs-viewport").fetchSemanticsNodes().isEmpty())ui.onRoot() else ui.onNodeWithTag("model-tabs-viewport")
+        val bitmap=viewport.captureToImage().asAndroidBitmap()
         File(evidence,name).outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}
     }
 }

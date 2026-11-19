@@ -92,7 +92,7 @@ class UserPersonaAndroidTest {
             assertTrue(stages.none{r->r.messages.any{"[companion.interpret.v2]" in it.content}})
             assertEquals(1,Regex(Regex.escape(persona.introduction)).findAll(stages.first().messages.joinToString("\n"){it.content}).count())
             // One foreground reply; profile appears once, with no lookup or foreground accounting call.
-            assertTrue(request.messages.last().turnContext);assertEquals(1,calls);assertTrue(f.repo.memories("a").isEmpty())
+            assertTrue(request.messages.single{it.turnContext}.content.contains("程序时间参考"));assertTrue(request.messages.last().thinkingContext);assertEquals(1,calls);assertTrue(f.repo.memories("a").isEmpty())
             assertEquals("你好",f.repo.sources("a").single().user.text)
         }finally{scope.cancel()}
     }

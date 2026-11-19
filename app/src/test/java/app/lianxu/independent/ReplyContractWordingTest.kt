@@ -27,7 +27,8 @@ class ReplyContractWordingTest {
             val text=base.request.messages.first().content
             assertTrue(text.contains("你就是角色，正在和${name}一对一聊天。"))
             assertTrue(text.contains("输出面向${name}的正文"))
-            assertTrue(text.contains("想到${name}就叫平时的称呼"))
+            assertTrue(base.request.messages.last().content.contains("想到对方时就用平时的称呼"))
+            assertFalse(text.contains("[思考语言]"))
             for(system in listOf(text,replySystem(persona).substringBefore("{\""))) { assertFalse(system.contains("{{"));assertFalse(system.contains("}}")) }
         }
     }

@@ -264,7 +264,7 @@ class GoMemoryRealUiTest {
             ui.waitUntil(30000){ui.onAllNodesWithTag("tab-0").fetchSemanticsNodes().isNotEmpty()};ui.onNodeWithTag("tab-0").performClick()
             ui.waitUntil(30000){ui.onAllNodesWithText(friendName).fetchSemanticsNodes().isNotEmpty()};ui.onNodeWithText(friendName).performClick()
             if(contactMode){
-                ui.onNodeWithTag("chat-role-detail").performClick();ui.onNodeWithTag("role-companion-open").performScrollTo().performClick()
+                ui.runOnIdle{ViewModelProvider(ui.activity)[AppState::class.java].open("toolbox-contact")};ui.onNodeWithTag("toolbox-contact-$friendId").performScrollTo().performClick()
                 ui.waitUntil(10000){runCatching{ui.onNodeWithTag("companion-enabled").assertIsEnabled();true}.getOrDefault(false)}
                 ui.onNodeWithTag("companion-enabled").performClick()
                 ui.waitUntil(10000){stored{CompanionRepository(it).policy(friendId)}=="enabled"}

@@ -43,7 +43,7 @@ class ControlPresentationTest {
             assertEquals(if(p==null)0 else 1,Regex.fromLiteral(ControlPresentation.LABEL).findAll(system).count())
             ref?.let{assertTrue(system.contains(it.text))};assertFalse(system.contains(ControlPresentation.NOT_COMPLETED))
             assertFalse(system.contains("本轮已执行工具回执"));assertFalse(system.contains("\"status\":\"applied\""))
-            assertEquals(original,request.messages.single{it.role=="user"}.content.removeSuffix("\n\n"+CompanionPrompt.THINKING_REMINDER))
+            assertEquals(original,request.messages.single{it.role=="user"}.content)
         }
     }
 }

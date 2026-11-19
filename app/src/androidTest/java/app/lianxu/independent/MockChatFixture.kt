@@ -20,8 +20,8 @@ internal fun syntheticCompanionStage(request:TextChatRequest):TextChatResult? {
     return null
 }
 
-/** The user's own words in the latest user message, without the wire-only thinking reminder (the reminder is never part of what the user said). */
-internal fun TextChatRequest.latestUserText()=messages.last{it.role=="user"}.content.removeSuffix("\n\n"+CompanionPrompt.THINKING_REMINDER)
+/** The user's own words in the latest user message; thinking language is a separate system message. */
+internal fun TextChatRequest.latestUserText()=messages.last{it.role=="user"}.content
 
 /** Protocol C: true when this request already carries a successful record (raw tool result or the compact note). */
 internal fun TextChatRequest.recordTaken()=messages.any{(it.role=="tool"&&it.name==CompanionRecord.NAME&&runCatching{JSONObject(it.content).optBoolean("success")}.getOrDefault(false))||it.content.startsWith(CompanionRecord.receiptNote)}

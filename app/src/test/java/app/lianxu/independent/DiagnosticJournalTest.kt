@@ -48,11 +48,100 @@ class DiagnosticJournalTest {
             val export=j.export(true).toString(Charsets.UTF_8);assertTrue(export.contains("trace-99"));assertTrue(export.contains("truncated"))
         }finally{j.close();cleanup(dir)}
     }
+    @Test fun oldFirstEventExpiresEvenWhenTheSegmentWasRecentlyTouched() {
+        val dir=directory()
+        val old=System.currentTimeMillis()-8L*24*60*60*1000
+        File(dir,"events-0.jsonl").writeText("""{"event":"expired-marker","at":$old}"""+"\n")
+        val journal=DiagnosticJournal(dir,"bounded")
+        try {
+            journal.record("fresh-marker")
+            val result=journal.export(true).decodeToString()
+            assertTrue(result.contains("fresh-marker"));assertFalse(result.contains("expired-marker"))
+            assertFalse(File(dir,"events-0.jsonl").readText().contains("expired-marker"))
+        }finally{journal.close();cleanup(dir)}
+    }
+
     @Test fun oversizeDropIsExplicitAndDoesNotGrowDisk(){
         val dir=directory();val j=DiagnosticJournal(dir,"test",queueCapacity=1)
         try{j.record("oversize","trace-a",mapOf("body" to "x".repeat(1024*1024+10)));val result=rows(j.export(true));assertEquals(1L,result.first().get("dropped_events").asLong);assertTrue(result.first().get("flush_complete").asBoolean);assertFalse(result.any{it.get("event")?.asString=="oversize"})}
         finally{j.close();cleanup(dir)}
     }
+    @Test fun syntheticCredentialsAreRemovedFromDiskAndBothExports() {
+        val dir=directory()
+        val journal=DiagnosticJournal(dir,"fixture")
+        try {
+            val key="fixture-k+/%"
+            journal.redactor.register(key)
+            val payload=JsonObject().apply {
+                addProperty("authorization","marker-auth")
+                addProperty("private_key","marker-private")
+                addProperty("chat","普通聊天内容")
+            }
+            val nested=JsonObject().apply { addProperty("encoded",payload.toString()) }
+            journal.record("sample-$key","trace-$key",mapOf(
+                key to "普通回复", "tool" to nested.toString(), "stack" to IllegalStateException("请求失败",
+                    IllegalArgumentException("HTTPS://name:marker-pass@example.invalid/x?t=marker-query")).stackTraceToString(),
+                "pem" to "-----BEGIN RSA PRIVATE KEY-----\nmarker-pem\n-----END RSA PRIVATE KEY-----",
+                "body" to "data:video/mp4;base64,marker-video", "bytes" to ByteArray(180000){42},
+                "cookies" to listOf("marker-cookie"),
+                "encoded_form" to java.net.URLEncoder.encode(payload.toString(),"UTF-8"),
+                "encoded_blob" to java.util.Base64.getEncoder().encodeToString(payload.toString().toByteArray()),
+                "audio" to mapOf("format" to "wav","data" to "marker-sound")
+            ))
+            assertTrue(journal.flush())
+            val disk=dir.listFiles().orEmpty().joinToString { it.readText() }
+            val full=journal.export(true).decodeToString()
+            listOf(disk,full,journal.export(false).decodeToString()).forEach { output ->
+                listOf(key,"marker-auth","marker-private","marker-pass","marker-query","marker-pem","marker-video","marker-cookie","marker-sound",java.util.Base64.getEncoder().encodeToString(payload.toString().toByteArray()))
+                    .forEach { assertFalse(it,output.contains(it)) }
+            }
+            listOf(disk,full).forEach { assertTrue(it.contains("普通聊天内容"));assertTrue(it.contains("IllegalArgumentException"));assertTrue(it.contains("180000字节")) }
+            File(dir,"events-1.jsonl").writeText("""{"event":"legacy","data":{"token":"marker-legacy","body":"普通资料"}}""")
+            assertFalse(journal.export(true).decodeToString().contains("marker-legacy"))
+        } finally { journal.close(); cleanup(dir) }
+    }
+
+    @Test fun aRequestCannotResumeCollectionAfterToggle() = runBlocking {
+        val dir=directory();val journal=DiagnosticJournal(dir,"fixture")
+        Diagnostics.installForTest(journal)
+        try {
+            Diagnostics.detailed=true
+            withContext(Diagnostics.networkContext("synthetic")) {
+                val state=requireNotNull(Diagnostics.requestState())
+                state.phase("first")
+                val prepared=Diagnostics.raw("marker-stale-prepared")
+                val preparedTool=Diagnostics.rawJson(mapOf("tool" to "marker-stale-json"))
+                val out=state.observe(java.io.ByteArrayOutputStream())
+                out.write(ByteArray(13))
+                Diagnostics.detailed=false
+                out.write(ByteArray(19))
+                Diagnostics.detailed=true
+                state.phase("marker-stale-phase")
+                Diagnostics.event("sample",mapOf("body" to Diagnostics.raw("marker-stale-body"),
+                    "old" to prepared, "old_tool" to preparedTool))
+            }
+            val full=journal.export(true).decodeToString()
+            assertFalse(full.contains("marker-stale"))
+            assertTrue(full.contains("\"client_write_completed_bytes\":13"))
+        } finally { Diagnostics.installForTest(null);journal.close();cleanup(dir) }
+    }
+
+    @Test fun measuresBoundedLogWorkAndAccountsForEveryEvent() {
+        val dir=directory();val j=DiagnosticJournal(dir,"bench",segmentBytes=16384,segments=3)
+        try {
+            val start=System.nanoTime()
+            repeat(128) { j.record("timing","t",mapOf("reply" to "普通合成回复".repeat(1900))) }
+            val enqueueMs=(System.nanoTime()-start)/1_000_000
+            val output=rows(j.export(true))
+            val bytes=dir.listFiles().orEmpty().sumOf { it.length() }
+            val header=output.first()
+            assertEquals(128L,header["session_truncated_events"].asLong+header["dropped_events"].asLong)
+            assertTrue(header["flush_complete"].asBoolean)
+            assertTrue(bytes<=49152)
+            println("synthetic_events=128 enqueue_ms=$enqueueMs disk_bytes=$bytes rotations=${header["session_rotations"]}")
+        }finally{j.close();cleanup(dir)}
+    }
+
     @Test fun hiddenThoughtFieldsAndTagsAreOmitted(){
         val r=DiagnosticRedactor();val value=JsonObject().apply{addProperty("reasoning_content","private-thought");addProperty("response","visible <think>hidden-analysis</think> final")}
         val clean=r.clean(value).toString();assertFalse(clean.contains("private-thought"));assertFalse(clean.contains("hidden-analysis"));assertTrue(clean.contains("visible"));assertTrue(clean.contains("final"))

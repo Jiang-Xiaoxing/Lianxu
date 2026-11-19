@@ -54,6 +54,7 @@ class LiveChatUiTest {
         ui.onNodeWithTag("friend-name").performTextInput("合成·新角色");ui.onNodeWithTag("friend-bio").performTextInput("喜欢安静的小事，仅供本机测试。")
         ui.onNodeWithTag("create-friend").performScrollTo().performClick();ui.waitUntil(10000){ui.onAllNodesWithTag("message-input").fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithTag("chat-role-detail").performClick();ui.onNodeWithTag("role-prompts-open").performScrollTo().performClick()
+        ui.onNodeWithTag("role-tab-1").performClick()
         ui.onNodeWithTag("role-expression").performScrollTo().performTextInput("用自然表达回应 {{character}}，不要机械反问。")
         hideIme();ui.activityRule.scenario.recreate();ui.onNodeWithTag("role-expression").assertTextContains("{{character}}",substring=true)
         ui.onNodeWithTag("config-save").performClick();ui.waitUntil(10000){ui.onAllNodesWithTag("role-prompts-open").fetchSemanticsNodes().isNotEmpty()};ui.onNodeWithTag("back").performClick()
@@ -64,7 +65,10 @@ class LiveChatUiTest {
         val messages=JSONObject(server.body).getJSONArray("messages")
         assertTrue(messages.getJSONObject(0).getString("content").contains("用自然表达回应 合成·新角色"))
         val latestUser=(0 until messages.length()).map{messages.getJSONObject(it)}.last{it.getString("role")=="user"}
-        assertEquals("你好，这是本机合成测试。",latestUser.getString("content").removeSuffix("\n\n"+CompanionPrompt.THINKING_REMINDER))
+        assertEquals("你好，这是本机合成测试。",latestUser.getString("content"))
+        assertEquals(1,Regex.fromLiteral("[思考语言]").findAll(server.body).count())
+        val latestSystem=(0 until messages.length()).map{messages.getJSONObject(it)}.last{it.getString("role")=="system"}
+        assertTrue(latestSystem.getString("content").contains("[思考语言]"))
         assertFalse(server.body.contains(CompanionRecord.NAME))
         assertFalse(server.body.contains("【演示开场】"));assertFalse(server.body.contains("synthetic-key-only"))
         shot("02-new-role-real-http-mock-reply")

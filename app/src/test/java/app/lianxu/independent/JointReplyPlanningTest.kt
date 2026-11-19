@@ -18,7 +18,11 @@ class JointReplyPlanningTest {
         assertTrue(result.request.messages.any{"不要拿我的工作开玩笑" in it.content})
         assertTrue(result.estimatedInputTokens<=AdaptiveContext.inputLimit(config.contextTokens,config.outputTokens))
         assertTrue(result.request.messages.first().content.contains("[companion.reply.v1]"))
-        assertEquals("最后两条是用户原话和时间提醒","user",result.request.messages[result.request.messages.size-2].role)
+        val messages=result.request.messages
+        assertEquals("用户原话在两条程序尾巴之前","user",messages[messages.size-3].role)
+        assertEquals("你好",messages[messages.size-3].content)
+        assertTrue("倒数第二条是时间参考",messages[messages.size-2].turnContext)
+        assertTrue("最后一条是思考语言",messages.last().thinkingContext)
         assertFalse("Protocol C sends plain text, not a JSON envelope",result.request.jsonObject)
         assertEquals(1,result.request.messages.count{RoleConsistency.RULES in it.content})
     }

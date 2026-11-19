@@ -6,7 +6,7 @@ import org.junit.Test
 /**
  * 平常回话的桌面上不摊旧账单：旧 entries 的评价/感受/目标全文不进提示词，附带的只是一段中文笔记，
  * 只留用得上的内容和工具要用的编号；真要翻旧事时靠 relation_event_search 查。规矩和人设放在开头，
- * 最后两条是用户原话和时间提醒。
+ * 用户原话后面是独立的时间参考和独立的思考语言。
  */
 class ReplyLedgerTest {
     private val role="a"
@@ -48,11 +48,13 @@ class ReplyLedgerTest {
         val messages=prepared()
         assertTrue("规矩和人设在同一条开头系统消息里",messages.first().role=="system"&&"[companion.reply.v1]" in messages.first().content)
         assertEquals("规矩只出现一次",1,messages.count{"[companion.reply.v1]" in it.content})
-        assertEquals("倒数第二条是用户原话","在吗？美女",messages[messages.size-2].content)
-        assertTrue("最后一条是时间提醒",messages.last().turnContext)
+        assertEquals("用户原话", "在吗？美女",messages.last{it.role=="user"}.content)
+        assertEquals("时间参考",messages[messages.size-2],messages.single{it.turnContext})
+        assertTrue("最后一条是思考语言",messages.last().thinkingContext)
         val sent=CompanionPrompt.forSend(TextChatRequest(messages),emptyList()).messages
-        assertTrue("发送时仍带中文思考提醒",sent[sent.size-2].content.endsWith(CompanionPrompt.THINKING_REMINDER))
-        assertTrue(sent.last().turnContext)
+        assertEquals("发送时用户原话保持原样","在吗？美女",sent.last{it.role=="user"}.content)
+        assertEquals("时间参考之后是思考语言",sent[messages.size-2],sent.single{it.turnContext})
+        assertTrue(sent.last().thinkingContext)
     }
 
     @Test fun notesArePlainChineseWithoutJsonOrCodes(){

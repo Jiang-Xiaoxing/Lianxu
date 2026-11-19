@@ -86,7 +86,7 @@ class RealThinkingLanguageCompareTest {
                                 .replace("你是与${addressee}进行一对一日常对话的 AI 伴侣角色","你是与用户进行一对一日常对话的 AI 伴侣角色")
                                 .replace("输出面向${addressee}的正文","输出面向用户的正文")
                                 .replace("只输出给${addressee}看的正文","只输出给用户看的正文")
-                                .replace(CompanionPrompt.thinkingNaming(addressee)+"\n",""))})
+                                .replace("用「我」，想到对方时就用平时的称呼，不叫「用户」。",""))})
                         } else if(variant=="after")r else r.copy(messages=r.messages.map{m->m.copy(content=when(m.role){"system"->m.content.replace(CompanionPrompt.thinkingLanguage("林间",addressee)+"\n","");"user"->m.content.removeSuffix("\n\n"+CompanionPrompt.THINKING_REMINDER);else->m.content})})
                         if(fake && !naming && r.messages.any{it.content.contains("[思考语言]")}){ check(outgoing.messages.last{it.role=="user"}.content.endsWith(CompanionPrompt.THINKING_REMINDER)==(variant=="after"));check(outgoing.messages.any{it.content.contains(CompanionPrompt.thinkingLanguage("林间",addressee))}==(variant=="after")) }
                         if(fake && naming && variant=="before") {
@@ -94,10 +94,10 @@ class RealThinkingLanguageCompareTest {
                             if(r.messages.any{it.content.contains("[思考语言]")}) {
                                 check(system.contains("你是与用户进行一对一日常对话的 AI 伴侣角色"))
                                 check(system.contains("输出面向用户的正文"))
-                                check(system.contains(CompanionPrompt.thinkingLanguage("林间",addressee).replace(CompanionPrompt.thinkingNaming(addressee)+"\n","")))
+                                check(system.contains(CompanionPrompt.thinkingLanguage("林间",addressee).replace("用「我」，想到对方时就用平时的称呼，不叫「用户」。","")))
                             }
                             if(r.messages.any{it.content.contains("[companion.reply.v1]")})check(system.contains("只输出给用户看的正文"))
-                            check(!system.contains(CompanionPrompt.thinkingNaming(addressee)))
+                            check(!system.contains("用「我」，想到对方时就用平时的称呼，不叫「用户」。"))
                             check(r.messages.filter{it.role!="system"}==outgoing.messages.filter{it.role!="system"})
                         }
                         val after=outgoing.messages.any{it.role=="tool"};val step=JSONObject().put("configId",config.id).put("variant",variant).put("persona",persona).put("naming",naming).put("script",script).put("repeat",repetition).put("step",steps.length()+1).put("phase",if(after)"after_tool" else "before_tool").put("chatPrompt",r.messages.any{it.content.contains("[思考语言]")}).put("toolResults",JSONArray(outgoing.messages.filter{it.role=="tool"}.map{"${it.name}: ${it.content.take(400)}"}))

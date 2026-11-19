@@ -61,6 +61,13 @@ private val IconStroke=Stroke(1.65f,cap=StrokeCap.Round,join=StrokeJoin.Round)
     Canvas(Modifier.size(box)) {
         withTransform({scale(size.width/24f,size.height/24f,pivot=Offset.Zero)}) {
             when(kind) {
+                "landscape"->{drawPath(Path().apply{addRoundRect(androidx.compose.ui.geometry.RoundRect(Rect(3f,4f,21f,20f),3f,3f));moveTo(4f,17f);lineTo(9f,11f);lineTo(14f,17f);lineTo(17f,13f);lineTo(20f,17f)},iconColor,style=IconStroke);drawCircle(iconColor,1.5f,Offset(16f,8f),style=IconStroke)}
+                "camera"->{drawPath(Path().apply{addRoundRect(androidx.compose.ui.geometry.RoundRect(Rect(2f,6f,16f,19f),2.5f,2.5f));moveTo(16f,10f);lineTo(22f,7f);lineTo(22f,18f);lineTo(16f,15f)},iconColor,style=IconStroke)}
+                "brain"->{drawPath(Path().apply{moveTo(12f,5f);cubicTo(9f,1f,5f,3f,5f,6f);cubicTo(1f,7f,1f,12f,4f,14f);cubicTo(2f,18f,6f,21f,9f,20f);cubicTo(11f,22f,12f,20f,12f,18f);lineTo(12f,5f);cubicTo(15f,1f,19f,3f,19f,6f);cubicTo(23f,7f,23f,12f,20f,14f);cubicTo(22f,18f,18f,21f,15f,20f);cubicTo(13f,22f,12f,20f,12f,18f);moveTo(5f,7f);cubicTo(8f,6f,9f,8f,8f,10f);moveTo(4f,14f);cubicTo(7f,12f,9f,14f,8f,17f);moveTo(19f,7f);cubicTo(16f,6f,15f,8f,16f,10f);moveTo(20f,14f);cubicTo(17f,12f,15f,14f,16f,17f)},iconColor,style=IconStroke)}
+                "photo-camera"->{
+                    drawPath(Path().apply{moveTo(3f,7f);lineTo(7f,7f);lineTo(9f,4f);lineTo(15f,4f);lineTo(17f,7f);lineTo(21f,7f);lineTo(21f,20f);lineTo(3f,20f);close()},iconColor,style=IconStroke)
+                    drawCircle(iconColor,4f,Offset(12f,13f),style=IconStroke)
+                }
                 "eye","eye-off"->{
                     drawPath(Path().apply{moveTo(2f,12f);cubicTo(7f,4f,17f,4f,22f,12f);cubicTo(17f,20f,7f,20f,2f,12f);close()},iconColor,style=IconStroke)
                     drawCircle(iconColor,3f,Offset(12f,12f),style=IconStroke)
