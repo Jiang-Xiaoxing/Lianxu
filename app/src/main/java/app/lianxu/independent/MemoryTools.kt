@@ -11,7 +11,7 @@ import java.time.Instant
 
 /** Adapts our optional recall tools and FusedMemoryWriter to Lianxu's source/version transactions. */
 internal class MemoryTools(private val repo:ProcessingRepository,private val turn:ChatTurn,private val input:String,
-    private val initial:ProcessingRepository.References,private val companionIndex:CompanionVectorIndex?=null,private val allowWrite:Boolean=true,private val memoryVectors:MemoryVectorIndex?=null,private val queryCache:QueryEmbeddingCache?=null,private val relationEnabled:Boolean=false,private val controlTool:(suspend(JSONObject)->Map<String,Any>)?=null,private val recordTool:(suspend(String)->Map<String,Any>)?=null,private val freshControlContext:(suspend()->Pair<TextChatRequest,ProcessingRepository.References>)?=null,private val recordNeedsExperience:Boolean=false,private val contactTool:(suspend(String)->Map<String,Any>)?=null,private val contactTime:Long=0,private val contactZone:java.time.ZoneId=java.time.ZoneId.systemDefault(),private val contactScheduling:Boolean=true,private val active:()->Boolean) {
+    private val initial:ProcessingRepository.References,private val companionIndex:CompanionVectorIndex?=null,private val allowWrite:Boolean=true,private val memoryVectors:MemoryVectorIndex?=null,private val queryCache:QueryEmbeddingCache?=null,private val relationEnabled:Boolean=false,private val controlTool:(suspend(JSONObject)->Map<String,Any>)?=null,private val recordTool:(suspend(String)->Map<String,Any>)?=null,private val freshControlContext:(suspend()->Pair<TextChatRequest,ProcessingRepository.References>)?=null,private val recordNeedsExperience:Boolean=false,private val contactTool:(suspend(String)->Map<String,Any>)?=null,private val contactTime:Long=0,private val contactZone:java.time.ZoneId=java.time.ZoneId.systemDefault(),private val contactScheduling:Boolean=true,private val voiceTarget:(()->VoiceTarget?)?=null,private val active:()->Boolean) {
     private var contactAttempts=0
     private var controlAttempts=0
     private var recordAttempts=0
@@ -122,7 +122,10 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
     suspend fun run(config:ModelConfig,key:String,request:TextChatRequest,client:TextChatClient,onResponseStart:(suspend()->Unit)?=null,onEvent:(suspend(TextStreamEvent)->Unit)?=null,onToolActivity:(suspend(ChatToolActivity)->Unit)?=null):TextChatResult = runLoop(config,key,request,client,onResponseStart,onEvent,onToolActivity)
     /** A rejected structured candidate cannot leave writes for the next candidate to commit. */
     suspend fun discardCandidate()=repo.tx{db->db.delete("preferences","key=?",arrayOf(stageKey));Unit}
-    private fun definitions()=(if(contactTool!=null)listOf(ImmediateContact.definition(turn.userMessageId,contactTime,contactZone,contactScheduling))else emptyList())+(if(controlTool!=null)listOf(JointControl.definition)else emptyList())+(if(recordTool!=null)listOf(CompanionRecord.definition(turn.userMessageId,recordNeedsExperience))else emptyList())+(if(rules.proactiveRecall)buildAgentRecallToolDefinitions(true) else emptyList())+(if(rules.immediateWrite&&allowWrite&&writeSourceAllowed)listOf(writeDefinition()) else emptyList())+(if(rules.proactiveRecall)listOf(mapOf("type" to "function","function" to mapOf("name" to "agent_memory_read","description" to "按问题读取当前有效角色记忆","parameters" to mapOf("type" to "object","properties" to mapOf("query" to mapOf("type" to "string")),"required" to listOf("query"))))) else emptyList())
+    var spokenReply: RequestedVoiceReply? = null
+        private set
+
+    private fun definitions()=(if(voiceTarget?.invoke()!=null)listOf(ChatVoiceDelivery.definition)else emptyList())+(if(contactTool!=null)listOf(ImmediateContact.definition(turn.userMessageId,contactTime,contactZone,contactScheduling))else emptyList())+(if(controlTool!=null)listOf(JointControl.definition)else emptyList())+(if(recordTool!=null)listOf(CompanionRecord.definition(turn.userMessageId,recordNeedsExperience))else emptyList())+(if(rules.proactiveRecall)buildAgentRecallToolDefinitions(true) else emptyList())+(if(rules.immediateWrite&&allowWrite&&writeSourceAllowed)listOf(writeDefinition()) else emptyList())+(if(rules.proactiveRecall)listOf(mapOf("type" to "function","function" to mapOf("name" to "agent_memory_read","description" to "按问题读取当前有效角色记忆","parameters" to mapOf("type" to "object","properties" to mapOf("query" to mapOf("type" to "string")),"required" to listOf("query"))))) else emptyList())
     internal fun reservedTokens():Int {val offered=definitions()+(if(relationEnabled)listOf(RelationshipRecall.definition)else emptyList());return if(offered.isEmpty())0 else ConservativeTokens.tokens(gson.toJson(offered))+(if(rules.proactiveRecall)ConservativeTokens.tokens(CompanionRecallBudget.QUERY_RULES) else 0)+768}
     /** Read-only planning, before any model/tool execution. Same messages and cost as the first send. */
     internal suspend fun initialCapacityFailure(config:ModelConfig,request:TextChatRequest):ChatFailure? {
@@ -133,7 +136,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
         val outgoing=CompanionPrompt.forSend(request.copy(messages=initialMessages),offered)
         return if(requestCost(outgoing,offered)>=config.contextTokens)ChatFailure.CONTEXT_CAPACITY else null
     }
-    private fun noTools()=controlTool==null&&contactTool==null&&recordTool==null&&!relationEnabled&&!rules.proactiveRecall&&!(rules.immediateWrite&&allowWrite&&writeSourceAllowed)
+    private fun noTools()=voiceTarget?.invoke()==null&&controlTool==null&&contactTool==null&&recordTool==null&&!relationEnabled&&!rules.proactiveRecall&&!(rules.immediateWrite&&allowWrite&&writeSourceAllowed)
     private fun messageMaps(messages:List<WireMessage>)=messages.map{m->buildMap<String,Any>{
         put("role",m.role);put("content",m.content)
         if(m.name.isNotEmpty())put("name",m.name)
@@ -197,6 +200,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
             kotlinx.coroutines.yield()
             currentCoroutineContext().ensureActive();if(!active()||repo.memoryRules(repo.store.readableDatabase)!=rulesState)return TextChatResult.Failure(ChatFailure.SOURCE_CHANGED)
             val actor="${turn.id}:${turn.attempt}:$step"
+            val offeredVoice=voiceTarget?.invoke()
             val definitions=definitions()+(if(relationEnabled)listOf(RelationshipRecall.definition)else emptyList())
             val stepDefinitions=definitions.filterNot{(contactAttempts>=3&&toolNameOf(it)==ImmediateContact.NAME)||(controlAttempts>=3&&toolNameOf(it)==JointControl.NAME)||(recordAttempts>=3&&toolNameOf(it)==CompanionRecord.NAME)||(relationCalls>RelationshipRecall.LIMIT&&toolNameOf(it)==RelationshipRecall.NAME)||(writeBatches>=7&&toolNameOf(it)=="agent_memory_update")||(progress.stopped!=null&&toolNameOf(it) in CompanionRecallBudget.readNames)}
             val preparedMessages=CompanionPrompt.forSend(request.copy(messages=messages.toList()),stepDefinitions).messages
@@ -223,6 +227,15 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
             // Thinking is kept across tool rounds: the saved display must match what the user watched.
             if(result.toolCalls.isEmpty())return result.copy(displayReasoning=displayReasoning)
             if(result.toolCalls.size>8||result.toolCalls.any{c->c.name !in offered.map(::toolNameOf)})return TextChatResult.Failure(ChatFailure.TOOLS_UNAVAILABLE)
+            val speech=result.toolCalls.singleOrNull()?.takeIf{it.name=="send_short_voice"}
+            if(result.toolCalls.any{it.name=="send_short_voice"}) {
+                val sentence=speech?.let { runCatching{JSONObject(it.arguments).opt("text") as? String}.getOrNull() }
+                if(sentence.isNullOrBlank() || sentence.length>600 || sentence.codePointCount(0,sentence.length)>300 ||
+                    sentence.any { it.isISOControl() } || !Charsets.UTF_8.newEncoder().canEncode(sentence))
+                    return TextChatResult.Failure(ChatFailure.REPLY_TEXT_INVALID)
+                if(offeredVoice!=null && voiceTarget?.invoke()==offeredVoice) spokenReply=RequestedVoiceReply(sentence,offeredVoice)
+                return result.copy(text=sentence,toolCalls=emptyList(),continuation=null,displayReasoning=displayReasoning)
+            }
             // Display metadata only: even two responses at the same thinking offset stay separate.
             val recallDisplayGroup=java.util.UUID.randomUUID().toString()
             if(result.toolCalls.any{it.name=="agent_memory_update"})writeBatches++

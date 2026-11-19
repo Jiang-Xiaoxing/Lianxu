@@ -46,14 +46,31 @@ class ModelVault(context:Context,private val namespace:String="model-configs",pr
     private fun key(id:String):SecretKey = (keyStore.getKey(alias(id),null) as? SecretKey) ?: KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore").apply {
         init(KeyGenParameterSpec.Builder(alias(id),KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).setKeySize(256).build())
     }.generateKey()
-    private fun read(id:String):JSONObject {
-        val bytes=AtomicFile(file(id)).readFully()
-        require(bytes.size>28 && bytes[0].toInt()==1)
-        val cipher=Cipher.getInstance("AES/GCM/NoPadding")
-        val stored=keyStore.getKey(alias(id),null) as? SecretKey ?: error("Key unavailable")
-        cipher.init(Cipher.DECRYPT_MODE,stored,GCMParameterSpec(128,bytes.copyOfRange(1,13)))
-        cipher.updateAAD(id.toByteArray(Charsets.UTF_8))
-        return JSONObject(String(cipher.doFinal(bytes.copyOfRange(13,bytes.size)),Charsets.UTF_8)).also{Diagnostics.registerSecret(it.getString("key"))}
+    private fun read(id:String):JSONObject =
+        decryptRecord(AtomicFile(file(id)).readFully(), id, alias(id), keyStore).also { Diagnostics.registerSecret(it.getString("key")) }
+
+    companion object {
+        /** Read a single standalone encrypted record without creating a vault or migrating selections. */
+        internal fun existingSecret(noBackupDir: File, namespace: String, id: String): String? = AppMutationGate.read {
+            val safeName = Regex("[a-zA-Z0-9-]{1,80}")
+            require(namespace.matches(safeName) && id.matches(safeName))
+            val record = File(File(noBackupDir, namespace), "$id.enc")
+            // Android AtomicFile regards a legacy .bak, when present, as the last committed version.
+            val backup = File(record.parentFile, record.name + ".bak")
+            val source = if (backup.isFile) backup else record
+            if (!source.isFile) return@read null
+            val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            (decryptRecord(source.readBytes(), id, "lianxu.$namespace.$id", store).opt("key") as? String)?.also(Diagnostics::registerSecret)
+        }
+
+        private fun decryptRecord(bytes: ByteArray, id: String, alias: String, keyStore: KeyStore): JSONObject {
+            require(bytes.size>28 && bytes[0].toInt()==1)
+            val cipher=Cipher.getInstance("AES/GCM/NoPadding")
+            val stored=keyStore.getKey(alias,null) as? SecretKey ?: error("Key unavailable")
+            cipher.init(Cipher.DECRYPT_MODE,stored,GCMParameterSpec(128,bytes.copyOfRange(1,13)))
+            cipher.updateAAD(id.toByteArray(Charsets.UTF_8))
+            return JSONObject(String(cipher.doFinal(bytes.copyOfRange(13,bytes.size)),Charsets.UTF_8))
+        }
     }
     private fun onMainThread():Boolean {
         val main=Looper.getMainLooper()?:return false

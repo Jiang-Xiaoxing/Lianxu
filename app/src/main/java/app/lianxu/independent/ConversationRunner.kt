@@ -397,7 +397,8 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                 settled()
             }
         }
-        fun toolRunner()=MemoryTools(processing,current,context.input,refs,companionIndex,memoryVectors=vectors,queryCache=queryCache,relationEnabled=needsPlan,controlTool=controlTool,freshControlContext={requireNotNull(freshControlContext).invoke()},contactTool=contactTool,contactTime=appraisalTime,contactZone=contactZone,contactScheduling=contactScheduling){modelCurrent()&&companion.current(store.readableDatabase,companionState)&&processing.referenceCurrent(friendId,refs.stamp)}
+        val voiceAccount=BreezeVoiceAccount(store.applicationContext)
+        fun toolRunner()=MemoryTools(processing,current,context.input,refs,companionIndex,memoryVectors=vectors,queryCache=queryCache,relationEnabled=needsPlan,controlTool=controlTool,freshControlContext={requireNotNull(freshControlContext).invoke()},contactTool=contactTool,contactTime=appraisalTime,contactZone=contactZone,contactScheduling=contactScheduling,voiceTarget={voiceAccount.target(friendId)}){modelCurrent()&&companion.current(store.readableDatabase,companionState)&&processing.referenceCurrent(friendId,refs.stamp)}
         val accountRecord=false // Mood/relationship review waits for the configured batch, never the reply.
         fun toolReserve()=toolRunner().reservedTokens()
         fun jointReserve()=if(needsPlan)planner.replyFixedTokens(interpretation,roleState,appraisalTime,rules.proactiveRecall,accountRecord,context.persona)+(context.recent.size+6)*8 else 0
@@ -452,7 +453,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
             val raw=withContext(Dispatchers.IO){tools.run(credentials.config,credentials.key,(built as PromptBuild.Ready).request.copy(conversationId=ProviderRequestMetadata.conversation(friendId)),imageRoute,
                 onResponseStart={decoder=ChatDisplayDecoder();resetPreview()},onEvent={event->receive(event,decoder)},onToolActivity={showTool(it)})}
             if(raw is TextChatResult.Success){
-                val text=ChatDisplayDecoder().append(raw.text)
+                val text=tools.spokenReply?.text?:ChatDisplayDecoder().append(raw.text)
                 if(text.isBlank()||text.length>16000)TextChatResult.Failure(ChatFailure.REPLY_TEXT_INVALID)else raw.copy(text=text)
             }else raw
         }
@@ -470,11 +471,12 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                 ChatRequestOwner.release(st.owner)
                 currentCoroutineContext().ensureActive()
                 withContext(Dispatchers.Main.immediate){
-                    if(!displayReplies)st.delivery.acknowledge(st.delivery.bubbles.size)
-                    previews[friendId]?.takeIf{it.turnId==current.id&&it.attempt==current.attempt}?.let{
+                    if(!displayReplies || tools.spokenReply!=null)st.delivery.acknowledge(st.delivery.bubbles.size)
+                    if(tools.spokenReply==null) previews[friendId]?.takeIf{it.turnId==current.id&&it.attempt==current.attempt}?.let{
                         previews=previews+(friendId to it.copy(text=result.text,phase=ChatReplyPhase.REPLYING,bubbles=st.delivery.bubbles,visible=if(displayReplies)it.visible else st.delivery.visible))
                     }
                 }
+
                 fun receivedCurrent()=modelCurrent()&&ledger.hasReceived(current.id,current.attempt)
                 st.current=::receivedCurrent
                 awaitDisplay(st,::receivedCurrent)
@@ -484,6 +486,15 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                 if(!saved)ledger.fail(current.id,current.attempt,ChatFailure.SOURCE_CHANGED)
                 else {
                     st.settled[0]=true;st.settled[2]=true
+                    tools.spokenReply?.let { reply ->
+                        val id=ChatVoiceDelivery.key(friendId,current.id,current.attempt,reply.text)
+                        val app=store.applicationContext
+                        ChatVoiceDelivery.submit(app,friendId,id,valid={
+                            voiceAccount.target(friendId)==reply.target && store.readableDatabase.rawQuery(
+                                "SELECT 1 FROM chat_turns t JOIN messages m ON m.id=t.assistant_message_id WHERE t.id=? AND t.attempt=? AND t.state='COMPLETED' AND m.body=? AND NOT EXISTS(SELECT 1 FROM message_state s WHERE s.message_id=m.id AND s.deleted=1)",
+                                arrayOf(current.id,current.attempt.toString(),reply.text)).use { it.moveToFirst() }
+                        }){voiceAccount.synthesize(friendId,reply)}
+                    }
                     memory.afterChat(friendId)
                     settled()
                 }

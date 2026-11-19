@@ -94,6 +94,8 @@ class MainActivity:ComponentActivity(){
             "role-relationship"->RelationshipScreen(vm)
             "role-companion"->CompanionSettingsScreen(vm)
             "toolbox"->ToolboxScreen(vm)
+            "role-voice"->BreezeRoleSettings(vm)
+            "toolbox-voice"->BreezeStudioScreen(vm)
             "toolbox-image"->ToolboxImageScreen(vm)
             "toolbox-video"->ToolboxVideoScreen(vm)
             "toolbox-memory"->ToolboxMemoryScreen(vm)
@@ -232,6 +234,7 @@ class MainActivity:ComponentActivity(){
             }
             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(UiSpace.radius)).background(Paper)){
                 DirectoryRow("edit","编辑角色设定","名字、说话方式与开场白","role-prompts-open",iconColor=ProfileIconColors.edit){vm.open("role-prompts",friend.id)}
+                DirectoryRow("chat","聊天设置","允许发语音与绑定音色","role-voice-open",showChevron=false){vm.open("role-voice",friend.id)}
                 DirectoryRow("memory","记忆","记住的内容与原话来源","role-processing-open",iconColor=ProfileIconColors.memory){vm.open("processing-role",friend.id)}
                 DirectoryRow("list","学习记录","看法、兴趣与相处习惯","role-learning-open",iconColor=ProfileIconColors.learning){vm.open("role-learning",friend.id)}
                 DirectoryRow("heart","我们的相处","她现在的心情、信任和放在心上的事","role-relationship-open",iconColor=ProfileIconColors.relationship){vm.open("role-relationship",friend.id)}

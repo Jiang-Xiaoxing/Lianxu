@@ -130,6 +130,8 @@ private suspend fun LazyListState.showEndOf(index:Int){
     var importingImage by draftState.importing
     var imageError by remember(friend.id){mutableStateOf("")}
     var viewedImage by remember(friend.id){mutableStateOf<ChatMediaPreview?>(null)}
+    val pendingVoice by ChatVoiceDelivery.pending.collectAsState()
+    val voiceRevision by ChatVoiceDelivery.revision.collectAsState()
     val context=LocalContext.current
     val imageScope=rememberCoroutineScope()
     val inputFocus=remember(friend.id){FocusRequester()}
@@ -262,7 +264,15 @@ private suspend fun LazyListState.showEndOf(index:Int){
                                         else ChatReasoningPanel("message-${message.id}",message.displayReasoning,false,Modifier.width(width))
                                         }
                                     }
-                                    Column(Modifier.widthIn(max=width).onGloballyPositioned{val p=it.localToWindow(Offset.Zero);bounds=Rect(p,it.size.toSize())}.testTag("message-${message.id}").semantics(mergeDescendants=true){text=androidx.compose.ui.text.AnnotatedString(message.text)}.combinedClickable(onClick={},onLongClick={controlMessage=message}),verticalArrangement=Arrangement.spacedBy(5.dp)){
+                                    val voiceTurn=if(message.mine)null else vm.turns.firstOrNull{it.assistantMessageId==message.id}
+                                    val voiceId=voiceTurn?.let{ChatVoiceDelivery.key(friend.id,it.id,it.attempt,message.text)}
+                                    val pendingVoice by ChatVoiceDelivery.pending.collectAsState()
+                                    val revision by ChatVoiceDelivery.revision.collectAsState()
+                                    val app=LocalContext.current
+                                    val voiceFile=remember(voiceId,voiceRevision){voiceId?.let{ChatVoiceDelivery.file(context,it)}?.takeIf{it.isFile}}
+                                    if(voiceFile!=null) Box(Modifier.onGloballyPositioned{val p=it.localToWindow(Offset.Zero);bounds=Rect(p,it.size.toSize())}.testTag("message-${message.id}")){ChatVoiceBubble(voiceFile,message.text){controlMessage=message}}
+                                    else if(voiceId!=null && voiceId in pendingVoice) Text("正在合成语音…",Modifier.combinedClickable(onClick={},onLongClick={controlMessage=message}),style=MaterialTheme.typography.bodySmall,color=Muted)
+                                    else Column(Modifier.widthIn(max=width).onGloballyPositioned{val p=it.localToWindow(Offset.Zero);bounds=Rect(p,it.size.toSize())}.testTag("message-${message.id}").semantics(mergeDescendants=true){text=androidx.compose.ui.text.AnnotatedString(message.text)}.combinedClickable(onClick={},onLongClick={controlMessage=message}),verticalArrangement=Arrangement.spacedBy(5.dp)){
                                         message.image?.let{ref->MessagePicture(vm,ref,onControl={controlMessage=message}){data->openMedia(data,ref.mime)}}
                                         val segments=if(message.text.isBlank())emptyList()else ChatBubbleSegments.forMessage(message.text,message.mine)
                                         segments.forEachIndexed{index,segment->
