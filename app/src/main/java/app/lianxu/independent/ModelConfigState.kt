@@ -128,7 +128,7 @@ class ModelConfigState @JvmOverloads constructor(
             if(invalid!=null){message(invalid,true);return@launch}
             reload()
             AppMutationGate.read{connections=if(keep&&vault.recordStamp(config.id)==committedRevision)connections+(config.id to probe) else connections-config.id}
-            val savedText=if(purpose!=null)"已保存并用于${purpose.title}；保存本身不发送请求。"else"已保存，请在模型用途中选择这份配置；保存本身不发送请求。"
+            val savedText=if(purpose!=null)"已保存并用于${purpose.title}；保存本身不发送请求。"else"已保存；保存本身不发送请求。"
             message(ProviderRequestMetadata.compatibilityNotice(config)?.let{"$savedText $it"}?:savedText)
             onSaved()
         }catch(e:CancellationException){throw e}

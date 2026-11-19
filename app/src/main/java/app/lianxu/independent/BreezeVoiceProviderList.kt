@@ -57,7 +57,7 @@ internal data class VoiceProviderSummary(
                 .semantics { contentDescription = "${provider.title} $action" },
             contentAlignment = Alignment.Center
         ) {
-            Text(action, style = MaterialTheme.typography.labelMedium, color = GreenText)
+            Text(action, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
         }
     }
 }
