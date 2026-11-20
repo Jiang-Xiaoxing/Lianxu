@@ -25,6 +25,7 @@ class ModelConfigUiTest {
     private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
     private val namespace="ui-test-${System.nanoTime()}"
     private val client=ScriptedDirectory()
+    private val chat=ScriptedChat()
     private lateinit var state:ModelConfigState
     private val a=ModelConfig("ui-a","日常陪伴","deepseek","https://api.deepseek.com","synthetic-chat-model")
     private val b=ModelConfig("ui-b","灵感小站","silicon-cn","https://api.siliconflow.cn/v1","synthetic-model-b")
@@ -42,6 +43,19 @@ class ModelConfigUiTest {
             return withContext(NonCancellable){response.await()}
         }
     }
+    private class ScriptedChat:TextChatClient {
+        val calls=AtomicInteger(0)
+        val replies=ConcurrentLinkedQueue<CompletableDeferred<TextChatResult>>()
+        fun reply(result:TextChatResult)=CompletableDeferred(result).also {replies.add(it)}
+        fun pending()=CompletableDeferred<TextChatResult>().also {replies.add(it)}
+        override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {
+            assertEquals("synthetic-key-only",key);calls.incrementAndGet()
+            // The connectivity probe must ask for a real answer with enough room for a thinking model.
+            assertEquals(256,request.outputLimit);assertTrue(request.messages.any{it.role=="user"&&it.content.contains("OK-")})
+            val response=checkNotNull(replies.poll()){"No synthetic chat response queued"}
+            return withContext(NonCancellable){response.await()}
+        }
+    }
     @Before fun setup() {
         vault.save(a,"synthetic-key-only");vault.save(b,"synthetic-key-only")
         ui.activityRule.scenario.onActivity {activity->
@@ -49,6 +63,7 @@ class ModelConfigUiTest {
                 @Suppress("UNCHECKED_CAST") override fun <T:ViewModel> create(modelClass:Class<T>):T =
                     ModelConfigState(activity.application as Application,client,namespace) as T
             })[ModelConfigState::class.java]
+            state.testClient=chat
         }
         ui.waitUntil(10000){state.configs.size==2}
         ui.waitUntil(15000){ui.onAllNodesWithTag("tab-2").fetchSemanticsNodes().isNotEmpty()}
@@ -57,7 +72,9 @@ class ModelConfigUiTest {
     @After fun cleanup(){ui.runOnIdle{state.clearResult()};vault.list().forEach {vault.delete(it.id)}
         Store(context,AppServices.databaseName).use{it.writableDatabase.delete("preferences","key LIKE ?",arrayOf("${ModelStatusStore.PREFIX}${vault.statusNamespace}:%"))}}
     private fun overview(){if(ui.onAllNodesWithTag("config-overview").fetchSemanticsNodes().isEmpty())back();ui.waitUntil(10000){ui.onAllNodesWithTag("config-overview").fetchSemanticsNodes().isNotEmpty()}}
-    private fun probeLine(id:String)=run{ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-$id"));ui.onNodeWithTag("config-probe-$id",useUnmergedTree=true)}
+    // 四 tab 之后概览行按设计只留「名字 / 状态 / 胶囊」，上次测试与最近调用不再单独占行，
+    // 所以这里核对状态层算出来的那句话，而不是去读一个已经不存在的文本节点。
+    private fun shownTest(id:String):String=ModelStatusText.test(state.tests[id],state.configs.first{it.id==id})
     private fun hideKeyboard(){ui.activityRule.scenario.onActivity {activity->
         (activity.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(activity.window.decorView.windowToken,0)
         activity.window.decorView.clearFocus()
@@ -98,7 +115,7 @@ class ModelConfigUiTest {
         assertEquals(1000000,saved.contextTokens);assertEquals(65536,saved.outputTokens);assertEquals(32768,saved.memoryOutputTokens);assertEquals(0,client.calls.get())
     }
     @Test fun newModelDefaultsRespectManualBudgetsAndNextNewDraftStartsClean(){
-        ui.onNodeWithTag("config-add").performScrollTo().performClick();ui.onNodeWithTag("provider-search").performTextInput("mimo");ui.onNodeWithTag("provider-mimo").performClick()
+        ui.onNodeWithTag("config-add-chat").performScrollTo().performClick();ui.onNodeWithTag("provider-search").performTextInput("mimo");ui.onNodeWithTag("provider-mimo").performClick()
         ui.onNodeWithTag("config-model").performScrollTo().performTextInput("mimo-v2.6-pro");hideKeyboard()
         ui.onNodeWithTag("config-advanced").performScrollTo().performClick()
         ui.onNodeWithTag("config-context").performScrollTo().assertTextContains("1000000",substring=true)
@@ -106,7 +123,7 @@ class ModelConfigUiTest {
         ui.onNodeWithTag("config-model").performScrollTo().performTextReplacement("unknown-manual-model");hideKeyboard()
         ui.onNodeWithTag("config-output").performScrollTo().assertTextContains("7777",substring=true)
         ui.onNodeWithTag("config-budget-unknown").performScrollTo().assertExists();ui.onNodeWithTag("config-budget-apply").assertDoesNotExist()
-        back();ui.onNodeWithTag("config-add").performScrollTo().performClick();ui.onNodeWithTag("provider-search").performTextInput("mimo");ui.onNodeWithTag("provider-mimo").performClick()
+        back();ui.onNodeWithTag("config-add-chat").performScrollTo().performClick();ui.onNodeWithTag("provider-search").performTextInput("mimo");ui.onNodeWithTag("provider-mimo").performClick()
         ui.onNodeWithTag("config-advanced").performScrollTo().performClick()
         ui.onNodeWithTag("config-context").performScrollTo().assertTextContains("1048576",substring=true)
         ui.onNodeWithTag("config-output").performScrollTo().assertTextContains("65536",substring=true)
@@ -114,9 +131,9 @@ class ModelConfigUiTest {
     }
     @Test fun layeredCrudValidationKeyboardAndRecreation(){
         ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-ui-a"))
-        ui.onNodeWithTag("config-probe-ui-a",useUnmergedTree=true).assertTextEquals("未测试")
+        assertEquals("未测试",shownTest("ui-a"))
         shot("01-overview-real-app")
-        ui.onNodeWithTag("config-add").performScrollTo().performClick();shot("02-providers-real-app")
+        ui.onNodeWithTag("config-add-chat").performScrollTo().performClick();shot("02-providers-real-app")
         ui.onNodeWithTag("provider-search").performTextInput("xiaomi")
         ui.onNodeWithTag("provider-mimo").assertIsDisplayed()
         ui.onNodeWithTag("provider-deepseek").assertDoesNotExist()
@@ -141,7 +158,7 @@ class ModelConfigUiTest {
         waitSaved(3);assertEquals(0,client.calls.get())
         val saved=vault.list().single{it.name=="旅行随记"}
         ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-${saved.id}"))
-        ui.onNodeWithTag("config-probe-${saved.id}",useUnmergedTree=true).assertTextEquals("未测试")
+        assertEquals("未测试",shownTest(saved.id))
         edit(saved.id)
         ui.onNodeWithTag("config-default-${saved.id}").performScrollTo().performClick()
         ui.waitUntil(10000){vault.defaultId()==saved.id&&!state.saving}
@@ -159,53 +176,56 @@ class ModelConfigUiTest {
     }
 
     @Test fun activeProbeRetryModelFetchAndLeavingIgnoreLateResults(){
-        edit();client.reply(ConfigResult.Failure(ConfigError.UNAUTHORIZED,401))
+        edit();chat.reply(TextChatResult.Failure(ChatFailure.UNAUTHORIZED,401))
         ui.onNodeWithTag("config-test").performScrollTo().performClick()
         ui.waitUntil(10000){state.probe.phase==ProbePhase.FAILED}
         ui.onNodeWithTag("config-probe-inline").assertTextContains("401",substring=true)
         assertFalse(state.probe.text.contains("synthetic-key"));shot("04-readable-failure-real-app")
-        client.reply(ConfigResult.Success())
+        chat.reply(TextChatResult.Success("OK-4f2a"))
         ui.onNodeWithTag("config-test").performClick()
         ui.waitUntil(10000){state.probe.phase==ProbePhase.REACHABLE}
-        ui.onNodeWithTag("config-probe-inline").assertTextContains("可达",substring=true)
+        ui.onNodeWithTag("config-probe-inline").assertTextContains("模型已回话",substring=true)
         client.reply(ConfigResult.Success(listOf("synthetic-selected-model")))
         ui.onNodeWithTag("config-fetch").performScrollTo().performClick()
         ui.waitUntil(10000){state.models.isNotEmpty()}
         ui.onNodeWithText("synthetic-selected-model").performScrollTo().performClick()
         ui.onNodeWithTag("config-model").assertTextContains("synthetic-selected-model",substring=true)
         ui.onNodeWithTag("config-probe-inline").assertTextEquals("未测试")
-        val late=client.pending();val before=client.calls.get()
+        val late=chat.pending();val before=chat.calls.get()
         ui.onNodeWithTag("config-test").performScrollTo().performTouchInput{doubleClick()}
-        ui.waitUntil(10000){client.calls.get()==before+1}
+        ui.waitUntil(10000){chat.calls.get()==before+1}
         ui.onNodeWithTag("config-test").assertIsNotEnabled();back()
-        edit("ui-b");client.reply(ConfigResult.Success())
+        edit("ui-b");chat.reply(TextChatResult.Success("OK-77be"))
         ui.onNodeWithTag("config-test").performScrollTo().performClick()
         ui.waitUntil(10000){state.probe.phase==ProbePhase.REACHABLE}
-        late.complete(ConfigResult.Failure(ConfigError.NETWORK))
+        late.complete(TextChatResult.Failure(ChatFailure.NETWORK))
         ui.waitForIdle();assertEquals(ProbePhase.REACHABLE,state.probe.phase);assertFalse(state.testing)
         // 2026-11-02 (小星): the overview no longer says "可达"; it names the last test time, the tested model and the result.
-        back();probeLine("ui-b").assertTextContains("上次测试",substring=true).assertTextContains("synthetic-model-b",substring=true).assertTextContains("成功",substring=true)
+        back();ui.waitUntil(10000){state.tests.containsKey("ui-b")}
+        assertTrue(shownTest("ui-b").contains("上次测试"));assertTrue(shownTest("ui-b").contains("synthetic-model-b"))
+        assertTrue(shownTest("ui-b").contains("成功"))
         assertEquals("synthetic-chat-model",vault.list().single{it.id==a.id}.modelId)
     }
 
     @Test fun overviewShowsLastTestAndResetsToUntestedWhenModelOrKeyChanges(){
-        edit("ui-b");client.reply(ConfigResult.Failure(ConfigError.UNAUTHORIZED,401))
+        edit("ui-b");chat.reply(TextChatResult.Failure(ChatFailure.UNAUTHORIZED,401))
         ui.onNodeWithTag("config-test").performScrollTo().performClick();ui.waitUntil(10000){state.probe.phase==ProbePhase.FAILED}
-        back();probeLine("ui-b").assertTextContains("synthetic-model-b · 失败：",substring=true).assertTextContains("401",substring=true)
-        edit("ui-b");client.reply(ConfigResult.Success())
+        back();ui.waitUntil(10000){state.tests.containsKey("ui-b")}
+        assertTrue(shownTest("ui-b").contains("synthetic-model-b · 失败："));assertTrue(shownTest("ui-b").contains("401"))
+        edit("ui-b");chat.reply(TextChatResult.Success("OK-11a0"))
         ui.onNodeWithTag("config-test").performScrollTo().performClick();ui.waitUntil(10000){state.probe.phase==ProbePhase.REACHABLE}
-        back();probeLine("ui-b").assertTextContains("上次测试：",substring=true).assertTextContains("synthetic-model-b · 成功",substring=true);shot("05-overview-last-test")
-        probeLine("ui-a").assertTextEquals("未测试")
+        back();assertTrue(shownTest("ui-b").contains("上次测试："));assertTrue(shownTest("ui-b").contains("synthetic-model-b · 成功"));shot("05-overview-last-test")
+        assertEquals("未测试",shownTest("ui-a"))
         edit("ui-b");ui.onNodeWithTag("config-model").performScrollTo().performTextReplacement("synthetic-model-c");hideKeyboard()
         ui.onNodeWithTag("config-save").performClick();ui.waitUntil(10000){vault.list().single{it.id=="ui-b"}.modelId=="synthetic-model-c"&&!state.saving}
-        overview();probeLine("ui-b").assertTextEquals("未测试");shot("06-overview-reset-after-model-change")
-        edit("ui-b");client.reply(ConfigResult.Success())
+        overview();assertEquals("未测试",shownTest("ui-b"));shot("06-overview-reset-after-model-change")
+        edit("ui-b");chat.reply(TextChatResult.Success("OK-22c1"))
         ui.onNodeWithTag("config-test").performScrollTo().performClick();ui.waitUntil(10000){state.probe.phase==ProbePhase.REACHABLE}
-        back();probeLine("ui-b").assertTextContains("synthetic-model-c · 成功",substring=true)
+        back();assertTrue(shownTest("ui-b").contains("synthetic-model-c · 成功"))
         edit("ui-b");ui.onNodeWithTag("config-key").performScrollTo().performTextReplacement("synthetic-key-rotated");hideKeyboard()
         ui.onNodeWithTag("config-save").performClick();ui.waitUntil(10000){vault.secret("ui-b")=="synthetic-key-rotated"&&!state.saving}
-        overview();probeLine("ui-b").assertTextEquals("未测试")
-        assertEquals(3,client.calls.get())
+        overview();assertEquals("未测试",shownTest("ui-b"))
+        assertEquals(3,chat.calls.get())
     }
     @Test fun overviewShowsTheLatestRealCallResult(){
         kotlinx.coroutines.runBlocking{
@@ -214,16 +234,17 @@ class ModelConfigUiTest {
             status.recordCall("ui-b","聊天",true,"")
         }
         ui.runOnIdle{state.refresh()};ui.waitUntil(10000){state.calls.size==2}
-        ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-ui-a"))
-        ui.onNodeWithTag("config-calls-ui-a",useUnmergedTree=true).assertTextEquals("最近 3 次总结失败：超时")
-        ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-ui-b"))
-        ui.onNodeWithTag("config-calls-ui-b",useUnmergedTree=true).assertTextContains("最近一次真实调用结果：聊天成功",substring=true);shot("07-overview-recent-calls")
+        ui.runOnIdle{state.refresh()};ui.waitUntil(10000){state.calls.size==2}
+        assertEquals("最近 3 次总结失败：超时",ModelStatusText.calls(state.calls["ui-a"]))
+        assertTrue(ModelStatusText.calls(state.calls["ui-b"]).contains("最近一次真实调用结果：聊天成功"))
+        shot("07-overview-recent-calls")
         assertEquals(0,client.calls.get())
     }
     @Test fun addEmbeddingFetchSelectAndBackgroundKeepsUnsavedDraftUntilSave(){
         val beforePurposes=vault.backup(false).second
         var embeddingCalls=0
         state.embeddingClient=object:MemoryEmbeddingClient{override suspend fun embed(credential:ModelCredential,texts:List<String>,timeout:Int):List<DoubleArray>{assertEquals(listOf("向量连接测试"),texts);assertEquals("BAAI/bge-m3",credential.config.modelId);embeddingCalls++;return listOf(doubleArrayOf(1.0,0.0,0.0,0.0))}}
+        ui.onNodeWithTag("config-tab-embedding").performClick()
         ui.onNodeWithTag("config-add-embedding").performScrollTo().performClick()
         ui.onNodeWithTag("provider-silicon-cn").performClick()
         ui.onNodeWithTag("config-name").performTextReplacement("合成向量草稿")
@@ -260,12 +281,12 @@ class ModelConfigUiTest {
         assertEquals(1,client.calls.get())
     }
     @Test fun backgroundCancelsActiveProbeAndLateFailureCannotRestoreIt(){
-        edit();val late=client.pending()
+        edit();val late=chat.pending()
         ui.onNodeWithTag("config-test").performScrollTo().performClick()
-        ui.waitUntil(10000){client.calls.get()==1}
+        ui.waitUntil(10000){chat.calls.get()==1}
         ui.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
         ui.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
-        late.complete(ConfigResult.Failure(ConfigError.NETWORK))
+        late.complete(TextChatResult.Failure(ChatFailure.NETWORK))
         ui.waitForIdle();assertEquals(ProbePhase.UNTESTED,state.probe.phase);assertFalse(state.testing)
         assertEquals(0,state.connections.size)
     }

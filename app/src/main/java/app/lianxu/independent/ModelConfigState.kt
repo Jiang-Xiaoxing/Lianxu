@@ -23,6 +23,8 @@ class ModelConfigState @JvmOverloads constructor(
     private val statusStore=ModelStatusStore(storage,vault.statusNamespace)
     internal val vaultVersion get()=ModelVaultCache.version(vault.statusNamespace)
     internal var embeddingClient:MemoryEmbeddingClient=HttpsMemoryEmbeddingClient()
+    /** 连接测试走真发一句话；测试可注入脚本化实现，不打开网络。 */
+    internal var testClient:TextChatClient=HttpsTextChatClient()
     var configs by mutableStateOf(emptyList<ModelConfig>());private set
     internal var configRevisions by mutableStateOf(emptyMap<String,String>());private set
     var defaultId by mutableStateOf("");private set
@@ -171,17 +173,50 @@ class ModelConfigState @JvmOverloads constructor(
         }
     }
     fun delete(config:ModelConfig){if(busy)return;clearResult();saving=true;viewModelScope.launch {try{withContext(Dispatchers.IO){vault.delete(config.id)};statusStore.clearAll(config.id);reload();connections=connections-config.id;message("配置和关联密钥已删除。")}catch(_:Exception){message("删除未完成，请重试。",true)}finally{saving=false}}}
+    /**
+     * 连接测试的探针：真让模型回一句话。
+     * 256 是下限——给 16/32/64/128 时思考模型会把额度全花在思考上，正文是空的，测出来的"没通过"其实是假失败。
+     */
+    internal fun probeRequest():TextChatRequest {
+        val token="OK-"+(0 until 4).joinToString(""){"%x".format((Math.random()*16).toInt())}
+        return TextChatRequest(
+            listOf(
+                WireMessage("system","You are a connectivity probe. Reply with exactly one word."),
+                WireMessage("user","Reply with the single word: $token")
+            ),
+            outputLimit=256,
+            timeoutMillis=30000
+        )
+    }
+    /** 测试失败时说人话：是密钥、网络，还是通了但没正文。 */
+    internal fun probeFailure(result:TextChatResult.Failure):String=when(result.reason){
+        ChatFailure.UNAUTHORIZED->"认证失败（401），请检查当前地域的 API Key。"
+        ChatFailure.PAYMENT->"账户余额或付费状态有问题（402），充值或换一家再试。"
+        ChatFailure.FORBIDDEN->"访问被拒绝（403），请检查这个模型有没有权限。"
+        ChatFailure.RATE_LIMIT->"请求太频繁（429），过一会儿再测。"
+        ChatFailure.TIMEOUT->"等太久没有回应，检查网络后再试。"
+        ChatFailure.NETWORK->"连不上服务器，检查网络后再试。"
+        ChatFailure.TLS->"HTTPS 证书校验失败，检查服务地址。"
+        ChatFailure.REDIRECT->"服务返回重定向，已停下，没有把密钥发到新地址。"
+        ChatFailure.SERVER->"服务暂时不可用，稍后再试。"
+        ChatFailure.TRUNCATED->"回复被截断了，额度不够。把「聊天生成上限 Token」调大再试。"
+        ChatFailure.GO_ENDPOINT_UNVERIFIED->ProviderRequestMetadata.GO_UNVERIFIED_NOTICE
+        ChatFailure.INVALID_CONFIG->"配置不完整，请检查服务地址、模型和密钥。"
+        ChatFailure.FORMAT->if(result.httpStatus in 200..299)"服务器通了，但模型没有回正文。可能是模型 ID 不对，或者思考把额度用光了。"
+            else "服务没有返回可用的文本回复，检查模型 ID 和兼容接口地址。"
+        else->result.reason.display
+    }
     fun request(config:ModelConfig,key:String,fetch:Boolean){
         if(busy)return;clearResult();val version=requestVersion;testing=true;fetching=fetch
-        if(!fetch)probe=ProbeDisplay(ProbePhase.TESTING,"正在测试…") else message("正在获取模型…")
+        if(!fetch)probe=ProbeDisplay(ProbePhase.TESTING,"正在让模型回一句话…") else message("正在获取模型…")
         requestJob=viewModelScope.launch {try {
             val resolved=credential(config,key)
             if(version!=requestVersion)return@launch
             val invalid=ConfigRules.urlError(config.baseUrl)?:if(resolved.key.isBlank())"请填写 API Key；地址或服务商改变后需重新输入。" else null
             if(invalid!=null){if(fetch)message(invalid,true) else probe=ProbeDisplay(ProbePhase.FAILED,invalid);return@launch}
-            val result=diagnosticClient.request(config,resolved.key,fetch)
-            if(version!=requestVersion)return@launch
             if(fetch){
+                val result=diagnosticClient.request(config,resolved.key,true)
+                if(version!=requestVersion)return@launch
                 withContext(Dispatchers.IO){AppMutationGate.read{
                     if(version!=requestVersion)return@read
                     if(!current(config,resolved)){staleProbe();return@read}
@@ -192,9 +227,15 @@ class ModelConfigState @JvmOverloads constructor(
                 }}
                 return@launch
             }
+            val result=testClient.complete(config,resolved.key,probeRequest())
+            if(version!=requestVersion)return@launch
             when(result){
-                is ConfigResult.Success->tested(config,key,resolved,ProbeDisplay(ProbePhase.REACHABLE,"目录/认证测试可达"),true,"",version)
-                is ConfigResult.Failure->tested(config,key,resolved,ProbeDisplay(ProbePhase.FAILED,result.error.messageText),false,result.error.messageText,version)
+                is TextChatResult.Success->{
+                    val text=result.text.trim()
+                    if(text.isEmpty()){val reason="服务器通了，但模型没有回正文。可能是模型 ID 不对，或者思考把额度用光了。";tested(config,key,resolved,ProbeDisplay(ProbePhase.FAILED,reason),false,reason,version)}
+                    else tested(config,key,resolved,ProbeDisplay(ProbePhase.REACHABLE,"模型已回话：${text.take(24)}"),true,"",version)
+                }
+                is TextChatResult.Failure->{val reason=probeFailure(result);tested(config,key,resolved,ProbeDisplay(ProbePhase.FAILED,reason),false,reason,version)}
             }
         }catch(e:CancellationException){throw e}
         catch(_:Exception){if(version==requestVersion){if(fetch)message("获取失败，请重试。",true) else probe=ProbeDisplay(ProbePhase.FAILED,"连接失败，请重试。")}}

@@ -32,6 +32,7 @@ internal object ImageWire {
         return JSONObject().put("model",config.modelId).put("messages",messages).put("stream",stream).apply{
             if(StructuredResponsePolicy.jsonMode(config,request))put("response_format",JSONObject().put("type","json_object"))
             if(request.tools.isNotEmpty())put("tools",JSONArray(request.tools)).put("tool_choice","auto")
+            ThinkingFields.apply(this,config)
             put(if(config.providerId in setOf("openai","mimo"))"max_completion_tokens" else "max_tokens",request.outputLimit)
         }
     }

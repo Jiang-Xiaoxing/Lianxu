@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -68,12 +69,14 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
     val keyDraft=remember {ModelKeyDraft()}
     val editorScope=rememberCoroutineScope()
     var budgets by remember {mutableStateOf(ModelBudgetDraft())}
+    var thinkingMode by remember {mutableStateOf(ThinkingMode.DEFAULT)}
+    var thinkingCustom by remember {mutableStateOf("")}
     var query by remember {mutableStateOf("")};var advanced by remember {mutableStateOf(false)}
     var modelQuery by remember {mutableStateOf("")}
     var deleting by remember {mutableStateOf<ModelConfig?>(null)}
     val activity=LocalActivity.current ?: return
     val lifecycle=LocalLifecycleOwner.current.lifecycle
-    fun draft()=ModelConfig(draftId,name.trim(),provider,base.trim().trimEnd('/'),model.trim(),budgets.context.toIntOrNull()?:0,budgets.chat.toIntOrNull()?:0,budgets.memory.toIntOrNull()?:-1)
+    fun draft()=ModelConfig(draftId,name.trim(),provider,base.trim().trimEnd('/'),model.trim(),budgets.context.toIntOrNull()?:0,budgets.chat.toIntOrNull()?:0,budgets.memory.toIntOrNull()?:-1,thinkingMode.key,thinkingCustom.trim())
     fun back(){
         if(state.saving)return
         keyDraft.invalidate()
@@ -82,9 +85,9 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
         key="";reveal=false
         if(screen=="edit")screen="overview" else onBack()
     }
-    fun add(embedding:Boolean=false){if(state.saving||saveForPurpose==ModelPurpose.CHAT&&embedding)return;prefilledKey="";keyDraft.invalidate();embeddingEditor=embedding;original=null;originalRevision=null;draftId=UUID.randomUUID().toString();name="";key="";reveal=false;model="";budgets=ModelBudgetDraft();query="";allProviders=false;providerReturn="overview";state.clearResult();screen="providers"}
+    fun add(embedding:Boolean=false){if(state.saving||saveForPurpose==ModelPurpose.CHAT&&embedding)return;prefilledKey="";keyDraft.invalidate();embeddingEditor=embedding;original=null;originalRevision=null;draftId=UUID.randomUUID().toString();name="";key="";reveal=false;model="";budgets=ModelBudgetDraft();thinkingMode=ThinkingMode.DEFAULT;thinkingCustom="";query="";allProviders=false;providerReturn="overview";state.clearResult();screen="providers"}
     fun sharedWithOtherPurposes(id:String)=saveForPurpose==ModelPurpose.CHAT&&state.purposes.any{(purpose,value)->purpose!=ModelPurpose.CHAT&&value==id}
-    fun edit(config:ModelConfig){if(sharedWithOtherPurposes(config.id))return;prefilledKey="";embeddingEditor=state.purposes[ModelPurpose.EMBEDDING]==config.id;original=config;originalRevision=state.configRevisions[config.id];draftId=config.id;name=config.name;provider=config.providerId;base=config.baseUrl;model=config.modelId;budgets=ModelBudgetDraft.existing(config);key="";reveal=false;advanced=false;state.clearResult();screen="edit"
+    fun edit(config:ModelConfig){if(sharedWithOtherPurposes(config.id))return;prefilledKey="";embeddingEditor=state.purposes[ModelPurpose.EMBEDDING]==config.id;original=config;originalRevision=state.configRevisions[config.id];draftId=config.id;name=config.name;provider=config.providerId;base=config.baseUrl;model=config.modelId;budgets=ModelBudgetDraft.existing(config);key="";reveal=false;advanced=false;thinkingMode=ThinkingFields.mode(config.thinkingMode);thinkingCustom=config.thinkingCustom;state.clearResult();screen="edit"
         keyDraft.invalidate()
         val ticket=keyDraft.ticket()
         editorScope.launch {
@@ -107,7 +110,7 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
             title=when(screen){"providers"->if(embeddingEditor)"选择向量服务商" else "选择聊天服务商";"edit"->if(embeddingEditor)"向量模型配置" else if(original==null)"添加 ${providerName(preset)}" else "编辑配置";else->"大模型配置"},
             onBack={back()},backTag="config-back",enabled=!state.saving,
             extra={when(screen){
-                "edit"->SaveAction(!state.busy&&!sharedWithOtherPurposes(draftId)){reveal=false;if(saveForPurpose==ModelPurpose.CHAT)state.saveChatFromCreation(draft(),enteredKey(),original,originalRevision){key="";screen="overview"}else state.save(draft(),enteredKey(),if(embeddingEditor)ModelPurpose.EMBEDDING else null,original,originalRevision){key="";screen="overview"}}
+                "edit"->SaveAction(!state.busy&&!sharedWithOtherPurposes(draftId)&&ThinkingFields.customError(thinkingCustom)==null){reveal=false;if(saveForPurpose==ModelPurpose.CHAT)state.saveChatFromCreation(draft(),enteredKey(),original,originalRevision){key="";screen="overview"}else state.save(draft(),enteredKey(),if(embeddingEditor)ModelPurpose.EMBEDDING else null,original,originalRevision){key="";screen="overview"}}
                 else->Spacer(Modifier.width(48.dp))
             }}
         )
@@ -235,11 +238,10 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
                 Column(Modifier.fillMaxWidth()){
                     if(embeddingEditor){
                         TextButton(onClick={reveal=false;state.testEmbedding(draft(),enteredKey())},enabled=!state.busy,modifier=Modifier.heightIn(min=48.dp).testTag("config-test")){Text(if(state.testing)"正在测试向量…" else "测试向量连接（返回维度）")}
-                    }else if(preset.testPath!=null)Row(Modifier.heightIn(min=48.dp).clickable(enabled=!state.busy,role=Role.Button){reveal=false;state.request(draft(),enteredKey(),false)}.testTag("config-test").padding(horizontal=4.dp),verticalAlignment=Alignment.CenterVertically){ControlIcon("plug");Spacer(Modifier.width(8.dp));Text(if(state.probe.phase==ProbePhase.TESTING)"正在测试…" else if(state.probe.phase==ProbePhase.FAILED)"重新测试" else "测试连接",color=ConfigGreen,style=MaterialTheme.typography.bodyMedium);if(state.probe.phase==ProbePhase.TESTING)CircularProgressIndicator(Modifier.padding(start=12.dp).size(18.dp),strokeWidth=2.dp)}
-                    else Row(Modifier.heightIn(min=48.dp),verticalAlignment=Alignment.CenterVertically){ControlIcon("plug");Spacer(Modifier.width(8.dp));Text("此服务商暂未适配连接测试",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)}
+                    }else Row(Modifier.heightIn(min=48.dp).clickable(enabled=!state.busy,role=Role.Button){reveal=false;state.request(draft(),enteredKey(),false)}.testTag("config-test").padding(horizontal=4.dp),verticalAlignment=Alignment.CenterVertically){ControlIcon("plug");Spacer(Modifier.width(8.dp));Text(if(state.probe.phase==ProbePhase.TESTING)"正在等模型回话…" else if(state.probe.phase==ProbePhase.FAILED)"重新测试" else "测试连接",color=ConfigGreen,style=MaterialTheme.typography.bodyMedium);if(state.probe.phase==ProbePhase.TESTING)CircularProgressIndicator(Modifier.padding(start=12.dp).size(18.dp),strokeWidth=2.dp)}
                     val result=state.probe
-                    Text(when(result.phase){ProbePhase.UNTESTED->"未测试";ProbePhase.TESTING->"正在查询目录/认证接口…";else->result.text},Modifier.padding(start=4.dp,top=2.dp).testTag("config-probe-inline"),style=MaterialTheme.typography.bodySmall,color=when(result.phase){ProbePhase.REACHABLE->ConfigGreen;ProbePhase.FAILED->ConfigErrorColor;else->ConfigMuted})
-                    Text(if(embeddingEditor)"点击测试才向 /embeddings 发送一句合成文本，可能按服务商规则计费；不会发送聊天或记忆。" else if(saveForPurpose==ModelPurpose.CHAT)"连接测试仅检查目录/认证，不验证聊天生成。聊天配置保存后会直接用于全局聊天；其他用途选择不变。" else "测试连接仅检查目录/认证，不验证聊天或向量生成。目录含不同类型，请确认选的服务商支持当前用途。",Modifier.padding(start=4.dp,top=8.dp),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
+                    Text(when(result.phase){ProbePhase.UNTESTED->"未测试";ProbePhase.TESTING->"正在等模型回话…";else->result.text},Modifier.padding(start=4.dp,top=2.dp).testTag("config-probe-inline"),style=MaterialTheme.typography.bodySmall,color=when(result.phase){ProbePhase.REACHABLE->ConfigGreen;ProbePhase.FAILED->ConfigErrorColor;else->ConfigMuted})
+                    Text(if(embeddingEditor)"点击测试才向 /embeddings 发送一句合成文本，可能按服务商规则计费；不会发送聊天或记忆。" else "点击测试会真发一句话让模型回，可能按服务商规则计费；不会发送聊天记录或记忆。",Modifier.padding(start=4.dp,top=8.dp).testTag("config-test-note"),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
                 }
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
                     Row(Modifier.fillMaxWidth().heightIn(min=64.dp).clickable{advanced=!advanced}.testTag("config-advanced").padding(horizontal=18.dp,vertical=14.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("高级设置",style=MaterialTheme.typography.labelLarge);Text("服务地址与兼容方式",style=MaterialTheme.typography.bodySmall,color=ConfigMuted,modifier=Modifier.padding(top=4.dp))};ControlIcon(if(advanced)"up" else "chevron")}
@@ -256,6 +258,19 @@ private fun regionName(p:ProviderPreset)=p.label.substringAfter(" · ","")
                             TextButton(onClick={budgets=budgets.apply(provider,base,model).copy(automatic=false);changed()},enabled=!state.busy,modifier=Modifier.testTag("config-budget-apply")){Text("使用模型建议（仅填入草稿）")}
                         }else Text("尚未核对该模型容量，请按服务文档填写；保留手动输入。",Modifier.testTag("config-budget-unknown"),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
                         Text("本地估算含安全余量，不会自动裁掉未总结原话；顶部保存后才更新配置。",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
+                        Text("思考",Modifier.padding(top=4.dp),style=MaterialTheme.typography.labelLarge)
+                        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(ConfigBackground).selectableGroup()){
+                            ThinkingMode.entries.forEach{mode->Column(Modifier.fillMaxWidth().selectable(thinkingMode==mode,role=Role.RadioButton){thinkingMode=mode;changed()}.testTag("thinking-${mode.key}").padding(horizontal=12.dp,vertical=8.dp)){
+                                Row(verticalAlignment=Alignment.CenterVertically){RadioButton(thinkingMode==mode,null);Spacer(Modifier.width(10.dp));Text(mode.label,style=MaterialTheme.typography.bodyMedium)}
+                                Text(mode.hint,Modifier.padding(start=46.dp),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
+                            }}
+                        }
+                        Text(ThinkingFields.describe(draft()),Modifier.testTag("thinking-note"),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
+                        if(preset.id=="custom"){
+                            val customProblem=ThinkingFields.customError(thinkingCustom)
+                            ConfigField(thinkingCustom,{thinkingCustom=it.take(4000);changed()},"自定义思考字段（可选）","config-thinking-custom")
+                            Text(customProblem?:"填一段花括号设置，原样带进请求，例如 {\"reasoning_effort\":\"high\"}。model、messages 这些关键字段不能写。",Modifier.testTag("config-thinking-custom-note"),style=MaterialTheme.typography.bodySmall,color=if(customProblem!=null)ConfigErrorColor else ConfigMuted)
+                        }
 
                         }
                         Text("OpenAI 兼容 · "+(if(preset.authHeader=="api-key")"api-key 鉴权" else "Bearer 鉴权"),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)

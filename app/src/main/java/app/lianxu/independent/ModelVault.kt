@@ -87,7 +87,7 @@ class ModelVault(context:Context,private val namespace:String="model-configs",pr
             // default, so it is lifted to the current default (capped by a checked model's real ceiling);
             // any other saved value stays exactly as the user set it.
             val (liftedContext,liftedOutput)=ModelTokenPolicy.liftLegacy(context,output,provider,base,model)
-            val config=ModelConfig(f.nameWithoutExtension,j.getString("name"),provider,base,model,liftedContext,liftedOutput,j.optInt("memoryOutputTokens",0))
+            val config=ModelConfig(f.nameWithoutExtension,j.getString("name"),provider,base,model,liftedContext,liftedOutput,j.optInt("memoryOutputTokens",0),j.optString("thinkingMode",ThinkingMode.DEFAULT.key),j.optString("thinkingCustom",""))
             config to j.getString("key")
         }
         ModelVaultCache.Snapshot(dir.canonicalPath,loaded.map{it.first}.sortedBy {it.name},loaded.associate{it.first.id to it.second})
@@ -107,7 +107,7 @@ class ModelVault(context:Context,private val namespace:String="model-configs",pr
     private fun writeAt(destination:File,config:ModelConfig,secret:String){
         Diagnostics.registerSecret(secret)
         destination.mkdirs()
-        val data=JSONObject().put("name",config.name).put("provider",config.providerId).put("base",config.baseUrl).put("model",config.modelId).put("key",secret).put("contextTokens",config.contextTokens).put("outputTokens",config.outputTokens).put("memoryOutputTokens",config.memoryOutputTokens).toString().toByteArray(Charsets.UTF_8)
+        val data=JSONObject().put("name",config.name).put("provider",config.providerId).put("base",config.baseUrl).put("model",config.modelId).put("key",secret).put("contextTokens",config.contextTokens).put("outputTokens",config.outputTokens).put("memoryOutputTokens",config.memoryOutputTokens).put("thinkingMode",config.thinkingMode).put("thinkingCustom",config.thinkingCustom).toString().toByteArray(Charsets.UTF_8)
         val cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.ENCRYPT_MODE,key(config.id));cipher.updateAAD(config.id.toByteArray(Charsets.UTF_8))
         val encrypted=byteArrayOf(1)+cipher.iv+cipher.doFinal(data); data.fill(0)
         val atomic=AtomicFile(File(destination,"${config.id}.enc"));val stream=atomic.startWrite()
