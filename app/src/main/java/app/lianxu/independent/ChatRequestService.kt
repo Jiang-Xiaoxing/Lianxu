@@ -18,7 +18,6 @@ internal object ChatRequestOwner {
     class Attempt(val id:String,val notificationId:Int,val stop:(String)->Unit){
         val job=kotlinx.coroutines.SupervisorJob()
         val started=CompletableDeferred<Boolean>()
-        var notificationsVisible=true
     }
     val active=linkedMapOf<String,Attempt>()
     var service:ChatRequestService?=null
@@ -41,7 +40,7 @@ internal object ChatRequestOwner {
 
 /** Only active transfers own this service. Recreating the process never reconstructs an outbound request. */
 class ChatRequestService:Service(){
-    private val channel="chat-active-requests"
+    internal companion object { const val CHANNEL_ID = "chat-active-requests" }
     private val shown=mutableSetOf<Int>()
     private val manager get()=getSystemService(NotificationManager::class.java)
     override fun onBind(intent:Intent?):IBinder?=null
@@ -54,7 +53,7 @@ class ChatRequestService:Service(){
         val stopIntent=Intent(this,ChatRequestService::class.java).setAction("stop").putExtra("request",a.id)
         val action=PendingIntent.getService(this,a.notificationId,stopIntent,PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val open=PendingIntent.getActivity(this,0,Intent(this,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),PendingIntent.FLAG_IMMUTABLE)
-        return Notification.Builder(this,channel).setSmallIcon(android.R.drawable.stat_notify_sync)
+        return Notification.Builder(this,CHANNEL_ID).setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentTitle("正在等待回复").setContentIntent(open).setOnlyAlertOnce(true).setOngoing(true)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .addAction(Notification.Action.Builder(null,"停止",action).build()).apply{
@@ -76,15 +75,13 @@ class ChatRequestService:Service(){
             return
         }
         try{
-            manager.createNotificationChannel(NotificationChannel(channel,"正在处理的聊天",NotificationManager.IMPORTANCE_LOW))
+            manager.createNotificationChannel(NotificationChannel(CHANNEL_ID,"正在处理的聊天",NotificationManager.IMPORTANCE_LOW))
             val first=tasks.first()
             val n=notification(first)
             if(Build.VERSION.SDK_INT>=29)startForeground(first.notificationId,n,ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
             else startForeground(first.notificationId,n)
-            val visible=manager.areNotificationsEnabled()&&manager.getNotificationChannel(channel)?.importance!=NotificationManager.IMPORTANCE_NONE
             tasks.forEachIndexed{i,a->
                 if(i>0)manager.notify(a.notificationId,notification(a))
-                a.notificationsVisible=visible
                 shown+=a.notificationId
             }
             val obsolete=shown-tasks.map{it.notificationId}.toSet()

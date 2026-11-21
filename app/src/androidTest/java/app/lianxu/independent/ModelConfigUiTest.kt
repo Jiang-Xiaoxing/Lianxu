@@ -50,8 +50,8 @@ class ModelConfigUiTest {
         fun pending()=CompletableDeferred<TextChatResult>().also {replies.add(it)}
         override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {
             assertEquals("synthetic-key-only",key);calls.incrementAndGet()
-            // The connectivity probe must ask for a real answer with enough room for a thinking model.
-            assertEquals(256,request.outputLimit);assertTrue(request.messages.any{it.role=="user"&&it.content.contains("OK-")})
+            // 连接测试须跟随配置的输出额度。
+            assertEquals(config.outputTokens,request.outputLimit);assertTrue(request.messages.any{it.role=="user"&&it.content.contains("OK-")})
             val response=checkNotNull(replies.poll()){"No synthetic chat response queued"}
             return withContext(NonCancellable){response.await()}
         }
@@ -85,6 +85,41 @@ class ModelConfigUiTest {
         File(dir,"$name.png").outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}
     }
     private fun edit(id:String="ui-a"){ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-$id"));ui.onNodeWithTag("config-edit-$id").performClick()}
+    @Test fun inlineChatSelectionPersistsWithoutProbing() {
+        fun assertSelected(current: ModelConfig, other: ModelConfig) {
+            ui.onNodeWithTag("config-current-chat-${current.id}").assertHasNoClickAction()
+            ui.onNodeWithTag("config-use-chat-${current.id}").assertDoesNotExist()
+            ui.onNodeWithTag("config-current-chat-${other.id}").assertDoesNotExist()
+            ui.onNodeWithTag("config-use-chat-${other.id}").assertHasClickAction()
+            ui.onAllNodesWithText("当前聊天模型").assertCountEquals(1)
+            assertEquals(current.id, vault.purposeId(ModelPurpose.CHAT))
+        }
+        fun select(config: ModelConfig) {
+            val tag = "config-use-chat-${config.id}"
+            ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag(tag))
+            ui.onNodeWithTag(tag).performClick()
+            ui.waitUntil(10000) { state.defaultId == config.id && !state.busy }
+        }
+        val otherPurposes = ModelPurpose.entries.filter { it != ModelPurpose.CHAT }
+        val previous = otherPurposes.associateWith(vault::purposeId)
+        assertTrue(vault.defaultId().isEmpty())
+        ui.onAllNodesWithText("当前聊天模型").assertCountEquals(0)
+        select(a)
+        assertSelected(a, b)
+        select(b)
+        assertSelected(b, a)
+        assertEquals(0, client.calls.get())
+        assertEquals(0, chat.calls.get())
+        edit(a.id)
+        ui.onNodeWithTag("config-default-${a.id}").performScrollTo().assertIsEnabled()
+        back()
+        back()
+        ui.onNodeWithTag("settings-models").performClick()
+        overview()
+        assertSelected(b, a)
+        assertEquals(previous, otherPurposes.associateWith(vault::purposeId))
+    }
+
     @Test fun savedKeyIsMaskedAndEyeToggles(){
         edit()
         ui.waitUntil(10000){ui.onNodeWithTag("config-key").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.InputText].text=="synthetic-key-only"}

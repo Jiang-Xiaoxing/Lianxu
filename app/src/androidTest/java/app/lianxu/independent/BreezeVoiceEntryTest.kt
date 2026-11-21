@@ -35,7 +35,7 @@ class BreezeVoiceEntryTest {
     }
     @Test fun settingsBindingAndStudioFromApp(){
         // Fixture changes a dedicated probe's voice vault and preferences. Never operate on a user's test channel.
-        check(app.packageName.endsWith(".voicewaveprobe"))
+        check(app.packageName.endsWith(".voicewaveprobe") || app.packageName.endsWith(".voicestudiorefreshprobe"))
         val resolver=app.contentResolver
         val audio=inst.context.assets.open("voice/modulated-tone.mp3").use{it.readBytes()}
         val uri=requireNotNull(resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,ContentValues().apply{
@@ -44,6 +44,9 @@ class BreezeVoiceEntryTest {
         val old=AppServices.voiceConnections
         val oldProbe=VoiceConnectProbe.reachable
         val paths=CopyOnWriteArrayList<String>()
+        val ttsLines=CopyOnWriteArrayList<String>()
+        val remixSources=CopyOnWriteArrayList<String>()
+        val emptyCatalog=java.util.concurrent.atomic.AtomicBoolean(false)
         // 验证失败后的密钥/网络分类由真实网络探测决定，测试里固定成「服务器可达」。
         VoiceConnectProbe.reachable={ true }
         try{
@@ -59,16 +62,18 @@ class BreezeVoiceEntryTest {
                     override fun getServerCertificates():Array<Certificate> = emptyArray()
                     override fun getResponseCode()=if(path=="models" && paths.count{it=="models"}==1)401 else 200
                     override fun getContentType()=if(path.startsWith("text-to-speech/")||path.endsWith("/stream")) "audio/mpeg" else "application/json"
-                    override fun getOutputStream()=ByteArrayOutputStream()
+                    val sent=ByteArrayOutputStream()
+                    override fun getOutputStream()=sent
                     override fun getInputStream()=when(path){
                         "models"->"""[{"model_id":"breeze-tts-2"}]""".byteInputStream()
-                        "voices"->"""{"voices":[{"voice_id":"a","name":"测试音色甲"},{"voice_id":"b","name":"测试音色乙"}],"has_more":false}""".byteInputStream()
+                        "voices"->if(emptyCatalog.get()) """{"voices":[],"has_more":false}""".byteInputStream() else """{"voices":[{"voice_id":"a","name":"测试音色甲"},{"voice_id":"b","name":"测试音色乙"}],"has_more":false}""".byteInputStream()
                         "voice-previews/design"->"""{"previews":[{"generated_voice_id":"design"}]}""".byteInputStream()
                         "voice-previews/clone"->"""{"generated_voice_id":"clone","requires_verification":true}""".byteInputStream()
-                        "voice-previews/remix"->"""{"generation_job_id":"sample"}""".byteInputStream()
+                        "voice-previews/remix"->{ remixSources += org.json.JSONObject(sent.toString("UTF-8")).getString("voice_id"); """{"generation_job_id":"sample"}""".byteInputStream() }
                         "voice-previews/remix/sample"->"""{"generated_voice_id":"remixed","status":"completed"}""".byteInputStream()
                         "voice-previews/remixed/save"->"""{"voice_id":"new"}""".byteInputStream()
-                        "text-to-speech/a","voice-previews/remixed/stream"->audio.inputStream()
+                        "text-to-speech/a"->{ ttsLines += org.json.JSONObject(sent.toString("UTF-8")).getString("text"); audio.inputStream() }
+                        "voice-previews/remixed/stream"->audio.inputStream()
                         else->error("Unexpected fixture route")
                     }
                 }
@@ -79,9 +84,8 @@ class BreezeVoiceEntryTest {
             val account=BreezeVoiceAccount(app)
             ui.onNodeWithTag("tab-2").performClick()
             ui.onNodeWithTag("settings-models").performClick()
-            ui.onNodeWithTag("config-overview").performScrollToKey("voice-config")
+            ui.onNodeWithTag("config-tab-voice").performClick()
             ui.onNodeWithTag("voice-action-breezeblue").assertExists()
-            shot("config")
             ui.onNodeWithTag("voice-action-breezeblue").performClick()
             ui.onNodeWithTag("voice-verify").assertIsNotEnabled()
             val input=ui.onNodeWithTag("voice-key-input")
@@ -93,6 +97,9 @@ class BreezeVoiceEntryTest {
             waitText("已连接")
             ui.onNodeWithTag("voice-cancel").performClick()
             ui.waitForIdle()
+            ui.onNodeWithText("API 语音").assertIsDisplayed()
+            ui.onNodeWithText("音色管理").assertIsDisplayed()
+            shot("config")
             fun role(id:String){
                 ui.runOnIdle{vm.open("chat",id)}
                 ui.onNodeWithTag("chat-role-detail").performClick()
@@ -111,15 +118,77 @@ class BreezeVoiceEntryTest {
             assertTrue(account.enabled("seed-lin"));assertFalse(account.enabled("seed-an"))
             ui.runOnIdle{vm.open("home");vm.tab=2}
             ui.onNodeWithTag("settings-toolbox").performClick()
-            ui.onNodeWithTag("toolbox-list").performScrollToKey("voice")
-            ui.onNodeWithTag("tool-card-voice").performClick()
-            waitText("测试音色甲");shot("library")
-            ui.onAllNodesWithText("试听")[0].performClick();waitText("停止播放")
-            clickText("文字设计音色")
+            ui.onNodeWithTag("tool-card-voice").assertDoesNotExist()
+            assertEquals(listOf("video","contact","memory","image"),
+                ToolboxPreferences.order("""["video","voice","contact","memory","image"]"""))
+            ui.onNodeWithTag("back").performClick()
+            ui.onNodeWithTag("settings-models").performClick()
+            ui.onNodeWithTag("config-tab-voice").performClick()
+            ui.onNodeWithTag("voice-studio-open").performClick()
+            waitText("测试音色甲")
+            ui.onNodeWithTag("back").performClick()
+            ui.onNodeWithTag("config-tab-voice").assertIsSelected()
+            ui.onNodeWithTag("voice-studio-open").performClick()
+            waitText("测试音色甲")
+            shot("library")
+
+            fun pull(empty: Boolean, expected: String) {
+                val before = paths.count { it == "voices" }
+                emptyCatalog.set(empty)
+                ui.onNodeWithTag("voice-library-list").performTouchInput { swipeDown() }
+                waitText(expected)
+                assertEquals(before + 1, paths.count { it == "voices" })
+            }
+            pull(true, "还没有保存的音色")
+            pull(false, "测试音色甲")
+            fun openLine() = ui.onNodeWithText("试听台词").performClick()
+            fun completeLine() = ui.onNodeWithText("完成").performClick()
+            fun audition(expected: String) {
+                val before = ttsLines.size
+                ui.onNodeWithContentDescription("试听测试音色甲").performClick()
+                ui.waitUntil(12000) { ttsLines.size == before + 1 }
+                assertEquals(expected, ttsLines.last())
+                waitText("停止播放")
+                ui.onNodeWithText("停止播放").performClick()
+            }
+            val custom = "今天风很轻，想和你散散步。"
+            openLine()
+            ui.onNodeWithTag("voice-audition-line").performTextReplacement(custom)
+            completeLine()
+            openLine()
+            ui.onNodeWithText(custom).assertExists()
+            shot("line")
+            completeLine()
+            assertTrue(ttsLines.isEmpty())
+            openLine()
+            ui.onNodeWithTag("voice-audition-line").performTextReplacement("🌙".repeat(301))
+            ui.onNodeWithTag("voice-audition-line").assertTextEquals("🌙".repeat(300))
+            // Back can close the keyboard first. Dismissing the sheet must discard the draft.
+            inst.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            ui.waitForIdle()
+            if (ui.onAllNodesWithTag("voice-audition-line").fetchSemanticsNodes().isNotEmpty()) {
+                inst.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                ui.waitForIdle()
+            }
+            ui.onNodeWithTag("voice-audition-line").assertDoesNotExist()
+            assertTrue(ttsLines.isEmpty())
+            audition(custom)
+            openLine()
+            ui.onNodeWithText("恢复默认").performClick()
+            completeLine()
+            audition(BreezeVoiceStudio.DEFAULT_LINE)
+            openLine()
+            ui.onNodeWithTag("voice-audition-line").performTextReplacement("   ")
+            completeLine()
+            audition(BreezeVoiceStudio.DEFAULT_LINE)
+            ui.onNodeWithText("＋ 创建").performClick()
+            ui.onNodeWithText("录音克隆").assertExists()
+            ui.onNodeWithText("文字设计").performClick()
             ui.onNodeWithText("描述想要的声音").performTextInput("轻柔的测试声音")
             clickText("生成预览");waitText("音色预览")
             ui.activityRule.scenario.onActivity{it.onBackPressedDispatcher.onBackPressed()}
-            clickText("导入已有录音克隆")
+            ui.onNodeWithText("＋ 创建").performClick()
+            ui.onNodeWithText("录音克隆").performClick()
             val filter=IntentFilter(Intent.ACTION_OPEN_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);addDataType("audio/*")}
             val monitor=inst.addMonitor(filter,Instrumentation.ActivityResult(Activity.RESULT_OK,Intent().setData(uri)),true)
             try {clickText("选择本地录音");waitText("本地试听")}finally{inst.removeMonitor(monitor)}
@@ -132,12 +201,16 @@ class BreezeVoiceEntryTest {
             waitText("服务商要求验证此音色，完成验证后再保存。")
             ui.onNodeWithText("另存为新音色").assertIsNotEnabled()
             ui.activityRule.scenario.onActivity{it.onBackPressedDispatcher.onBackPressed()}
-            ui.onAllNodesWithText("重塑并另存")[0].performClick()
+            ui.onAllNodesWithText("改音色")[1].performClick()
+            ui.onNodeWithText("原音色 · 测试音色乙").assertIsDisplayed()
+            assertTrue(remixSources.isEmpty())
             ui.onNodeWithText("描述想要的声音").performTextInput("更柔和一点")
             clickText("生成预览");waitText("音色预览")
             clickText("试听预览");waitText("停止播放")
             ui.onNodeWithText("新音色名称").performTextInput("重塑样例")
             clickText("另存为新音色");waitText("已另存为新音色")
+            assertEquals(listOf("b"),remixSources.toList())
+            assertEquals(3,ttsLines.size)
             assertEquals(1,paths.count{it.endsWith("/save")});assertEquals(1,paths.count{it=="voice-previews/clone"})
             assertEquals("a",account.selected("seed-lin"))
         }finally{AppServices.voiceConnections=old;VoiceConnectProbe.reachable=oldProbe;resolver.delete(uri,null,null)}

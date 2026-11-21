@@ -42,9 +42,9 @@ internal data class VoiceProviderSummary(
             color = Ink
         )
         if (provider.connected) {
-            Box(Modifier.size(7.dp).clip(CircleShape).background(GreenText))
+            Box(Modifier.size(7.dp).clip(CircleShape).background(ConfigSuccess))
             Spacer(Modifier.width(5.dp))
-            Text("已连接", style = MaterialTheme.typography.bodySmall, color = GreenText)
+            Text("已连接", style = MaterialTheme.typography.bodySmall, color = ConfigSuccess)
         } else {
             Text("未连接", style = MaterialTheme.typography.bodySmall, color = Muted)
         }
@@ -62,22 +62,19 @@ internal data class VoiceProviderSummary(
     }
 }
 
-/**
- * 「语音服务」分组：一行一个服务商，未连接只说「未连接」，点开才出去底部面板。
- * 目前底层只有 BreezeBlue 一家，列表里就只有一个元素；不用语音的人只看到这一行和一句说明。
- */
-@Composable internal fun BreezeVoiceServiceSection() {
+/** 连接面板与音色工作室各自独立进入。 */
+@Composable internal fun BreezeVoiceServiceSection(openStudio: () -> Unit) {
     val account = rememberBreezeAccount()
     val catalog by account.catalogChanges.collectAsState(Triple(account.accountId(), 0L, false))
     val connected = catalog.third
     var sheetOpen by remember { mutableStateOf(false) }
 
     val providers = remember(connected) {
-        listOf(VoiceProviderSummary("breezeblue", "BreezeBlue 语音", connected))
+        listOf(VoiceProviderSummary("breezeblue", "BreezeBlue", connected))
     }
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(UiSpace.small)) {
-        SectionLabel("语音服务")
+        SectionLabel("API 语音")
         Column(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)
         ) {
@@ -86,7 +83,20 @@ internal data class VoiceProviderSummary(
                 if (index < providers.lastIndex) HorizontalDivider(color = Line, thickness = .5.dp)
             }
         }
-        Text("用于角色发语音，不影响文字聊天", style = MaterialTheme.typography.bodySmall, color = Muted)
+        Spacer(Modifier.height(UiSpace.small))
+        SectionLabel("音色管理")
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)
+            .clickable(onClick = openStudio).testTag("voice-studio-open").padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            ControlIcon("waveform")
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("AI 语音", style = MaterialTheme.typography.titleSmall, color = Ink)
+                Text("试听、创建与管理音色", style = MaterialTheme.typography.bodySmall, color = Muted)
+            }
+            Text("打开", Modifier.background(Accent, CircleShape).padding(horizontal = 14.dp, vertical = 6.dp),
+                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
+        }
     }
 
     if (sheetOpen) {

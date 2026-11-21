@@ -48,14 +48,14 @@ private class StudioPlayer(private val cache:File) {
     }
 }
 
-@Composable internal fun BreezeStudioScreen(vm:AppState) {
+@Composable internal fun BreezeStudioScreen(onBack:()->Unit) {
     val account=rememberBreezeAccount()
     val catalog by account.catalogChanges.collectAsState(Triple(account.accountId(),0L,false))
     key(catalog.first) {
         var page by remember { mutableStateOf(VoicePage.LIBRARY) }
         var source by remember { mutableStateOf<SavedVoice?>(null) }
-        val back={ if(page==VoicePage.LIBRARY)vm.back() else page=VoicePage.LIBRARY }
-        BackHandler(enabled=page!=VoicePage.LIBRARY){back()}
+        val back={ if(page==VoicePage.LIBRARY)onBack() else page=VoicePage.LIBRARY }
+        BackHandler { back() }
         key(page) {
             StudioPage(account,catalog,page,source,back,{choice,next->source=choice;page=next})
         }
@@ -108,27 +108,23 @@ private class StudioPlayer(private val cache:File) {
             picked?.close();picked=recording;heard=false;rights=false;candidate=null;saved=false
         }
     }
-    ToolboxPage(page.title,back,"voice-studio-page") {
-        if(page==VoicePage.LIBRARY){
-            VoiceSection("我的音色") {
-                OutlinedButton({runAction{account.refresh();status="音色列表已更新"}},enabled=owner.isNotEmpty()&&!busy){Text("刷新")}
-                if(!connected)Text("请先在大模型配置连接 BreezeBlue 语音。",color=Muted)
-                if(connected&&voices.isEmpty())Text("还没有保存的音色",color=Muted)
-                voices.forEach { voice->
-                    HorizontalDivider(color=Line)
-                    Text(voice.name)
-                    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                        TextButton({runAction{play(studio.audition(owner,voice))}},enabled=connected&&!busy){Text("试听")}
-                        TextButton({open(voice,VoicePage.REMIX)},enabled=connected&&!busy){Text("重塑并另存")}
-                    }
+    if (page == VoicePage.LIBRARY) {
+        var refreshing by remember { mutableStateOf(false) }
+        VoiceLibrary(voices, connected, busy, refreshing, playing, status, back,
+            onRefresh = {
+                if (owner.isNotEmpty()) runAction {
+                    refreshing = true
+                    try { account.refresh() } finally { refreshing = false }
                 }
-            }
-            VoiceSection("新音色") {
-                OutlinedButton({open(null,VoicePage.DESIGN)},enabled=!busy){Text(VoicePage.DESIGN.title)}
-                OutlinedButton({open(null,VoicePage.CLONE)},enabled=!busy){Text(VoicePage.CLONE.title)}
-                Text("先本地试听，确认有权使用后上传。",color=Muted)
-            }
-        } else {
+            },
+            onPlay = { voice -> runAction { play(studio.audition(owner, voice, account.auditionLine())) } },
+            onStop = { player.stop(); playing = false },
+            onEdit = { open(it, VoicePage.REMIX) },
+            onCreate = { clone -> open(null, if (clone) VoicePage.CLONE else VoicePage.DESIGN) },
+            readLine = account::auditionLine, saveLine = account::saveAuditionLine)
+        return
+    }
+    ToolboxPage(page.title,back,"voice-studio-page") {
             VoiceSection(if(page==VoicePage.CLONE)"参考录音" else "音色描述") {
                 if(page==VoicePage.CLONE) {
                     OutlinedButton({picker.launch(arrayOf("audio/*"))},enabled=!busy){Text("选择本地录音")}
@@ -166,7 +162,6 @@ private class StudioPlayer(private val cache:File) {
                     }},enabled=!saved&&!busy&&!result.needsVerification&&name.trim().length in 1..80){Text(if(saved)"已保存" else "另存为新音色")}
                 }
             }
-        }
         if(playing)TextButton({player.stop();playing=false}){Text("停止播放")}
         if(busy)LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
         if(status.isNotEmpty())Text(status,Modifier.testTag("voice-studio-status"),color=Muted)

@@ -123,6 +123,13 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     var turns by mutableStateOf(emptyList<ChatTurn>());private set
     internal fun isReplying(role: String) = role in runner.sending
     val chatSending get()=isReplying(activeId)
+    internal val foregroundChatRequest get() = runner.foregroundRequests[activeId]
+    private var notificationHintShown = false
+    internal fun claimNotificationHint(): Boolean {
+        if (notificationHintShown) return false
+        notificationHintShown = true
+        return true
+    }
     internal val chatPreview get()=runner.previews[activeId]
     val busy get()=saving||chatSending
     val chatInputAvailable get()=!saving

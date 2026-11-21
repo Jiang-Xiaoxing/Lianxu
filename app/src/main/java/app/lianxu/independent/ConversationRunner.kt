@@ -15,6 +15,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
     internal var previews by mutableStateOf(emptyMap<String,ChatReplyPreview>());private set
     /** What the panel showed when an external cancel clears the preview before the task records it. */
     private val shownSnapshots=java.util.concurrent.ConcurrentHashMap<String,ChatReplyPreview>()
+    internal val foregroundRequests = mutableStateMapOf<String, String>()
     private val jobs=mutableMapOf<String,Job>()
     private val activeTurns=mutableMapOf<String,ChatTurn>()
     private val leases=mutableMapOf<String,ChatAttemptLease>()
@@ -72,6 +73,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         // do not make the next reply wait for that transport to acknowledge cancellation.
         val lock=CompanionRuntime.mutex(friendId)
         runCatching{if(lock.holdsLock(lease))lock.unlock(lease)}
+        foregroundRequests.remove(friendId)
         jobs.remove(friendId)?.cancel(ChatRequestCancellation(origin));sending=sending-friendId
         ChatRequestOwner.release(attempts[friendId]?.owner)
         activeTurns.remove(friendId)?.let{turn->scope.launch(NonCancellable+Dispatchers.Main.immediate){
@@ -154,7 +156,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                 prepared.await()
                 st.owner?.let{owner->
                     if(withTimeoutOrNull(10_000){owner.started.await()}!=true)throw CompanionModelFailure(ChatFailure.FOREGROUND_UNAVAILABLE)
-                    if(!owner.notificationsVisible)notice("系统已关闭聊天通知，可在聊天页停止本次请求。")
+                    if (leases[friendId] === lease) foregroundRequests[friendId] = owner.id
                 }
                 if(recovered==null)runAttempt(friendId,retryId,lease,roleLock,st)
                 else restoreDelivery(recovered.first,recovered.second,lease,roleLock,st)
@@ -180,6 +182,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                 withContext(NonCancellable){st.turn?.let{ledger.fail(it.id,it.attempt,reason,Diagnostics.redact("${e.javaClass.simpleName}: ${e.message.orEmpty()}").take(HttpsTextChatClient.DETAIL_LIMIT))};changed()}
                 if(leases[friendId]===lease)notice("本次会话未完成，原消息已保留；可检查配置后手动重试。")
             }finally{
+                if (foregroundRequests[friendId] == st.owner?.id) foregroundRequests.remove(friendId)
                 ChatRequestOwner.release(st.owner)
                 withContext(NonCancellable){
                     st.displaySave?.join()

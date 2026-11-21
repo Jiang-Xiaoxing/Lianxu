@@ -91,10 +91,11 @@ internal class BreezeVoiceStudio(private val account:BreezeVoiceAccount) {
         val bytes=request(owner,path,obj?.toString()?.toByteArray())
         return try {JSONObject(bytes.toString(Charsets.UTF_8))}catch(_:Exception){throw IOException("音色服务响应无效")}
     }
-    suspend fun audition(owner:String,voice:SavedVoice):ByteArray {
+    companion object { const val DEFAULT_LINE = "你好，这是我的声音。" }
+    suspend fun audition(owner:String,voice:SavedVoice,line:String=DEFAULT_LINE):ByteArray {
         require(account.accountId()==owner && voice in account.voices())
         return BreezeBlueSpeechProvider({account.keyFor(owner)},AppServices.voiceConnections)
-            .synthesize("你好，这是我的声音。",voice.id).also{check(account.accountId()==owner)}
+            .synthesize(line,voice.id).also{check(account.accountId()==owner)}
     }
     suspend fun design(owner:String,description:String,language:String="zh"):VoiceCandidate {
         require(description.length in 3..500)

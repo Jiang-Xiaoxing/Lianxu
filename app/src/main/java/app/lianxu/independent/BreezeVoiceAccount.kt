@@ -46,6 +46,10 @@ internal class BreezeVoiceAccount(context: Context) {
         require(account.isNotEmpty() && expectedAccount == account && choice in voices())
         prefs.edit().putString("voice:$expectedAccount:$role",choice.id).remove("blocked:$expectedAccount:$role").putLong("gen:$role", System.nanoTime()).apply()
     }
+    fun auditionLine() = prefs.getString("audition-line", null) ?: BreezeVoiceStudio.DEFAULT_LINE
+    fun saveAuditionLine(line: String) {
+        prefs.edit().putString("audition-line", line.trim().ifBlank { BreezeVoiceStudio.DEFAULT_LINE }).apply()
+    }
     fun accountId() = account
     // Preference publication is the commit point. Screens observe it even when the refresh caller is cancelled.
     val catalogChanges = callbackFlow {

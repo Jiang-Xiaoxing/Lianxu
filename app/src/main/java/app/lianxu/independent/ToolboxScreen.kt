@@ -38,7 +38,6 @@ import kotlinx.coroutines.launch
 
 private data class ToolboxCard(val title:String,val subtitle:String,val icon:String)
 private val toolboxCards=mapOf(
-    "voice" to ToolboxCard("AI 语音","试听、设计与管理音色","chat"),
     "image" to ToolboxCard("图片理解","设置图片的理解方式","landscape"),
     "video" to ToolboxCard("视频理解","设置视频的理解方式","camera"),
     "memory" to ToolboxCard("记忆工具","管理回想与记录能力","brain"),

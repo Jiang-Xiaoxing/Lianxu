@@ -303,6 +303,7 @@ private suspend fun LazyListState.showEndOf(index:Int){
         selectedImage?.let{image->PendingPicture(image,focused,{inputFocus.requestFocus()},{openMedia(image.source,image.mime)},{selectedImage?.close();selectedImage=null;draftVersion++})}
         if(importingImage)Text("正在读取图片或视频…",Modifier.padding(horizontal=56.dp),style=MaterialTheme.typography.bodySmall,color=Muted)
         if(imageError.isNotBlank())Text(imageError,Modifier.padding(horizontal=16.dp),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
+        vm.foregroundChatRequest?.let { request -> key(request) { ChatNotificationHint(vm) } }
         Surface(modifier=Modifier.testTag("chat-input-bar"),color=ChatBarBackground,shadowElevation=0.dp){Column{
             HorizontalDivider(color=ChatInputBorder,thickness=.5.dp)
             Row(Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=4.dp),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(8.dp)){

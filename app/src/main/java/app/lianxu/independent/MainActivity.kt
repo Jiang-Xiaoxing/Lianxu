@@ -95,7 +95,6 @@ class MainActivity:ComponentActivity(){
             "role-companion"->CompanionSettingsScreen(vm)
             "toolbox"->ToolboxScreen(vm)
             "role-voice"->BreezeRoleSettings(vm)
-            "toolbox-voice"->BreezeStudioScreen(vm)
             "toolbox-image"->ToolboxImageScreen(vm)
             "toolbox-video"->ToolboxVideoScreen(vm)
             "toolbox-memory"->ToolboxMemoryScreen(vm)

@@ -175,16 +175,18 @@ class ModelConfigState @JvmOverloads constructor(
     fun delete(config:ModelConfig){if(busy)return;clearResult();saving=true;viewModelScope.launch {try{withContext(Dispatchers.IO){vault.delete(config.id)};statusStore.clearAll(config.id);reload();connections=connections-config.id;message("配置和关联密钥已删除。")}catch(_:Exception){message("删除未完成，请重试。",true)}finally{saving=false}}}
     /**
      * 连接测试的探针：真让模型回一句话。
-     * 256 是下限——给 16/32/64/128 时思考模型会把额度全花在思考上，正文是空的，测出来的"没通过"其实是假失败。
+     * 输出上限直接用这份配置的「聊天生成上限 Token」，不再固定 256；
+     * 给 16/32/64/128 时思考模型会把额度全花在思考上，正文是空的，测出来的"没通过"其实是假失败。
+     * 额度是否合法由 request 在发送前按 ModelTokenPolicy 校验，非法时只显示校验文案，不调用服务。
      */
-    internal fun probeRequest():TextChatRequest {
+    internal fun probeRequest(config:ModelConfig):TextChatRequest {
         val token="OK-"+(0 until 4).joinToString(""){"%x".format((Math.random()*16).toInt())}
         return TextChatRequest(
             listOf(
                 WireMessage("system","You are a connectivity probe. Reply with exactly one word."),
                 WireMessage("user","Reply with the single word: $token")
             ),
-            outputLimit=256,
+            outputLimit=config.outputTokens,
             timeoutMillis=30000
         )
     }
@@ -227,7 +229,10 @@ class ModelConfigState @JvmOverloads constructor(
                 }}
                 return@launch
             }
-            val result=testClient.complete(config,resolved.key,probeRequest())
+            // 只有发送探针（!fetch）才依赖生成额度；目录获取保持原行为。
+            val tokenError=ModelTokenPolicy.error(config)
+            if(tokenError!=null){probe=ProbeDisplay(ProbePhase.FAILED,tokenError);return@launch}
+            val result=testClient.complete(config,resolved.key,probeRequest(config))
             if(version!=requestVersion)return@launch
             when(result){
                 is TextChatResult.Success->{

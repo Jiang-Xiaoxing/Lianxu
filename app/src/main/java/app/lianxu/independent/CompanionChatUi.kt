@@ -1,10 +1,8 @@
 package app.lianxu.independent
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
-import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -90,7 +88,7 @@ internal fun contactPolicyText(policy:String)=when(policy){
     CompanionSwitchRow("允许消息通知",CompanionHints.NOTIFY,"companion-notification",notifications,true){want->
         val canAsk=want&&Build.VERSION.SDK_INT>=33&&!asked&&ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED
         if(canAsk){asked=true;permission.launch(Manifest.permission.POST_NOTIFICATIONS)}
-        else runCatching{context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.packageName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}
+        else openNotificationSettings(context)
     }
 }
 

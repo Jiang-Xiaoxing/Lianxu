@@ -34,7 +34,7 @@ internal class BreezeBlueSpeechProvider(
     companion object {
         private const val ENDPOINT = "https://api.breeze.blue/v1/text-to-speech"
         private const val MODEL = "breeze-tts-2"
-        private const val MAX_TEXT = 300 // Unicode code points
+        internal const val MAX_TEXT = 300 // Unicode code points
         private const val MAX_AUDIO = 2 * 1024 * 1024
 
         private const val MAX_CONNECTIONS = 4

@@ -56,7 +56,7 @@ import kotlinx.coroutines.launch
                 OutlinedButton({picking=true},enabled=catalog.third && voices.isNotEmpty(),modifier=Modifier.testTag("voice-choose")) {
                     Text(voices.find{it.id==selected}?.name ?: "选择音色")
                 }
-                if(!catalog.third || voices.isEmpty()) Text("请先在大模型配置连接 BreezeBlue，并在 AI 语音中准备音色。",color=Muted)
+                if(!catalog.third || voices.isEmpty()) Text("请前往「大模型配置 → 语音」连接 BreezeBlue，再打开「AI 语音」准备音色。",color=Muted)
                 if(error.isNotEmpty()) Text(error,color=Muted)
             }
         }

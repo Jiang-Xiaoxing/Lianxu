@@ -6,13 +6,14 @@ internal object ToolboxPreferences {
     const val ORDER_KEY="toolbox-order-v1"
     const val VIDEO_KEY="video-understanding-mode-v1"
     const val VIDEO_REVISION="video-understanding-revision-v1"
-    val defaultOrder=listOf("image","video","memory","contact","voice")
+    val defaultOrder=listOf("image","video","memory","contact")
     enum class VideoMode { ORIGINAL, FRAMES }
     fun order(raw:String):List<String> {
         val array=JSONArray(raw)
         val values=(0 until array.length()).map{array.getString(it)}
-        val previousOrder=defaultOrder.dropLast(1)
-        if(values.size==previousOrder.size && values.toSet()==previousOrder.toSet()) return values+"voice"
+        if (values.size == defaultOrder.size + 1 && values.toSet() == defaultOrder.toSet() + "voice") {
+            return values.filterNot { it == "voice" }
+        }
         require(values.size==defaultOrder.size&&values.toSet()==defaultOrder.toSet())
         return values
     }
