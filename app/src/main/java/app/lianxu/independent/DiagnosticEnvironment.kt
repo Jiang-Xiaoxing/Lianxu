@@ -1,8 +1,10 @@
 package app.lianxu.independent
 
+import android.Manifest
 import android.app.ActivityManager
 import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -54,7 +56,8 @@ internal object DiagnosticEnvironment {
 
     fun isBackground():Boolean = fields["activity_visibility"]=="background"
     fun backgroundCount():Long = bgTransitions.get()
-    fun isNetworkBlocked():Boolean = fields["network_blocked"]==true
+    /** Observed system network blocked status: true=blocked, false=allowed, null=not yet observed. */
+    fun networkBlockedState():Boolean? = fields["network_blocked"] as? Boolean
 
     fun backgroundState(context:Context):BackgroundAccessState {
         val power=runCatching{context.getSystemService(PowerManager::class.java)}.getOrNull()
@@ -69,6 +72,10 @@ internal object DiagnosticEnvironment {
                 else->"unknown"
             }
         }.getOrDefault("unknown")
+        val postGranted=if(Build.VERSION.SDK_INT>=33)runCatching{context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED}.getOrNull() else true
+        val appNotificationsEnabled=runCatching{notifications?.areNotificationsEnabled()}.getOrNull()?.let{enabled->
+            if(postGranted==false) false else enabled
+        }?:postGranted
         val channelBlocked=runCatching{
             val channel=notifications?.getNotificationChannel(ChatRequestService.CHANNEL_ID)
             if(channel==null)null else channel.importance==NotificationManager.IMPORTANCE_NONE
@@ -78,7 +85,7 @@ internal object DiagnosticEnvironment {
             powerSaveMode=runCatching{power?.isPowerSaveMode}.getOrNull(),
             backgroundRestricted=if(Build.VERSION.SDK_INT>=28)runCatching{activity?.isBackgroundRestricted}.getOrNull() else null,
             restrictBackgroundStatus=restrict,
-            notificationsEnabled=runCatching{notifications?.areNotificationsEnabled()}.getOrNull(),
+            notificationsEnabled=appNotificationsEnabled,
             chatChannelBlocked=channelBlocked,
         )
     }
@@ -165,12 +172,13 @@ internal object DiagnosticEnvironment {
     internal fun networkObserver(session:Any):ConnectivityManager.NetworkCallback {
         var active:Network?=null
         return object:ConnectivityManager.NetworkCallback(){
-            private fun update(event:String,value:String,extra:Map<String,Any?> = emptyMap()){
+            private fun update(event:String,value:String,extra:Map<String,Any?> = emptyMap(),clearBlocked:Boolean=false){
                 if(current!==session||Diagnostics.detailSession!==session)return
-                fields=fields+("default_network" to value)+extra
+                val base=if(clearBlocked) fields-"network_blocked" else fields
+                fields=base+("default_network" to value)+extra
                 Diagnostics.detail(session,"diagnostic.network"){mapOf("network_event" to event)+extra}
             }
-            override fun onAvailable(network:Network){active=network;update("available","available")}
+            override fun onAvailable(network:Network){active=network;update("available","available",clearBlocked=true)}
             override fun onCapabilitiesChanged(network:Network,c:NetworkCapabilities){
                 if(network!=active)return
                 val transports=listOf(NetworkCapabilities.TRANSPORT_WIFI to "wifi",NetworkCapabilities.TRANSPORT_CELLULAR to "cellular",
@@ -183,7 +191,7 @@ internal object DiagnosticEnvironment {
                 fields=fields+("network_blocked" to blocked)
                 Diagnostics.detail(session,"diagnostic.network"){mapOf("network_event" to "blocked_changed","network_blocked" to blocked)}
             }
-            override fun onLost(network:Network){if(active==network){active=null;update("lost","none",mapOf("network_blocked" to false))}}
+            override fun onLost(network:Network){if(active==network){active=null;update("lost","none",clearBlocked=true)}}
         }
     }
     private fun startNetwork(app:Context,session:Any){

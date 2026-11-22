@@ -26,6 +26,7 @@ class ModelConfigState @JvmOverloads constructor(
     /** 连接测试走真发一句话；测试可注入脚本化实现，不打开网络。 */
     internal var testClient:TextChatClient=HttpsTextChatClient()
     var configs by mutableStateOf(emptyList<ModelConfig>());private set
+    internal var loaded by mutableStateOf(false);private set
     internal var configRevisions by mutableStateOf(emptyMap<String,String>());private set
     var defaultId by mutableStateOf("");private set
     var auxiliaryVision by mutableStateOf(false);private set
@@ -56,7 +57,7 @@ class ModelConfigState @JvmOverloads constructor(
         val readTests=rows.mapNotNull{c->statusStore.testNow(c.id)?.takeIf{it.baseUrl==c.baseUrl && it.model==c.modelId}?.let{c.id to it}}.toMap()
         val readCalls=rows.mapNotNull{c->statusStore.lastCallNow(c.id)?.let{c.id to it}}.toMap()
         // Publish the whole local snapshot before releasing the mutation gate; an older refresh cannot restore cleared tests.
-        auxiliaryVision=ChatImages.enabled(storage.readableDatabase);configs=rows;defaultId=selected;purposes=selections;configRevisions=revisions;tests=readTests;calls=readCalls
+        auxiliaryVision=ChatImages.enabled(storage.readableDatabase);configs=rows;defaultId=selected;purposes=selections;configRevisions=revisions;tests=readTests;calls=readCalls;loaded=true
     }}
     fun changeAuxiliaryVision(enabled:Boolean){
         if(busy)return

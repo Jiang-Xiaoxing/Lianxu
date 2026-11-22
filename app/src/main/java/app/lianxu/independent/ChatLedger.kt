@@ -9,7 +9,7 @@ import java.util.UUID
 import java.security.MessageDigest
 
 enum class TurnState { PENDING,COMPLETED,FAILED,CANCELLED,INTERRUPTED,SUPERSEDED }
-data class ChatTurn(val id:String,val friendId:String,val userMessageId:Long,val assistantMessageId:Long?,val state:TurnState,val attempt:Int,val configId:String,val failure:ChatFailure?,val toolActivities:List<ChatToolActivity> = emptyList(),val failureDetail:String="",val replyLayout:String?=null)
+data class ChatTurn(val id:String,val friendId:String,val userMessageId:Long,val assistantMessageId:Long?,val state:TurnState,val attempt:Int,val configId:String,val failure:ChatFailure?,val toolActivities:List<ChatToolActivity> = emptyList(),val failureDetail:String="",val replyLayout:String?=null,val failureMeta:ChatFailureMeta?=null)
 
 /** Local exactly-once persistence, not a promise of remote provider billing idempotency. */
 class ChatLedger(private val store:Store,private val session:String=processSession) {
@@ -17,7 +17,10 @@ class ChatLedger(private val store:Store,private val session:String=processSessi
         private val processSession=UUID.randomUUID().toString()
         /** The provider's own words for a failed turn (keys already masked). Local only: never backed up or archived. */
         const val ERROR_PREFIX="chat-error:"
+        /** Structured failure stage/model metadata kept separate from raw HTTP provider bodies. Local only. */
+        const val ERROR_META_PREFIX="chat-error:meta:"
         fun errorKey(turn:String)=ERROR_PREFIX+turn
+        fun errorMetaKey(turn:String)=ERROR_META_PREFIX+turn
         fun createSchema(db:SQLiteDatabase){
             db.execSQL("CREATE TABLE chat_turns(id TEXT PRIMARY KEY,friend_id TEXT NOT NULL REFERENCES friends(id),user_message_id INTEGER NOT NULL UNIQUE REFERENCES messages(id),assistant_message_id INTEGER UNIQUE REFERENCES messages(id),state TEXT NOT NULL,attempt INTEGER NOT NULL,config_id TEXT NOT NULL,error_code TEXT,owner_session TEXT NOT NULL)")
             db.execSQL("CREATE UNIQUE INDEX one_pending_chat_per_friend ON chat_turns(friend_id) WHERE state='PENDING'")
@@ -36,9 +39,18 @@ class ChatLedger(private val store:Store,private val session:String=processSessi
         }
         throw locked!!
     }
+    private fun deleteError(db:SQLiteDatabase,id:String){
+        db.delete("preferences","key IN (?,?)",arrayOf(errorKey(id),errorMetaKey(id)))
+    }
     private fun queryAll():List<ChatTurn> {
-        val details=store.readableDatabase.rawQuery("SELECT key,value FROM preferences WHERE key LIKE ?",arrayOf("$ERROR_PREFIX%")).use{c->buildMap{while(c.moveToNext())put(c.getString(0).removePrefix(ERROR_PREFIX),c.getString(1))}}
-        return store.readableDatabase.rawQuery("SELECT id,friend_id,user_message_id,assistant_message_id,state,attempt,config_id,error_code,p.value AS reply_layout FROM chat_turns LEFT JOIN preferences p ON p.key='${OrderedChatReply.PREFIX}'||chat_turns.id ORDER BY user_message_id",null).use{c->buildList{while(c.moveToNext()){val t=read(c);add(t.copy(replyLayout=c.getString(c.getColumnIndexOrThrow("reply_layout")),toolActivities=ChatToolJournal.read(store.readableDatabase,t.id).map{if(t.state!=TurnState.PENDING&&it.state=="running")it.copy(state="unknown")else it},failureDetail=if(t.state==TurnState.FAILED)details[t.id].orEmpty() else ""))}}}
+        val details=mutableMapOf<String,String>()
+        val metas=mutableMapOf<String,ChatFailureMeta>()
+        store.readableDatabase.rawQuery("SELECT key,value FROM preferences WHERE key LIKE ?",arrayOf("$ERROR_PREFIX%")).use{c->while(c.moveToNext()){
+            val key=c.getString(0);val value=c.getString(1)
+            if(key.startsWith(ERROR_META_PREFIX))ChatFailureMeta.decode(value)?.let{metas[key.removePrefix(ERROR_META_PREFIX)]=it}
+            else details[key.removePrefix(ERROR_PREFIX)]=value
+        }}
+        return store.readableDatabase.rawQuery("SELECT id,friend_id,user_message_id,assistant_message_id,state,attempt,config_id,error_code,p.value AS reply_layout FROM chat_turns LEFT JOIN preferences p ON p.key='${OrderedChatReply.PREFIX}'||chat_turns.id ORDER BY user_message_id",null).use{c->buildList{while(c.moveToNext()){val t=read(c);add(t.copy(replyLayout=c.getString(c.getColumnIndexOrThrow("reply_layout")),toolActivities=ChatToolJournal.read(store.readableDatabase,t.id).map{if(t.state!=TurnState.PENDING&&it.state=="running")it.copy(state="unknown")else it},failureDetail=if(t.state==TurnState.FAILED)details[t.id].orEmpty() else "",failureMeta=if(t.state==TurnState.FAILED)metas[t.id] else null))}}}
     }
     internal suspend fun activities(id:String)=withContext(Dispatchers.IO){ChatToolJournal.read(store.readableDatabase,id)}
     internal suspend fun recordActivity(id:String,attempt:Int,item:ChatToolActivity)=withContext(Dispatchers.IO){atomic{db->
@@ -101,7 +113,7 @@ class ChatLedger(private val store:Store,private val session:String=processSessi
         val newer=db.rawQuery("SELECT 1 FROM chat_turns WHERE friend_id=? AND user_message_id>?",arrayOf(old.friendId,old.userMessageId.toString())).use{it.moveToFirst()}
         if(newer)return@atomic null
         db.update("chat_turns",ContentValues().apply{put("state",TurnState.PENDING.name);put("attempt",old.attempt+1);put("config_id",configId);putNull("error_code");put("owner_session",session)},"id=?",arrayOf(id))
-        db.delete("preferences","key=?",arrayOf(errorKey(id)))
+        deleteError(db,id)
         ReplyAccountingQueue.enqueue(db,id)
         turn(db,id)
     }}
@@ -121,12 +133,12 @@ class ChatLedger(private val store:Store,private val session:String=processSessi
         val message=requireNotNull(saveSpoken(db,current,text))
         if(displayReasoning.isNotEmpty())db.insertOrThrow("message_reasoning",null,ContentValues().apply{put("message_id",message);put("display_reasoning",displayReasoning)})
         db.update("chat_turns",ContentValues().apply{put("state",TurnState.COMPLETED.name);put("assistant_message_id",message);putNull("error_code")},"id=?",arrayOf(id))
-        db.delete("preferences","key=?",arrayOf(errorKey(id)));onCompleted(db);true
+        deleteError(db,id);onCompleted(db);true
     }}
         // Repository/tool writes already own the mutation gate before checking the attempt.
         AppMutationGate.read{if(lease==null)write() else lease.commit(write)}
     }
-    suspend fun fail(id:String,attempt:Int,error:ChatFailure,detail:String="")=transition(id,attempt,TurnState.FAILED,error,detail)
+    suspend fun fail(id:String,attempt:Int,error:ChatFailure,detail:String="",meta:ChatFailureMeta?=null)=transition(id,attempt,TurnState.FAILED,error,detail,meta)
     suspend fun cancel(id:String,attempt:Int)=transition(id,attempt,TurnState.CANCELLED,null)
     internal suspend fun completedMessageId(expected:ChatTurn):Long? = withContext(Dispatchers.IO) {
         turn(store.readableDatabase, expected.id)?.takeIf {
@@ -172,17 +184,18 @@ class ChatLedger(private val store:Store,private val session:String=processSessi
             put("state",TurnState.SUPERSEDED.name);putNull("error_code")
             if(message==null)putNull("assistant_message_id")else put("assistant_message_id",message)
         },"id=?",arrayOf(id))
-        db.delete("preferences","key=?",arrayOf(errorKey(id)));true
+        deleteError(db,id);true
     }}
-    private suspend fun transition(id:String,attempt:Int,state:TurnState,error:ChatFailure?,detail:String="")=withContext(Dispatchers.IO){
+    private suspend fun transition(id:String,attempt:Int,state:TurnState,error:ChatFailure?,detail:String="",meta:ChatFailureMeta?=null)=withContext(Dispatchers.IO){
         // Plain transaction, as before outside the mutation gate: status and its detail land together.
         val db=store.writableDatabase
         db.beginTransaction()
         val changed=try{
             val moved=db.update("chat_turns",ContentValues().apply{put("state",state.name);if(error==null)putNull("error_code") else put("error_code",error.name)},"id=? AND attempt=? AND state='PENDING' AND owner_session=?",arrayOf(id,attempt.toString(),session))==1
             if(moved){
-                db.delete("preferences","key=?",arrayOf(errorKey(id)))
+                deleteError(db,id)
                 if(detail.isNotBlank())db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",errorKey(id));put("value",detail.take(HttpsTextChatClient.DETAIL_LIMIT))},SQLiteDatabase.CONFLICT_REPLACE)
+                if(meta!=null&&meta.hasAny())db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",errorMetaKey(id));put("value",meta.encode())},SQLiteDatabase.CONFLICT_REPLACE)
             }
             db.setTransactionSuccessful();moved
         }finally{db.endTransaction()}

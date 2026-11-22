@@ -219,7 +219,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
             require(row["id"].asString.matches(Regex("[a-zA-Z0-9-]{1,80}"))&&observationIds.add(row["id"].asString)&&row["friend_id"].asString==friend)
             val image=imageMap[row["message_id"].asLong]?:error("观察缺少图片来源")
             require(row["image_hash"].asString==image["hash"].asString&&row["source_revision"].asLong>0&&messages[row["question_message_id"].asLong]?.get("mine")?.asInt==1)
-            RoleArchive.text(row,"body",8000);RoleArchive.text(row,"model_id",80);require(row["created"].asLong>0)
+            RoleArchive.text(row,"body",ChatImages.MAX_OBSERVATION_CHARS);RoleArchive.text(row,"model_id",80);require(row["created"].asLong>0)
             require(row["source_revision"].asLong in 1..(turns[row["message_id"].asLong]?.get("source_revision")?.asLong?:0)&&row["question_revision"].asLong in 1..(turns[row["question_message_id"].asLong]?.get("source_revision")?.asLong?:0)){"图片观察引用了不存在或未来版本的轮次"}
         }
     }
@@ -304,7 +304,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
         ImageDisk.clearReadCache()
         fun ids(table:String)=db.rawQuery("SELECT id FROM $table WHERE friend_id=?",arrayOf(id)).use{c->buildSet{while(c.moveToNext())add(c.getString(0))}}
         val turnIds=ids("chat_turns");val batches=ids("memory_batches")
-        prefs(db).keys.filter{key->roleKey(key,id,turnIds,batches)||key=="relationship-cache:$id"||key==RelationFeeling.key(id)||key=="memory-vectors-v1:$id"||key=="memory-batch-failure:$id"||key=="memory-core-set:$id"||turnIds.any{key.startsWith("memory-tools:$it:")||key==ChatLedger.errorKey(it)||key=="chat_tool_display:$it"}}.forEach{db.delete("preferences","key=?",arrayOf(it))}
+        prefs(db).keys.filter{key->roleKey(key,id,turnIds,batches)||key=="relationship-cache:$id"||key==RelationFeeling.key(id)||key=="memory-vectors-v1:$id"||key=="memory-batch-failure:$id"||key=="memory-core-set:$id"||turnIds.any{key.startsWith("memory-tools:$it:")||key==ChatLedger.errorKey(it)||key==ChatLedger.errorMetaKey(it)||key=="chat_tool_display:$it"}}.forEach{db.delete("preferences","key=?",arrayOf(it))}
         companionTables.reversed().forEach{db.delete(it,"role=?",arrayOf(id))}
         for(table in (extra+base).reversed().distinct()){
             val predicate=when(table){

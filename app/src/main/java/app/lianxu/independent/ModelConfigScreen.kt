@@ -52,9 +52,18 @@ private fun thinkingModeLabel(mode:ThinkingMode)=when(mode){ThinkingMode.DEFAULT
 /** 推理强度下拉的选中行：纸色向墨色混约 8%，暖中性，和未选中项轻轻分开。 */
 private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
 
-@Composable fun ModelConfigScreen(onBack:()->Unit,state:ModelConfigState=viewModel(),saveForPurpose:ModelPurpose?=null) {
+@Composable fun ModelConfigScreen(
+    onBack:()->Unit,
+    state:ModelConfigState=viewModel(),
+    saveForPurpose:ModelPurpose?=null,
+    initialEditConfigId:String?=null,
+    initialPurpose:ModelPurpose?=null,
+    returnToChatOnDone:Boolean=false,
+    onInitialHandled:()->Unit={},
+) {
     LaunchedEffect(state.vaultVersion){state.refresh()}
     var screen by remember {mutableStateOf("overview")}
+    var openedDirectlyToEdit by remember {mutableStateOf(false)}
     SideEffect { ProcessDiagnostics.view(when(screen) {
         "edit" -> "model-editor"; "providers" -> "model-providers"; "voice-studio" -> "voice-studio"; else -> "models"
     }) }
@@ -102,7 +111,7 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
         state.clearResult()
         if(screen=="providers"){screen=providerReturn;return}
         key="";reveal=false
-        if(screen=="edit")screen="overview" else onBack()
+        if(screen=="edit"){openedDirectlyToEdit=false;screen="overview"} else onBack()
     }
     fun add(embedding:Boolean=false){if(state.saving||saveForPurpose==ModelPurpose.CHAT&&embedding)return;ProcessDiagnostics.action(ProcessAction.ADD_MODEL);prefilledKey="";keyDraft.invalidate();embeddingEditor=embedding;original=null;originalRevision=null;streamReplies=true;draftId=UUID.randomUUID().toString();name="";key="";reveal=false;model="";budgets=ModelBudgetDraft();resetThinking();thinkingCustom="";query="";allProviders=false;providerReturn="overview";state.clearResult();screen="providers"}
     fun sharedWithOtherPurposes(id:String)=saveForPurpose==ModelPurpose.CHAT&&state.purposes.any{(purpose,value)->purpose!=ModelPurpose.CHAT&&value==id}
@@ -116,6 +125,16 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
     }
     fun changed(){modelQuery="";state.clearResult()}
     fun chooseModel(id:String){model=id;budgets=budgets.forModel(provider,base,model);resetThinking();changed()}
+    LaunchedEffect(state.loaded,initialEditConfigId,initialPurpose){
+        if(!state.loaded||(initialEditConfigId==null&&initialPurpose==null))return@LaunchedEffect
+        val targetId=initialEditConfigId?.takeIf{it.isNotBlank()}?:initialPurpose?.let{state.purposes[it]}
+        val target=targetId?.let{id->state.configs.firstOrNull{it.id==id}}
+        onInitialHandled()
+        if(target!=null){
+            openedDirectlyToEdit=true
+            edit(target,embedding=ProviderCatalog.modelKind(target)==ProviderModelKind.TEXT_EMBEDDING)
+        }
+    }
     DisposableEffect(lifecycle){
         val observer=LifecycleEventObserver {_,event->if(event==Lifecycle.Event.ON_STOP){reveal=false;state.clearResult()}}
         lifecycle.addObserver(observer)
@@ -133,7 +152,7 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
             title=when(screen){"providers"->if(embeddingEditor)"选择向量服务商" else "选择聊天服务商";"edit"->if(embeddingEditor)"向量模型配置" else if(original==null)"添加 ${providerName(preset)}" else "编辑配置";else->"大模型配置"},
             onBack={back()},backTag="config-back",enabled=!state.saving,
             extra={when(screen){
-                "edit"->SaveAction(!state.busy&&!sharedWithOtherPurposes(draftId)&&ThinkingFields.customError(thinkingCustom)==null){ProcessDiagnostics.action(ProcessAction.SAVE_MODEL);reveal=false;if(saveForPurpose==ModelPurpose.CHAT)state.saveChatFromCreation(draft(),enteredKey(),original,originalRevision){key="";screen="overview"}else state.save(draft(),enteredKey(),if(embeddingEditor)ModelPurpose.EMBEDDING else null,original,originalRevision){key="";screen="overview"}}
+                "edit"->SaveAction(!state.busy&&!sharedWithOtherPurposes(draftId)&&ThinkingFields.customError(thinkingCustom)==null){ProcessDiagnostics.action(ProcessAction.SAVE_MODEL);reveal=false;if(saveForPurpose==ModelPurpose.CHAT)state.saveChatFromCreation(draft(),enteredKey(),original,originalRevision){key="";screen="overview"}else state.save(draft(),enteredKey(),if(embeddingEditor)ModelPurpose.EMBEDDING else null,original,originalRevision){key="";if(returnToChatOnDone&&openedDirectlyToEdit){openedDirectlyToEdit=false;onBack()}else screen="overview"}}
                 else->Spacer(Modifier.width(48.dp))
             }}
         )

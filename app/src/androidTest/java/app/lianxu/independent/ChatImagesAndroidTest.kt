@@ -285,43 +285,81 @@ class ChatImagesAndroidTest {
     }
     @Test fun auxiliaryRouteInheritsOutputStreamingAndThinkingConfig():Unit=runBlocking{
         val chosen=image()
-        for(stream in listOf(true,false)){
-            val role=if(stream)"a" else "b"
-            val expectedOutput=if(stream)3072 else 4096
-            val expectedEffort=if(stream)"low" else "high"
-            val longObservation="可见细节。".repeat(1700) // > 8000 chars, still within chat context
-            val bodies=Collections.synchronizedList(mutableListOf<JSONObject>())
+        fun sseReply(text:String):String{
+            val delta=JSONObject().put("choices",org.json.JSONArray().put(JSONObject().put("index",0).put("delta",JSONObject().put("content",text))))
+            val done=JSONObject().put("choices",org.json.JSONArray().put(JSONObject().put("index",0).put("delta",JSONObject()).put("finish_reason","stop")))
+            return "data: $delta\n\ndata: $done\n\ndata: [DONE]\n\n"
+        }
+        // Opposite streaming flags between chat and aux vision, plus >8000-char observation surviving backup round-trip.
+        for(visionStream in listOf(true,false)){
+            val chatStream=!visionStream
+            val role=if(visionStream)"a" else "b"
+            val expectedOutput=if(visionStream)3072 else 4096
+            val expectedEffort=if(visionStream)"low" else "high"
+            val longObservation="可见细节。".repeat(1700) // 8500 chars (> 8000), still within chat context
+            val visionBodies=Collections.synchronizedList(mutableListOf<JSONObject>())
+            val chatBodies=Collections.synchronizedList(mutableListOf<JSONObject>())
             TextTlsMock(
-                maxRequests=2,
-                contentType=if(stream)"text/event-stream" else "application/json",
-                responder={raw->
-                    val j=JSONObject(raw);bodies+=j
-                    val content=if(j.getString("model")=="vision")longObservation else "主模型收到观察"
-                    if(stream){
-                        val delta=JSONObject().put("choices",org.json.JSONArray().put(JSONObject().put("index",0).put("delta",JSONObject().put("content",content))))
-                        val done=JSONObject().put("choices",org.json.JSONArray().put(JSONObject().put("index",0).put("delta",JSONObject()).put("finish_reason","stop")))
-                        "data: $delta\n\ndata: $done\n\ndata: [DONE]\n\n"
-                    }else success(content)
+                maxRequests=1,
+                contentType=if(visionStream)"text/event-stream" else "application/json",
+                responder={raw->visionBodies+=JSONObject(raw);if(visionStream)sseReply(longObservation) else success(longObservation)}
+            ).use{visionServer->
+                TextTlsMock(
+                    maxRequests=1,
+                    contentType=if(chatStream)"text/event-stream" else "application/json",
+                    responder={raw->chatBodies+=JSONObject(raw);if(chatStream)sseReply("主模型收到观察") else success("主模型收到观察")}
+                ).use{chatServer->
+                    val chatCfg=config("chat",chatServer.base).copy(streamReplies=chatStream)
+                    val visionCfg=ModelConfig("vision","合成辅助看图","custom",visionServer.base,"vision",contextTokens=128000,outputTokens=expectedOutput,thinkingCustom="""{"reasoning_effort":"$expectedEffort"}""",streamReplies=visionStream)
+                    vault.save(chatCfg,"synthetic-key-only");vault.setPurpose(ModelPurpose.CHAT,"chat")
+                    vault.save(visionCfg,"synthetic-key-only");vault.setPurpose(ModelPurpose.AUX_VISION,"vision")
+                    ChatImages.setEnabled(store.writableDatabase,true)
+                    val turn=ledger.begin(role,"帮我看看图里细节（visionStream=$visionStream）","chat",image=chosen)
+                    val route=ChatImageRoute(store,vault,visionServer.client(15000),turn,chatCfg,AppMutationGate.epoch()){true}
+                    val result=if(chatStream)route.streamEvents(chatCfg,"synthetic-key-only",request(turn)){} else route.complete(chatCfg,"synthetic-key-only",request(turn))
+                    assertTrue("visionStream=$visionStream result=$result",result is TextChatResult.Success)
+                    assertEquals("主模型收到观察",(result as TextChatResult.Success).text)
+                    assertTrue(ledger.finishWithMemory(turn.id,1,result.text,onCompleted={route.commit(it)}))
+                    val visionBody=visionBodies.single()
+                    val chatBody=chatBodies.single()
+                    assertEquals(expectedOutput,visionBody.getInt("max_tokens"))
+                    assertEquals(visionStream,visionBody.getBoolean("stream"))
+                    assertEquals(expectedEffort,visionBody.getString("reasoning_effort"))
+                    assertEquals(chatStream,chatBody.getBoolean("stream"))
+                    // Full export -> preview -> restore must accept and preserve the 8500-char observation verbatim.
+                    val backup=BackupRepository(store,vault)
+                    val exported=backup.export(role)
+                    val restoredId=backup.commit(backup.preview(pack(exported),"ADD")).single()
+                    val restoredBody=repo.read{db->db.rawQuery("SELECT body FROM image_observations WHERE friend_id=?",arrayOf(restoredId)).use{check(it.moveToFirst());it.getString(0)}}
+                    assertEquals(longObservation,restoredBody)
                 }
-            ).use{server->
-                val chatCfg=config("chat",server.base).copy(streamReplies=stream)
-                val visionCfg=ModelConfig("vision","合成辅助看图","custom",server.base,"vision",contextTokens=128000,outputTokens=expectedOutput,thinkingCustom="""{"reasoning_effort":"$expectedEffort"}""",streamReplies=stream)
-                vault.save(chatCfg,"synthetic-key-only");vault.setPurpose(ModelPurpose.CHAT,"chat")
-                vault.save(visionCfg,"synthetic-key-only");vault.setPurpose(ModelPurpose.AUX_VISION,"vision")
-                ChatImages.setEnabled(store.writableDatabase,true)
-                val turn=ledger.begin(role,"帮我看看图里细节（stream=$stream）","chat",image=chosen)
-                val route=ChatImageRoute(store,vault,server.client(15000),turn,chatCfg,AppMutationGate.epoch()){true}
-                val result=if(stream)route.streamEvents(chatCfg,"synthetic-key-only",request(turn)){} else route.complete(chatCfg,"synthetic-key-only",request(turn))
-                assertTrue("stream=$stream result=$result",result is TextChatResult.Success)
-                assertEquals("主模型收到观察",(result as TextChatResult.Success).text)
-                assertTrue(ledger.finishWithMemory(turn.id,1,result.text,onCompleted={route.commit(it)}))
-                val visionBody=bodies.single{it.getString("model")=="vision"}
-                assertEquals(expectedOutput,visionBody.getInt("max_tokens"))
-                assertEquals(stream,visionBody.getBoolean("stream"))
-                assertEquals(expectedEffort,visionBody.getString("reasoning_effort"))
             }
         }
-        // Truncated auxiliary vision call should report the auxiliary stage and configured output limit.
+        // Small-context main model + large-context auxiliary vision model: original image tokens must be checked against vision, not chat.
+        run {
+            store.add(listOf(Friend("c","小上下文角色","小上下文测试")),false)
+            val visionBodies=Collections.synchronizedList(mutableListOf<JSONObject>())
+            val chatBodies=Collections.synchronizedList(mutableListOf<JSONObject>())
+            TextTlsMock(maxRequests=1,contentType="text/event-stream",responder={raw->visionBodies+=JSONObject(raw);sseReply("画面里有一朵黄花")}).use{visionServer->
+                TextTlsMock(maxRequests=1,contentType="application/json",responder={raw->chatBodies+=JSONObject(raw);success("收到短观察")}).use{chatServer->
+                    val smallChat=ModelConfig("chat","小上下文主模型","custom",chatServer.base,"chat",contextTokens=4096,outputTokens=2048,streamReplies=false)
+                    val bigVision=ModelConfig("vision","大上下文辅助","custom",visionServer.base,"vision",contextTokens=128000,outputTokens=3072,streamReplies=true)
+                    vault.save(smallChat,"synthetic-key-only");vault.setPurpose(ModelPurpose.CHAT,"chat")
+                    vault.save(bigVision,"synthetic-key-only");vault.setPurpose(ModelPurpose.AUX_VISION,"vision")
+                    ChatImages.setEnabled(store.writableDatabase,true)
+                    val turn=ledger.begin("c","看看这张图","chat",image=chosen)
+                    val ctx=ledger.context(turn.id)
+                    val smallReq=(CompanionPrompt.build(ctx.friend,RolePromptStore.decode(ctx.rawPrompts),ctx.recent,ctx.input,inputImage=ctx.image,currentMessageId=turn.userMessageId,capacity=4096,outputLimit=2048) as PromptBuild.Ready).request
+                    val route=ChatImageRoute(store,vault,visionServer.client(15000),turn,smallChat,AppMutationGate.epoch()){true}
+                    val result=route.complete(smallChat,"synthetic-key-only",smallReq)
+                    assertTrue("small-chat/big-vision result=$result",result is TextChatResult.Success)
+                    assertEquals(1,visionBodies.size);assertEquals(1,chatBodies.size)
+                    assertTrue(visionBodies.single().getBoolean("stream"))
+                    assertFalse(chatBodies.single().getBoolean("stream"))
+                }
+            }
+        }
+        // Truncated auxiliary vision call should report structured aux metadata and configured output limit.
         TextTlsMock(maxRequests=1,responder={
             JSONObject().put("choices",org.json.JSONArray().put(JSONObject().put("finish_reason","length").put("message",JSONObject().put("content","只看了一半")))).toString()
         }).use{server->
@@ -334,8 +372,31 @@ class ChatImagesAndroidTest {
             val route=ChatImageRoute(store,vault,server.client(15000),turn,chatCfg,AppMutationGate.epoch()){true}
             val err=runCatching{route.complete(chatCfg,"synthetic-key-only",request(turn))}.exceptionOrNull() as CompanionModelFailure
             assertEquals(ChatFailure.TRUNCATED,err.failure)
-            assertTrue(err.detail,err.detail.contains("辅助看图"))
+            assertEquals("aux_vision",err.meta?.route)
+            assertEquals("vision",err.meta?.modelConfigId)
+            assertEquals(3072,err.meta?.outputTokens)
             assertTrue(err.detail,err.detail.contains("3072"))
+        }
+        // Auxiliary HTTP error keeps provider body verbatim (including trailing spaces) and redacts secrets in modelId.
+        val leakedSecret="sk-accidentally-pasted-into-model-id"
+        TextTlsMock(status=415,maxRequests=1,response="unsupported image   ").use{server->
+            val chatCfg=config("chat",server.base).copy(streamReplies=false)
+            val visionCfg=ModelConfig("vision","合成辅助看图","custom",server.base,"bad-$leakedSecret",contextTokens=128000,outputTokens=3072,streamReplies=false)
+            vault.save(chatCfg,"synthetic-key-only");vault.setPurpose(ModelPurpose.CHAT,"chat")
+            vault.save(visionCfg,leakedSecret);vault.setPurpose(ModelPurpose.AUX_VISION,"vision")
+            ChatImages.setEnabled(store.writableDatabase,true)
+            val turn=ledger.begin("b","测原文边界与脱敏","chat",image=chosen)
+            val route=ChatImageRoute(store,vault,server.client(15000),turn,chatCfg,AppMutationGate.epoch()){true}
+            val err=runCatching{route.complete(chatCfg,"synthetic-key-only",request(turn))}.exceptionOrNull() as CompanionModelFailure
+            assertEquals(ChatFailure.REJECTED,err.failure)
+            assertTrue("trailing whitespace preserved: '${err.detail}'",err.detail.endsWith("unsupported image   "))
+            assertFalse(err.detail.contains("阶段："))
+            assertEquals("aux_vision",err.meta?.route)
+            assertFalse("secret redacted from modelId",err.meta?.modelId.orEmpty().contains(leakedSecret))
+            val shown=ChatFailureText.full(err.failure,err.detail,err.meta)
+            assertFalse(shown.contains(leakedSecret))
+            assertTrue(shown.contains("失败阶段：\n辅助看图（"))
+            assertTrue(shown.endsWith("服务返回的原文：\n${err.detail}"))
         }
     }
 }

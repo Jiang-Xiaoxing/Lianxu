@@ -168,7 +168,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
                 // The plan path surfaces a failed reply as an exception; what the panel already showed
                 // must still be recorded instead of vanishing with the turn.
                 st.turn?.let{shownOnce(st,friendId,it.id,it.attempt,if(lease.wasCommitted())"success" else "failure",mapOf("failure" to e.failure.name.uppercase()))}
-                st.turn?.let{ledger.fail(it.id,it.attempt,e.failure,e.detail)};changed()
+                st.turn?.let{ledger.fail(it.id,it.attempt,e.failure,e.detail,e.meta)};changed()
             }catch(e:CancellationException){
                 // Cancelling the turn clears the preview; record what had already been shown first.
                 st.turn?.let{shownOnce(st,friendId,it.id,it.attempt,if(lease.wasCommitted())"success" else "cancelled")}
@@ -546,7 +546,16 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
             is TextChatResult.Failure->{
                 // A failed turn still showed whatever had streamed in before the failure.
                 shownOnce(st,friendId,current.id,current.attempt,"failure",mapOf("failure" to result.reason.name))
-                ledger.fail(current.id,current.attempt,result.reason,result.detail)
+                val meta=(result.meta?:ChatFailureMeta()).let{m->
+                    if(m.modelConfigId.isBlank()) m.copy(
+                        route=m.route.ifBlank{"chat"},
+                        modelConfigId=credentials.config.id,
+                        modelId=Diagnostics.redact(credentials.config.modelId,listOf(credentials.key)),
+                        outputTokens=m.outputTokens?:credentials.config.outputTokens,
+                        streamReplies=m.streamReplies?:credentials.config.streamReplies,
+                    ) else m.copy(route=m.route.ifBlank{"chat"})
+                }
+                ledger.fail(current.id,current.attempt,result.reason,result.detail,meta)
             }
         }
         changed()

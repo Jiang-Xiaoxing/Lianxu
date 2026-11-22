@@ -97,8 +97,32 @@ class ProviderErrorTextTest {
             override fun getInputStream():InputStream=ByteArrayInputStream(byteArrayOf())
         }}
         assertEquals(ChatFailure.CONNECTION_INTERRUPTED,result.reason)
+        assertEquals("await_response_headers",result.meta?.stage)
         assertTrue(result.detail,result.detail.contains("等待服务商响应时连接中断"))
         assertTrue(result.detail,result.detail.contains("Software caused connection abort"))
+    }
+    @Test fun nonConnectionExceptionAfterWriteStaysUnknownNotConnectionInterrupted(){
+        val result=run{object:HttpsURLConnection(it){
+            override fun getCipherSuite()=""
+            override fun getLocalCertificates():Array<Certificate>?=null
+            override fun getServerCertificates():Array<Certificate> = emptyArray()
+            override fun connect(){}
+            override fun disconnect(){}
+            override fun usingProxy()=false
+            override fun getOutputStream():OutputStream=ByteArrayOutputStream()
+            override fun getResponseCode():Int=throw IllegalStateException("unexpected state after body write")
+            override fun getContentType()="application/json"
+            override fun getInputStream():InputStream=ByteArrayInputStream(byteArrayOf())
+        }}
+        assertEquals(ChatFailure.UNKNOWN,result.reason)
+        assertEquals("await_response_headers",result.meta?.stage)
+        assertTrue(result.detail,result.detail.contains("IllegalStateException: unexpected state after body write"))
+    }
+    @Test fun socketAbortDuringWriteSetsConnectOrWriteStage(){
+        val result=run{Fake(it,null,failConnect=java.net.SocketException("Broken pipe"))}
+        assertEquals(ChatFailure.CONNECTION_INTERRUPTED,result.reason)
+        assertEquals("connect_or_write",result.meta?.stage)
+        assertTrue(result.detail,result.detail.contains("发送请求时连接中断"))
     }
     @Test fun truncatedResponseExplainsOutputLimit(){
         val body="""{"choices":[{"finish_reason":"length","message":{"content":"写到一半"}}]}"""

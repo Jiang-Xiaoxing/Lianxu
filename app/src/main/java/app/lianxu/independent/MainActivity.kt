@@ -118,7 +118,14 @@ class MainActivity:ComponentActivity(){
             "role-archive"->RoleArchiveScreen(vm)
             "search"->RoleSearch(vm)
             "search-detail"->GeneratedRoleDetail(vm)
-            "models"->ModelConfigScreen({if(creationConfigOpen){creationConfigOpen=false;vm.open("create")}else vm.back()},saveForPurpose=if(creationConfigOpen)ModelPurpose.CHAT else null)
+            "models"->ModelConfigScreen(
+                onBack={if(creationConfigOpen){creationConfigOpen=false;vm.open("create")}else vm.back()},
+                saveForPurpose=if(creationConfigOpen)ModelPurpose.CHAT else null,
+                initialEditConfigId=if(creationConfigOpen)null else vm.modelsTargetConfigId,
+                initialPurpose=if(creationConfigOpen)null else vm.modelsTargetPurpose,
+                returnToChatOnDone=!creationConfigOpen && !vm.modelsReturnChatId.isNullOrBlank(),
+                onInitialHandled={vm.clearModelsTarget()},
+            )
             "processing"->ProcessingDirectory(vm)
             "processing-role"->ProcessingRole(vm)
             "settings-memory"->MemoryRulesScreen(vm)

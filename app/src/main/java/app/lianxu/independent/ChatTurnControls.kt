@@ -36,16 +36,22 @@ import androidx.compose.ui.unit.dp
         else Text(when(turn.state){TurnState.PENDING->"正在请求回复…";TurnState.CANCELLED->"已取消，没有自动重发。";TurnState.INTERRUPTED->ChatFailure.INTERRUPTED.display;else->"回复未完成。"},style=MaterialTheme.typography.bodySmall,color=Muted)
         if(reason){
             val background=remember(turn.id,turn.attempt,reason){DiagnosticEnvironment.backgroundState(context)}
-            val guidance=remember(turn.failure,turn.failureDetail,background){ChatFailureGuidance.build(turn.failure,turn.failureDetail,background)}
+            val guidance=remember(turn.failure,turn.failureDetail,turn.failureMeta,background){ChatFailureGuidance.build(turn.failure,turn.failureDetail,background,turn.failureMeta)}
             ChatFailureDialog(
-                text=ChatFailureText.full(turn.failure,turn.failureDetail),
+                text=ChatFailureText.full(turn.failure,turn.failureDetail,turn.failureMeta),
                 guidance=guidance,
                 onAction={action->
                     reason=false
                     when(action){
                         FailureGuidanceAction.OPEN_APP_BACKGROUND_SETTINGS->openBackgroundAccessSettings(context)
-                        FailureGuidanceAction.OPEN_NOTIFICATION_SETTINGS->openNotificationSettings(context,ChatRequestService.CHANNEL_ID)
-                        FailureGuidanceAction.OPEN_MODEL_CONFIG->vm.open("models")
+                        FailureGuidanceAction.OPEN_NOTIFICATION_SETTINGS->openChatNotificationSettings(context)
+                        FailureGuidanceAction.OPEN_MODEL_CONFIG->{
+                            val targetConfigId=turn.failureMeta?.modelConfigId.orEmpty().ifBlank{
+                                if(turn.failure!=ChatFailure.MISSING_VISION_MODEL) turn.configId else ""
+                            }
+                            val targetPurpose=if(turn.failureMeta?.route=="aux_vision"||turn.failure==ChatFailure.MISSING_VISION_MODEL) ModelPurpose.AUX_VISION else ModelPurpose.CHAT
+                            vm.openModelsFromChat(turn.friendId,targetConfigId,targetPurpose)
+                        }
                     }
                 },
                 dismiss={reason=false}
@@ -55,11 +61,13 @@ import androidx.compose.ui.unit.dp
     }
 }
 
-/** The full reason for a failed turn: our one-line explanation, then what the service actually returned. */
+/** The full reason for a failed turn: our one-line explanation, optional stage context, then what the service actually returned. */
 internal object ChatFailureText {
-    fun full(failure:ChatFailure?,detail:String)=buildString{
+    fun full(failure:ChatFailure?,detail:String,meta:ChatFailureMeta?=null)=buildString{
         append(failure?.display?:"回复未完成。")
-        // Provider text starts with its HTTP status; anything else is our own description of what went wrong.
+        val stageLine=meta?.summaryLine().orEmpty()
+        if(stageLine.isNotBlank())append("\n\n失败阶段：\n").append(stageLine)
+        // Provider text starts with its HTTP status; keep it verbatim without appending local metadata.
         if(detail.isNotBlank())append(if(detail.startsWith("HTTP "))"\n\n服务返回的原文：\n" else "\n\n详细原因：\n").append(detail)
     }
 }

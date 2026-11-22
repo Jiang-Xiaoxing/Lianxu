@@ -91,9 +91,53 @@ internal fun memoryFailureFor(code:String):ChatFailure=when(code){
     "MANUAL_RETRY"->ChatFailure.MEMORY_RETRY
     else->ChatFailure.MEMORY_FAILED
 }
+/** Structured local failure context kept separate from raw provider HTTP bodies. Local only; never backed up. */
+data class ChatFailureMeta(
+    val route:String="",
+    val stage:String="",
+    val sawBackground:Boolean=false,
+    val modelConfigId:String="",
+    val modelId:String="",
+    val outputTokens:Int?=null,
+    val streamReplies:Boolean?=null,
+) {
+    fun hasAny():Boolean = route.isNotBlank()||stage.isNotBlank()||sawBackground||modelConfigId.isNotBlank()||modelId.isNotBlank()||outputTokens!=null||streamReplies!=null
+    fun encode():String = org.json.JSONObject().apply {
+        if(route.isNotBlank())put("route",route)
+        if(stage.isNotBlank())put("stage",stage)
+        if(sawBackground)put("saw_background",true)
+        if(modelConfigId.isNotBlank())put("model_config_id",modelConfigId)
+        if(modelId.isNotBlank())put("model_id",modelId)
+        if(outputTokens!=null)put("output_tokens",outputTokens)
+        if(streamReplies!=null)put("stream_replies",streamReplies)
+    }.toString()
+    fun summaryLine():String {
+        if(route!="aux_vision")return ""
+        val parts=buildList {
+            if(modelId.isNotBlank())add("模型：$modelId")
+            if(outputTokens!=null)add("输出上限：$outputTokens token")
+            if(streamReplies!=null)add(if(streamReplies)"流式" else "非流式")
+        }
+        return if(parts.isEmpty())"辅助看图" else "辅助看图（${parts.joinToString("，")}）"
+    }
+    companion object {
+        fun decode(raw:String?):ChatFailureMeta? = if(raw.isNullOrBlank()) null else runCatching {
+            val j=org.json.JSONObject(raw)
+            ChatFailureMeta(
+                route=j.optString("route",""),
+                stage=j.optString("stage",""),
+                sawBackground=j.optBoolean("saw_background",false),
+                modelConfigId=j.optString("model_config_id",""),
+                modelId=j.optString("model_id",""),
+                outputTokens=if(j.has("output_tokens")&&!j.isNull("output_tokens"))j.optInt("output_tokens") else null,
+                streamReplies=if(j.has("stream_replies")&&!j.isNull("stream_replies"))j.optBoolean("stream_replies") else null,
+            ).takeIf{it.hasAny()}
+        }.getOrNull()
+    }
+}
 sealed interface TextChatResult {    data class Success(val text:String,val toolCalls:List<ChatToolCall> = emptyList(),@Transient val continuation:ProviderContinuation?=null,val displayReasoning:String=""):TextChatResult
     /** detail: what the provider actually said (HTTP status plus body) or the low-level error, keys masked. */
-    data class Failure(val reason:ChatFailure,val httpStatus:Int?=null,val detail:String=""):TextChatResult {
+    data class Failure(val reason:ChatFailure,val httpStatus:Int?=null,val detail:String="",val meta:ChatFailureMeta?=null):TextChatResult {
         // Set only when the wire parser recognized this tool but could not return a tool batch.
         internal var rejectedVoiceCall = false
     }

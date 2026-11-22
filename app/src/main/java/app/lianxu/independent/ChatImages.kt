@@ -42,6 +42,8 @@ class WireImage private constructor(val mime:String,private val data:ByteArray?,
 internal object ChatImages {
     const val SWITCH="aux-vision-enabled"
     const val SWITCH_REVISION="aux-vision-revision"
+    /** Upper bound shared between auxiliary observation capture and backup validation. */
+    const val MAX_OBSERVATION_CHARS=100_000
     fun create(db:SQLiteDatabase){
         db.execSQL("CREATE TABLE IF NOT EXISTS chat_images(friend_id TEXT NOT NULL REFERENCES friends(id),message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,path TEXT NOT NULL,mime TEXT NOT NULL,hash TEXT NOT NULL,width INTEGER NOT NULL,height INTEGER NOT NULL,revision INTEGER NOT NULL,storage_kind TEXT NOT NULL DEFAULT 'legacy-normalized',FOREIGN KEY(friend_id,path) REFERENCES role_assets(friend_id,path))")
         db.execSQL("CREATE TABLE IF NOT EXISTS image_observations(id TEXT PRIMARY KEY,friend_id TEXT NOT NULL REFERENCES friends(id),message_id INTEGER NOT NULL REFERENCES chat_images(message_id) ON DELETE CASCADE,question_message_id INTEGER NOT NULL REFERENCES messages(id),question_revision INTEGER NOT NULL,source_revision INTEGER NOT NULL,image_hash TEXT NOT NULL,model_id TEXT NOT NULL,body TEXT NOT NULL,created INTEGER NOT NULL)")

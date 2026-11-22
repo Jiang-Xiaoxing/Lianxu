@@ -122,4 +122,4 @@ internal class CompanionModel(private val client:TextChatClient) {
         return structured.generate("reconsider",config,key,listOf(WireMessage("system",instruction),WireMessage("user","[程序输出请求，不是用户聊天原话或新的聊天消息，不改变已有来源和权限] 仅依据上方实际提供的材料，在send、defer、cancel、silent中自主选择本次决定；现在直接输出一个符合既定协议的完整合法JSON对象，不输出分析、思考标签、代码块或其他文字。")),active=active,invalidOutput=ChatFailure.REPLY_TEXT_INVALID){raw->CompanionContracts.decisionForReply(raw,now,o.expiresAt,s.learning,zone)}
     }
 }
-internal class CompanionModelFailure(val failure:ChatFailure,val detail:String=""):Exception(failure.name)
+internal class CompanionModelFailure(val failure:ChatFailure,val detail:String="",val meta:ChatFailureMeta?=null):Exception(failure.name)

@@ -60,13 +60,21 @@ class DetailedNetworkAndroidTest {
         val observer=DiagnosticEnvironment.networkObserver(requireNotNull(Diagnostics.detailSession))
         val trace="synthetic-network-callback"
         val state=DiagnosticTraceState(trace,"fixture",null,"synthetic")
+        val observedBlocked=mutableListOf<Boolean?>()
         ui.runOnIdle {
             Diagnostics.onThread(state) {
                 observer.onAvailable(network)
+                observedBlocked += DiagnosticEnvironment.networkBlockedState()
                 observer.onCapabilitiesChanged(network,caps)
                 observer.onBlockedStatusChanged(network,true)
+                observedBlocked += DiagnosticEnvironment.networkBlockedState()
+                // A new default network becoming available must clear previous blocked=true before its callback arrives.
+                observer.onAvailable(network)
+                observedBlocked += DiagnosticEnvironment.networkBlockedState()
                 observer.onBlockedStatusChanged(network,false)
+                observedBlocked += DiagnosticEnvironment.networkBlockedState()
                 observer.onLost(network)
+                observedBlocked += DiagnosticEnvironment.networkBlockedState()
                 observer.onCapabilitiesChanged(network,caps)
                 vm.setDiagnosticDetailed(false)
                 vm.setDiagnosticDetailed(true)
@@ -74,9 +82,10 @@ class DetailedNetworkAndroidTest {
                 observer.onLost(network)
             }
         }
+        assertEquals(listOf(null,true,null,false,null),observedBlocked)
         val observed=rows().filter { it["trace"].asString==trace && name(it)=="diagnostic.network" && data(it).has("network_event") }
             .map { data(it)["network_event"].asString }.filter { it!="snapshot" }
-        assertEquals(listOf("available","capabilities","blocked_changed","blocked_changed","lost","available","lost"),observed)
+        assertEquals(listOf("available","capabilities","blocked_changed","available","blocked_changed","lost","available","lost"),observed)
         val blockedStates=rows().filter { it["trace"].asString==trace && name(it)=="diagnostic.network" && data(it)["network_event"]?.asString=="blocked_changed" }
             .map { data(it)["network_blocked"].asBoolean }
         assertEquals(listOf(true,false),blockedStates)

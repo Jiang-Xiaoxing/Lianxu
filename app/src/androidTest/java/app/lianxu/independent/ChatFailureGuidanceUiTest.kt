@@ -15,7 +15,8 @@ class ChatFailureGuidanceUiTest {
     private val nextFailure=AtomicReference<TextChatResult.Failure>(
         TextChatResult.Failure(
             ChatFailure.CONNECTION_INTERRUPTED,
-            detail="阶段：请求已发出，等待服务商响应时连接中断（请求期间应用切到过后台）\nSocketException: Software caused connection abort"
+            detail="阶段：请求已发出，等待服务商响应时连接中断（请求期间应用切到过后台）\nSocketException: Software caused connection abort",
+            meta=ChatFailureMeta(route="chat",stage="await_response_headers",sawBackground=true)
         )
     )
     private val client=object:TextChatClient {
@@ -64,11 +65,16 @@ class ChatFailureGuidanceUiTest {
         ui.onAllNodesWithTag("turn-failure-action").assertCountEquals(0)
     }
 
-    @Test fun truncatedFailureAutoShowsGuidanceAndNavigatesToModelConfig() {
+    @Test fun truncatedFailureAutoShowsGuidanceAndReturnsToChatFromModelConfig() {
+        ModelVault(instrumentation.targetContext,fixture.namespace).apply{
+            save(ModelConfig("vision-aux","合成辅助看图","custom","https://example.invalid/v1","vision-model",128000,3072),"synthetic-key-only")
+            setPurpose(ModelPurpose.AUX_VISION,"vision-aux")
+        }
         nextFailure.set(
             TextChatResult.Failure(
                 ChatFailure.TRUNCATED,
-                detail="阶段：辅助看图（模型：deepseek-v4.1-flash，输出上限：3072 token，非流式）\n模型返回 finish_reason=length，达到了当前配置的输出上限（3072 token），回复被截断。"
+                detail="模型返回 finish_reason=length，达到了当前配置的输出上限（3072 token），回复被截断。",
+                meta=ChatFailureMeta(route="aux_vision",stage="read_response_body",modelConfigId="vision-aux",modelId="vision-model",outputTokens=3072,streamReplies=false)
             )
         )
         ui.waitUntil(15000){vm().ready}
@@ -77,9 +83,28 @@ class ChatFailureGuidanceUiTest {
         ui.onNodeWithTag("send-message").performClick()
 
         ui.waitUntil(15000){ui.onAllNodesWithTag("turn-failure-action").fetchSemanticsNodes().isNotEmpty()}
+        val failed=vm().turns.last()
         ui.onNodeWithText("辅助看图达到输出上限").assertIsDisplayed()
         ui.onNodeWithText("去调大模型配置").assertIsDisplayed().performClick()
-        ui.waitUntil(10000){vm().page=="models"}
-        assertEquals("models",vm().page)
+        ui.waitUntil(10000){vm().page=="models" && ui.onAllNodesWithTag("config-name").fetchSemanticsNodes().isNotEmpty()}
+        // Directly opened the failing auxiliary vision model editor; navigating back returns to the exact chat with Retry visible.
+        ui.onNodeWithTag("config-name").assertTextContains("合成辅助看图")
+        ui.onNodeWithTag("config-back").performClick()
+        ui.waitUntil(10000){ui.onAllNodesWithTag("config-overview").fetchSemanticsNodes().isNotEmpty()}
+        ui.onNodeWithTag("config-back").performClick()
+        ui.waitUntil(10000){vm().page=="chat" && vm().activeId=="seed-lin"}
+        assertEquals("chat",vm().page)
+        assertEquals("seed-lin",vm().activeId)
+        ui.onNodeWithTag("retry-turn-${failed.id}").assertIsDisplayed()
+    }
+
+    @Test fun notificationSettingsIntentTargetsAppVsChannelCorrectly() {
+        val pkg=instrumentation.targetContext.packageName
+        val appIntents=notificationSettingsIntents(pkg,null)
+        assertEquals(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS,appIntents.first().action)
+        assertEquals(pkg,appIntents.first().getStringExtra(android.provider.Settings.EXTRA_APP_PACKAGE))
+        val channelIntents=notificationSettingsIntents(pkg,ChatRequestService.CHANNEL_ID)
+        assertEquals(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS,channelIntents.first().action)
+        assertEquals(ChatRequestService.CHANNEL_ID,channelIntents.first().getStringExtra(android.provider.Settings.EXTRA_CHANNEL_ID))
     }
 }

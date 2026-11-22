@@ -234,18 +234,42 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     internal suspend fun refreshProcessing(){reload()}
     private suspend fun recoverProcessing(){memory.recover();ReplyAccountingScheduler.recover(store)}
     fun foreground(){if(ready)viewModelScope.launch{runCatching{companion.checkContinuity(CompanionRuntime.owner);settleCompanion();reload();recoverProcessing()}}}
+    internal var modelsReturnChatId by mutableStateOf<String?>(null); private set
+    internal var modelsTargetConfigId by mutableStateOf<String?>(null); private set
+    internal var modelsTargetPurpose by mutableStateOf<ModelPurpose?>(null); private set
+    internal fun openModelsFromChat(friendId:String,configId:String="",purpose:ModelPurpose?=null){
+        open("models")
+        modelsReturnChatId=friendId.ifBlank{null}
+        modelsTargetConfigId=configId.ifBlank{null}
+        modelsTargetPurpose=purpose
+    }
+    internal fun clearModelsTarget(){
+        modelsTargetConfigId=null
+        modelsTargetPurpose=null
+    }
     // A chat attempt belongs to its role, not to the currently visible page.
     fun open(page: String, id: String = "") {
         ProcessDiagnostics.action(if(page=="models") ProcessAction.OPEN_MODELS else ProcessAction.OPEN)
         if (page == "detail") detailReturn = this.page
         if (page == "settings-memory") memorySettingsReturn = this.page
         if (page == "processing-role") processingReturn = if (this.page == "detail") "detail" else "processing"
+        modelsReturnChatId = null
+        modelsTargetConfigId = null
+        modelsTargetPurpose = null
         cancelSearch()
         this.page = page
         activeId = id
         error = ""
     }
-    fun back() { if(page=="chat" && memoryChatReturn){memoryChatReturn=false;memoryChatRequest.consume();page="processing-role";return}; if(page=="search-detail")page="search" else if(page=="settings-memory")page=memorySettingsReturn else if(page=="role-companion")page="toolbox-contact" else if(page.startsWith("toolbox-"))page="toolbox" else if(page=="role-voice"||page=="role-prompts"||page=="role-learning"||page=="role-relationship")page="detail" else if(page=="processing-role")page=processingReturn else if(page=="detail") page=detailReturn else { cancelSearch(); page="home" }; error="" }
+    fun back() {
+        if(page=="models" && !modelsReturnChatId.isNullOrBlank()){
+            val returnChat=modelsReturnChatId!!
+            open("chat",returnChat)
+            return
+        }
+        if(page=="chat" && memoryChatReturn){memoryChatReturn=false;memoryChatRequest.consume();page="processing-role";return}
+        if(page=="search-detail")page="search" else if(page=="settings-memory")page=memorySettingsReturn else if(page=="role-companion")page="toolbox-contact" else if(page.startsWith("toolbox-"))page="toolbox" else if(page=="role-voice"||page=="role-prompts"||page=="role-learning"||page=="role-relationship")page="detail" else if(page=="processing-role")page=processingReturn else if(page=="detail") page=detailReturn else { cancelSearch(); page="home" }; error=""
+    }
     fun home() {cancelSearch(); page="home"; error="" }
     fun startSearch(){cancelSearch();page="search";error=""}
     fun updateSearchRequirements(value:String){searchRequirements=value.take(2000)}
