@@ -283,4 +283,57 @@ class ChatImagesAndroidTest {
             }
         }
     }
+    @Test fun auxiliaryRouteInheritsOutputStreamingAndThinkingConfig():Unit=runBlocking{
+        val chosen=image()
+        for(stream in listOf(true,false)){
+            val expectedOutput=if(stream)3072 else 4096
+            val expectedEffort=if(stream)"low" else "high"
+            val longObservation="可见细节。".repeat(1700) // > 8000 chars, still within chat context
+            val bodies=Collections.synchronizedList(mutableListOf<JSONObject>())
+            TextTlsMock(
+                maxRequests=2,
+                contentType=if(stream)"text/event-stream" else "application/json",
+                responder={raw->
+                    val j=JSONObject(raw);bodies+=j
+                    val content=if(j.getString("model")=="vision")longObservation else "主模型收到观察"
+                    if(stream){
+                        val delta=JSONObject().put("choices",org.json.JSONArray().put(JSONObject().put("index",0).put("delta",JSONObject().put("content",content))))
+                        val done=JSONObject().put("choices",org.json.JSONArray().put(JSONObject().put("index",0).put("delta",JSONObject()).put("finish_reason","stop")))
+                        "data: $delta\n\ndata: $done\n\ndata: [DONE]\n\n"
+                    }else success(content)
+                }
+            ).use{server->
+                val chatCfg=config("chat",server.base).copy(streamReplies=stream)
+                val visionCfg=ModelConfig("vision","合成辅助看图","custom",server.base,"vision",contextTokens=128000,outputTokens=expectedOutput,thinkingCustom="""{"reasoning_effort":"$expectedEffort"}""",streamReplies=stream)
+                vault.save(chatCfg,"synthetic-key-only");vault.setPurpose(ModelPurpose.CHAT,"chat")
+                vault.save(visionCfg,"synthetic-key-only");vault.setPurpose(ModelPurpose.AUX_VISION,"vision")
+                ChatImages.setEnabled(store.writableDatabase,true)
+                val turn=ledger.begin("a","帮我看看图里细节（stream=$stream）","chat",image=chosen)
+                val route=ChatImageRoute(store,vault,server.client(),turn,chatCfg,AppMutationGate.epoch()){true}
+                val result=if(stream)route.streamEvents(chatCfg,"synthetic-key-only",request(turn)){} else route.complete(chatCfg,"synthetic-key-only",request(turn))
+                assertEquals("主模型收到观察",(result as TextChatResult.Success).text)
+                assertTrue(ledger.finishWithMemory(turn.id,1,result.text,onCompleted={route.commit(it)}))
+                val visionBody=bodies.single{it.getString("model")=="vision"}
+                assertEquals(expectedOutput,visionBody.getInt("max_tokens"))
+                assertEquals(stream,visionBody.getBoolean("stream"))
+                assertEquals(expectedEffort,visionBody.getString("reasoning_effort"))
+            }
+        }
+        // Truncated auxiliary vision call should report the auxiliary stage and configured output limit.
+        TextTlsMock(maxRequests=1,responder={
+            JSONObject().put("choices",org.json.JSONArray().put(JSONObject().put("finish_reason","length").put("message",JSONObject().put("content","只看了一半")))).toString()
+        }).use{server->
+            val chatCfg=config("chat",server.base).copy(streamReplies=false)
+            val visionCfg=ModelConfig("vision","合成辅助看图","custom",server.base,"vision",contextTokens=128000,outputTokens=3072,streamReplies=false)
+            vault.save(chatCfg,"synthetic-key-only");vault.setPurpose(ModelPurpose.CHAT,"chat")
+            vault.save(visionCfg,"synthetic-key-only");vault.setPurpose(ModelPurpose.AUX_VISION,"vision")
+            ChatImages.setEnabled(store.writableDatabase,true)
+            val turn=ledger.begin("a","测截断提示","chat",image=chosen)
+            val route=ChatImageRoute(store,vault,server.client(),turn,chatCfg,AppMutationGate.epoch()){true}
+            val err=runCatching{route.complete(chatCfg,"synthetic-key-only",request(turn))}.exceptionOrNull() as CompanionModelFailure
+            assertEquals(ChatFailure.TRUNCATED,err.failure)
+            assertTrue(err.detail,err.detail.contains("辅助看图"))
+            assertTrue(err.detail,err.detail.contains("3072"))
+        }
+    }
 }
