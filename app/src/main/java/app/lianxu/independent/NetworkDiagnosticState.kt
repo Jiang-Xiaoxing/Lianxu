@@ -3,6 +3,7 @@ package app.lianxu.independent
 import java.io.FilterInputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
@@ -23,9 +24,16 @@ internal class NetworkDiagnosticState(val id:String) {
     private val attempted=AtomicLong()
     private val phase=AtomicReference("queued")
     private val origin=AtomicReference<String?>(null)
+    private val initialBgCount=DiagnosticEnvironment.backgroundCount()
+    private val sawBackground=AtomicBoolean(DiagnosticEnvironment.isBackground())
     internal val enabled get()=session!=null && session===Diagnostics.detailSession
+    internal val experiencedBackground get()=sawBackground.get()||DiagnosticEnvironment.isBackground()||DiagnosticEnvironment.backgroundCount()!=initialBgCount
+
+    fun markBackground(){sawBackground.set(true)}
+    fun noteVisibility(){if(DiagnosticEnvironment.isBackground()||DiagnosticEnvironment.backgroundCount()!=initialBgCount)sawBackground.set(true)}
 
     fun phase(value:String,data:Map<String,Any?> = emptyMap()){
+        noteVisibility()
         if(!enabled)return
         phase.set(value)
         Diagnostics.detail(session,"http.phase"){fields()+data}
@@ -72,13 +80,14 @@ internal class NetworkDiagnosticState(val id:String) {
         }
     }
     fun fields():Map<String,Any?> = mapOf("request_id" to id,"cancel_source" to stopped.get(),"terminal_status" to terminal.get(),"response_bytes" to bytes.get(),
-        "first_byte_ms" to first.get().takeIf{it!=0L}?.let{(it-started)/1_000_000},"last_byte_ms" to last.get().takeIf{it!=0L}?.let{(it-started)/1_000_000})+
+        "first_byte_ms" to first.get().takeIf{it!=0L}?.let{(it-started)/1_000_000},"last_byte_ms" to last.get().takeIf{it!=0L}?.let{(it-started)/1_000_000},"saw_background" to experiencedBackground)+
         if(enabled)mapOf("transport_phase" to phase.get(),"write_attempted_bytes" to attempted.get(),"client_write_completed_bytes" to written.get(),"cancel_origin" to origin.get()) else emptyMap()
-    fun stage(name:String,data:Map<String,Any?> = emptyMap())=Diagnostics.event(name,fields()+data,elapsed=(System.nanoTime()-started)/1_000_000)
-    fun failure(name:String,error:Throwable,timeout:NetworkTimeoutDiagnostic?=null){
+    fun stage(name:String,data:Map<String,Any?> = emptyMap()){noteVisibility();Diagnostics.event(name,fields()+data,elapsed=(System.nanoTime()-started)/1_000_000)}
+    fun failure(name:String,error:Throwable,timeout:NetworkTimeoutDiagnostic?=null,extra:Map<String,Any?> = emptyMap()){
+        noteVisibility()
         val source=timeout?.source?:stopped.get();val decided=terminal.get()
         val cause=if(timeout?.primary==true)"primary_local_timeout"else when(source){"total_timeout","coroutine_timeout","socket_timeout"->"after_local_timeout";"caller_cancellation"->"after_local_cancellation";"cancellation_unknown"->"cancellation_origin_unknown";else->"unattributed"}
-        stage(name,mapOf("error_type" to error.javaClass.simpleName,"cancel_source" to source,"terminal_status" to decided,"cause_relation" to cause,"after_terminal_decision" to (decided!=null))+
+        stage(name,mapOf("error_type" to error.javaClass.simpleName,"cancel_source" to source,"terminal_status" to decided,"cause_relation" to cause,"after_terminal_decision" to (decided!=null))+extra+
             if(enabled)mapOf("exception_stack" to Diagnostics.raw(error.stackTraceToString())) else emptyMap())
     }
     fun transferEnd(status:Int?){

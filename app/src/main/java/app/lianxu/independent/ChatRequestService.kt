@@ -25,9 +25,13 @@ internal object ChatRequestOwner {
     fun begin(context:Context,stop:(String)->Unit):Attempt {
         val a=Attempt(UUID.randomUUID().toString(),nextId++,stop)
         active[a.id]=a
+        Diagnostics.event("service.request.begin",mapOf("active_requests" to active.size)+DiagnosticEnvironment.backgroundFields(context))
         try{
             context.startForegroundService(Intent(context,ChatRequestService::class.java).putExtra("request",a.id))
-        }catch(_:RuntimeException){active.remove(a.id);a.started.complete(false)}
+        }catch(e:RuntimeException){
+            Diagnostics.event("service.foreground.failed",mapOf("error_type" to e.javaClass.simpleName,"active_requests" to active.size)+DiagnosticEnvironment.backgroundFields(context))
+            active.remove(a.id);a.started.complete(false)
+        }
         return a
     }
     fun release(a:Attempt?){
@@ -47,7 +51,7 @@ class ChatRequestService:Service(){
     override fun onCreate(){
         super.onCreate()
         ChatRequestOwner.service=this
-
+        Diagnostics.event("service.created",mapOf("active_requests" to ChatRequestOwner.active.size)+DiagnosticEnvironment.backgroundFields(this))
     }
     private fun notification(a:ChatRequestOwner.Attempt):Notification{
         val stopIntent=Intent(this,ChatRequestService::class.java).setAction("stop").putExtra("request",a.id)
@@ -62,13 +66,17 @@ class ChatRequestService:Service(){
     }
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int{
         val a=ChatRequestOwner.active[intent?.getStringExtra("request")]
-        if(intent?.action=="stop")a?.stop?.invoke("notification_stop")
+        if(intent?.action=="stop"){
+            Diagnostics.event("service.stop_requested",mapOf("active_requests" to ChatRequestOwner.active.size))
+            a?.stop?.invoke("notification_stop")
+        }
         refresh()
         return START_NOT_STICKY
     }
     internal fun refresh(){
         val tasks=ChatRequestOwner.active.values.toList()
         if(tasks.isEmpty()){
+            Diagnostics.event("service.stopped",mapOf("active_requests" to 0))
             stopForeground(STOP_FOREGROUND_REMOVE)
             shown.forEach{manager.cancel(it)};shown.clear()
             stopSelf()
@@ -86,8 +94,12 @@ class ChatRequestService:Service(){
             }
             val obsolete=shown-tasks.map{it.notificationId}.toSet()
             obsolete.forEach{manager.cancel(it)};shown.removeAll(obsolete)
-            tasks.forEach{it.started.complete(true)}
-        }catch(_:RuntimeException){endTransfers("service_rejected")}
+            val newlyPromoted=tasks.count{it.started.complete(true)}
+            if(newlyPromoted>0)Diagnostics.event("service.foreground.active",mapOf("active_requests" to tasks.size)+DiagnosticEnvironment.backgroundFields(this))
+        }catch(e:RuntimeException){
+            Diagnostics.event("service.foreground.failed",mapOf("error_type" to e.javaClass.simpleName,"active_requests" to tasks.size)+DiagnosticEnvironment.backgroundFields(this))
+            endTransfers("service_rejected")
+        }
     }
     private fun endTransfers(reason:String){
         val tasks=ChatRequestOwner.active.values.toList()
@@ -97,14 +109,20 @@ class ChatRequestService:Service(){
         shown.forEach{manager.cancel(it)};shown.clear()
         stopSelf()
     }
-    override fun onTimeout(startId:Int,fgsType:Int){endTransfers("service_timeout")}
+    override fun onTimeout(startId:Int,fgsType:Int){
+        Diagnostics.event("service.timeout",mapOf("active_requests" to ChatRequestOwner.active.size)+DiagnosticEnvironment.backgroundFields(this))
+        endTransfers("service_timeout")
+    }
     override fun onDestroy(){
+        var aborted=0
         if(ChatRequestOwner.service===this){
             ChatRequestOwner.service=null
             // A new start may be queued behind an already requested stop. Only abort promoted transfers.
             val promoted=ChatRequestOwner.active.values.filter{it.started.isCompleted}
+            aborted=promoted.size
             promoted.forEach{ChatRequestOwner.active.remove(it.id);it.stop("service_destroyed")}
         }
+        Diagnostics.event("service.destroyed",mapOf("promoted_aborted" to aborted,"active_requests" to ChatRequestOwner.active.size))
         shown.forEach{manager.cancel(it)};shown.clear()
         super.onDestroy()
     }

@@ -286,6 +286,7 @@ class ChatImagesAndroidTest {
     @Test fun auxiliaryRouteInheritsOutputStreamingAndThinkingConfig():Unit=runBlocking{
         val chosen=image()
         for(stream in listOf(true,false)){
+            val role=if(stream)"a" else "b"
             val expectedOutput=if(stream)3072 else 4096
             val expectedEffort=if(stream)"low" else "high"
             val longObservation="可见细节。".repeat(1700) // > 8000 chars, still within chat context
@@ -308,9 +309,10 @@ class ChatImagesAndroidTest {
                 vault.save(chatCfg,"synthetic-key-only");vault.setPurpose(ModelPurpose.CHAT,"chat")
                 vault.save(visionCfg,"synthetic-key-only");vault.setPurpose(ModelPurpose.AUX_VISION,"vision")
                 ChatImages.setEnabled(store.writableDatabase,true)
-                val turn=ledger.begin("a","帮我看看图里细节（stream=$stream）","chat",image=chosen)
-                val route=ChatImageRoute(store,vault,server.client(),turn,chatCfg,AppMutationGate.epoch()){true}
+                val turn=ledger.begin(role,"帮我看看图里细节（stream=$stream）","chat",image=chosen)
+                val route=ChatImageRoute(store,vault,server.client(15000),turn,chatCfg,AppMutationGate.epoch()){true}
                 val result=if(stream)route.streamEvents(chatCfg,"synthetic-key-only",request(turn)){} else route.complete(chatCfg,"synthetic-key-only",request(turn))
+                assertTrue("stream=$stream result=$result",result is TextChatResult.Success)
                 assertEquals("主模型收到观察",(result as TextChatResult.Success).text)
                 assertTrue(ledger.finishWithMemory(turn.id,1,result.text,onCompleted={route.commit(it)}))
                 val visionBody=bodies.single{it.getString("model")=="vision"}
@@ -329,7 +331,7 @@ class ChatImagesAndroidTest {
             vault.save(visionCfg,"synthetic-key-only");vault.setPurpose(ModelPurpose.AUX_VISION,"vision")
             ChatImages.setEnabled(store.writableDatabase,true)
             val turn=ledger.begin("a","测截断提示","chat",image=chosen)
-            val route=ChatImageRoute(store,vault,server.client(),turn,chatCfg,AppMutationGate.epoch()){true}
+            val route=ChatImageRoute(store,vault,server.client(15000),turn,chatCfg,AppMutationGate.epoch()){true}
             val err=runCatching{route.complete(chatCfg,"synthetic-key-only",request(turn))}.exceptionOrNull() as CompanionModelFailure
             assertEquals(ChatFailure.TRUNCATED,err.failure)
             assertTrue(err.detail,err.detail.contains("辅助看图"))

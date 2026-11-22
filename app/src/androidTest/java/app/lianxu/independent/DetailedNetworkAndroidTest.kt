@@ -64,6 +64,8 @@ class DetailedNetworkAndroidTest {
             Diagnostics.onThread(state) {
                 observer.onAvailable(network)
                 observer.onCapabilitiesChanged(network,caps)
+                observer.onBlockedStatusChanged(network,true)
+                observer.onBlockedStatusChanged(network,false)
                 observer.onLost(network)
                 observer.onCapabilitiesChanged(network,caps)
                 vm.setDiagnosticDetailed(false)
@@ -74,7 +76,10 @@ class DetailedNetworkAndroidTest {
         }
         val observed=rows().filter { it["trace"].asString==trace && name(it)=="diagnostic.network" && data(it).has("network_event") }
             .map { data(it)["network_event"].asString }.filter { it!="snapshot" }
-        assertEquals(listOf("available","capabilities","lost","available","lost"),observed)
+        assertEquals(listOf("available","capabilities","blocked_changed","blocked_changed","lost","available","lost"),observed)
+        val blockedStates=rows().filter { it["trace"].asString==trace && name(it)=="diagnostic.network" && data(it)["network_event"]?.asString=="blocked_changed" }
+            .map { data(it)["network_blocked"].asBoolean }
+        assertEquals(listOf(true,false),blockedStates)
     }
 
     @Test fun completedWritesAndPartialReadsMatchSyntheticPeer() {

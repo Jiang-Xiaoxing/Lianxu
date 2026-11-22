@@ -1,5 +1,6 @@
 package app.lianxu.independent
 
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -11,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -18,16 +20,37 @@ import androidx.compose.ui.unit.dp
 
 @Composable internal fun ChatTurnControls(vm:AppState,turn:ChatTurn){
     if(turn.state in setOf(TurnState.COMPLETED,TurnState.PENDING,TurnState.SUPERSEDED))return
+    val context=LocalActivity.current?:LocalContext.current
     val reveal=remember(turn.id){BringIntoViewRequester()}
     val latest=vm.turns.lastOrNull{it.friendId==turn.friendId}?.id==turn.id
+    var reason by remember(turn.id,turn.attempt){mutableStateOf(false)}
     LaunchedEffect(turn.id,turn.attempt,turn.state,latest){
-        if(latest&&turn.state==TurnState.FAILED){withFrameNanos{};reveal.bringIntoView()}
+        if(latest&&turn.state==TurnState.FAILED){
+            withFrameNanos{}
+            reveal.bringIntoView()
+            if(vm.claimFailureGuide(turn))reason=true
+        }
     }
     Column(Modifier.widthIn(max=292.dp).bringIntoViewRequester(reveal).testTag("turn-state-${turn.id}")){
-        var reason by remember(turn.id,turn.attempt){mutableStateOf(false)}
         if(turn.state==TurnState.FAILED)Text("没发出去，点这里看原因",Modifier.heightIn(min=32.dp).clickable{reason=true}.padding(vertical=6.dp).testTag("turn-failure-${turn.id}"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
         else Text(when(turn.state){TurnState.PENDING->"正在请求回复…";TurnState.CANCELLED->"已取消，没有自动重发。";TurnState.INTERRUPTED->ChatFailure.INTERRUPTED.display;else->"回复未完成。"},style=MaterialTheme.typography.bodySmall,color=Muted)
-        if(reason)ChatFailureDialog(ChatFailureText.full(turn.failure,turn.failureDetail)){reason=false}
+        if(reason){
+            val background=remember(turn.id,turn.attempt,reason){DiagnosticEnvironment.backgroundState(context)}
+            val guidance=remember(turn.failure,turn.failureDetail,background){ChatFailureGuidance.build(turn.failure,turn.failureDetail,background)}
+            ChatFailureDialog(
+                text=ChatFailureText.full(turn.failure,turn.failureDetail),
+                guidance=guidance,
+                onAction={action->
+                    reason=false
+                    when(action){
+                        FailureGuidanceAction.OPEN_APP_BACKGROUND_SETTINGS->openBackgroundAccessSettings(context)
+                        FailureGuidanceAction.OPEN_NOTIFICATION_SETTINGS->openNotificationSettings(context,ChatRequestService.CHANNEL_ID)
+                        FailureGuidanceAction.OPEN_MODEL_CONFIG->vm.open("models")
+                    }
+                },
+                dismiss={reason=false}
+            )
+        }
         if(vm.turns.lastOrNull{it.friendId==turn.friendId}?.id==turn.id)TextButton(onClick={vm.retryChat(turn)},enabled=!vm.chatSending,modifier=Modifier.heightIn(min=48.dp).testTag("retry-turn-${turn.id}")){Text("重试")}
     }
 }
@@ -41,10 +64,43 @@ internal object ChatFailureText {
     }
 }
 @Composable internal fun ChatFailureDialog(text:String,dismiss:()->Unit){
+    ChatFailureDialog(text=text,guidance=null,onAction=null,dismiss=dismiss)
+}
+@Composable internal fun ChatFailureDialog(text:String,guidance:FailureGuidance?,onAction:((FailureGuidanceAction)->Unit)?,dismiss:()->Unit){
     val clipboard=LocalClipboardManager.current
     var copied by remember{mutableStateOf(false)}
-    AlertDialog(onDismissRequest=dismiss,title={Text("没发出去的原因")},
-        text={Column(Modifier.heightIn(max=420.dp).verticalScroll(rememberScrollState()).testTag("turn-failure-detail")){SelectionContainer{Text(text,style=MaterialTheme.typography.bodySmall.copy(fontFamily=FontFamily.Monospace),color=Ink)}}},
-        confirmButton={TextButton({clipboard.setText(AnnotatedString(text));copied=true},modifier=Modifier.testTag("turn-failure-copy")){Text(if(copied)"已复制" else "复制",color=GreenText)}},
-        dismissButton={TextButton(dismiss){Text("关闭",color=Muted)}})
+    val action=guidance?.action
+    AlertDialog(
+        onDismissRequest=dismiss,
+        title={Text(guidance?.title?:"没发出去的原因")},
+        text={
+            Column(Modifier.heightIn(max=420.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
+                if(guidance!=null && guidance.steps.isNotEmpty()){
+                    Text(guidance.summary,style=MaterialTheme.typography.bodyMedium,color=Ink,modifier=Modifier.testTag("turn-failure-guidance-summary"))
+                    Column(verticalArrangement=Arrangement.spacedBy(4.dp),modifier=Modifier.testTag("turn-failure-guidance-steps")){
+                        guidance.steps.forEach{step->Text(step,style=MaterialTheme.typography.bodySmall,color=Muted)}
+                    }
+                    HorizontalDivider(color=Line,thickness=.5.dp)
+                }
+                SelectionContainer(Modifier.testTag("turn-failure-detail")){
+                    Text(text,style=MaterialTheme.typography.bodySmall.copy(fontFamily=FontFamily.Monospace),color=Ink)
+                }
+            }
+        },
+        confirmButton={
+            if(action!=null && onAction!=null && guidance.actionLabel.isNotBlank()){
+                TextButton(onClick={onAction(action)},modifier=Modifier.testTag("turn-failure-action")){Text(guidance.actionLabel,color=GreenText)}
+            } else {
+                TextButton({clipboard.setText(AnnotatedString(text));copied=true},modifier=Modifier.testTag("turn-failure-copy")){Text(if(copied)"已复制" else "复制",color=GreenText)}
+            }
+        },
+        dismissButton={
+            Row{
+                if(action!=null && onAction!=null && guidance.actionLabel.isNotBlank()){
+                    TextButton({clipboard.setText(AnnotatedString(text));copied=true},modifier=Modifier.testTag("turn-failure-copy")){Text(if(copied)"已复制" else "复制",color=Muted)}
+                }
+                TextButton(dismiss,modifier=Modifier.testTag("turn-failure-dismiss")){Text(if(action!=null)"暂不" else "关闭",color=Muted)}
+            }
+        }
+    )
 }

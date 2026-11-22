@@ -58,6 +58,7 @@ enum class ChatFailure(val display:String) {
     MEMORY_RETRY("上一批记忆总结没有完成。确认余额和记忆模型后，点这条消息的重试；原话没有删除。"),
     CORE_CAPACITY("固定提示与核心记忆超出容量。请到记忆核对核心条目并选择改为普通，或选择更大容量模型；未截断人工核心。调整维护目标不会增加模型容量。"),
     PROMPT_UNCONFIRMED("提示词运行规格尚未确认，本阶段不能发送。"),
+    CONNECTION_INTERRUPTED("请求发出后，等待回复时连接中断了，本次没有采用；原消息保留，可手动重试。"),
     RESPONSE_BROKEN("服务已经开始回复，但读到一半连接断了，本次没有采用；原消息保留，可手动重试。"),
     UNKNOWN("出了点意外，本轮没有完成；原消息保留，可手动重试。")
 }
@@ -66,6 +67,16 @@ internal fun unreachable(e:Throwable):Boolean {
     var x:Throwable?=e;val seen=mutableSetOf<Throwable>()
     while(x!=null&&seen.add(x)){
         if(x is java.net.UnknownHostException||x is java.net.ConnectException||x is java.net.NoRouteToHostException||x is java.net.PortUnreachableException)return true
+        x=x.cause
+    }
+    return false
+}
+/** 连接建立或传输中途被本机系统、代理或对端中断（例如 SocketException / EOFException），区别于连不上服务商和未知错误。 */
+internal fun connectionInterrupted(e:Throwable):Boolean {
+    if(unreachable(e))return false
+    var x:Throwable?=e;val seen=mutableSetOf<Throwable>()
+    while(x!=null&&seen.add(x)){
+        if(x is java.net.SocketException||x is java.io.EOFException)return true
         x=x.cause
     }
     return false

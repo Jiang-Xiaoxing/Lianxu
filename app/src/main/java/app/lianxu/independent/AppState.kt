@@ -115,7 +115,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
             val replaced=if(plan.pack.all)friends.map{it.id}else listOf(requireNotNull(plan.target))
             replaced.forEach{runner.cancel(it,"backup_replacement");memory.cancel(it)}
         }
-        avatarCache.reset();messagePrints=emptyMap();reload();persona=store.persona();refreshUserAvatar();ids
+        avatarCache.reset();messagePrints=emptyMap();reload();markFailureGuidesSeen(turns);persona=store.persona();refreshUserAvatar();ids
     }}
     internal val memory:MemoryEngine get()=chatBinding.memory
     private val manualMemoryJobs=mutableMapOf<String,Job>()
@@ -133,6 +133,14 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
         if (notificationHintShown) return false
         notificationHintShown = true
         return true
+    }
+    private val handledFailureGuides = mutableSetOf<String>()
+    internal fun markFailureGuidesSeen(list: List<ChatTurn>) {
+        list.filter { it.state == TurnState.FAILED }.forEach { handledFailureGuides += "${it.id}:${it.attempt}" }
+    }
+    internal fun claimFailureGuide(turn: ChatTurn): Boolean {
+        if (turn.state != TurnState.FAILED || !ChatFailureGuidance.shouldAutoPrompt(turn.failure)) return false
+        return handledFailureGuides.add("${turn.id}:${turn.attempt}")
     }
     internal val chatPreview get()=runner.previews[activeId]
     val busy get()=saving||chatSending
@@ -199,7 +207,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
         Diagnostics.startLocalRecording(application, vaultNamespace)
         modelVault.list() // Register persisted model credentials before accepting user input.
         store.preference(EXPORT_DETAIL_PREF,"1")=="1"
-    };selectDetailedExport(savedDetailed);savedDiagnosticDetailed=savedDetailed;ledger.recoverInterrupted();companion.checkContinuity(CompanionRuntime.owner);runner.restoreReceived();reload();  persona=store.persona();refreshUserAvatar(); ready=true;settleCompanion();recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
+    };selectDetailedExport(savedDetailed);savedDiagnosticDetailed=savedDetailed;ledger.recoverInterrupted();companion.checkContinuity(CompanionRuntime.owner);runner.restoreReceived();reload();markFailureGuidesSeen(turns);  persona=store.persona();refreshUserAvatar(); ready=true;settleCompanion();recoverProcessing() }.onFailure { error="本地数据读取失败，请重试。" } } }
     private var reloadSerial=0L
     private val avatarCache=RoleAvatarCache()
     private var messagePrints=emptyMap<String,MessageFingerprint>()

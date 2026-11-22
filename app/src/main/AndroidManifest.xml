@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <queries>
         <intent><action android:name="android.settings.CHANNEL_NOTIFICATION_SETTINGS"/></intent>
+        <intent><action android:name="android.settings.APPLICATION_DETAILS_SETTINGS"/></intent>
+        <intent><action android:name="android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS"/></intent>
     </queries>
     <application android:name=".LianxuApplication" android:usesCleartextTraffic="false" android:networkSecurityConfig="@xml/network_security_config" android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:label="恋叙" android:supportsRtl="true" android:theme="@style/Theme.Lianxu">
         <service android:name="androidx.work.impl.foreground.SystemForegroundService" tools:node="remove"/>

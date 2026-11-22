@@ -83,4 +83,27 @@ class ProviderErrorTextTest {
         assertEquals(ChatFailure.NETWORK.display,ChatFailureText.full(ChatFailure.NETWORK,""))
         assertEquals("出了点意外，本轮没有完成；原消息保留，可手动重试。\n\n详细原因：\nIOException: boom",ChatFailureText.full(ChatFailure.UNKNOWN,"IOException: boom"))
     }
+    @Test fun abortWhileWaitingForHeadersIsConnectionInterruptedNotUnknown(){
+        val result=run{object:HttpsURLConnection(it){
+            override fun getCipherSuite()=""
+            override fun getLocalCertificates():Array<Certificate>?=null
+            override fun getServerCertificates():Array<Certificate> = emptyArray()
+            override fun connect(){}
+            override fun disconnect(){}
+            override fun usingProxy()=false
+            override fun getOutputStream():OutputStream=ByteArrayOutputStream()
+            override fun getResponseCode():Int=throw java.net.SocketException("Software caused connection abort")
+            override fun getContentType()="application/json"
+            override fun getInputStream():InputStream=ByteArrayInputStream(byteArrayOf())
+        }}
+        assertEquals(ChatFailure.CONNECTION_INTERRUPTED,result.reason)
+        assertTrue(result.detail,result.detail.contains("等待服务商响应时连接中断"))
+        assertTrue(result.detail,result.detail.contains("Software caused connection abort"))
+    }
+    @Test fun truncatedResponseExplainsOutputLimit(){
+        val body="""{"choices":[{"finish_reason":"length","message":{"content":"写到一半"}}]}"""
+        val result=run{Fake(it,200,body)}
+        assertEquals(ChatFailure.TRUNCATED,result.reason)
+        assertTrue(result.detail,result.detail.contains("256"))
+    }
 }
