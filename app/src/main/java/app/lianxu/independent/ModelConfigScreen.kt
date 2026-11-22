@@ -111,7 +111,11 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
         state.clearResult()
         if(screen=="providers"){screen=providerReturn;return}
         key="";reveal=false
-        if(screen=="edit"){openedDirectlyToEdit=false;screen="overview"} else onBack()
+        if(screen=="edit"){
+            val directReturn=returnToChatOnDone&&openedDirectlyToEdit
+            openedDirectlyToEdit=false
+            if(directReturn)onBack() else screen="overview"
+        } else onBack()
     }
     fun add(embedding:Boolean=false){if(state.saving||saveForPurpose==ModelPurpose.CHAT&&embedding)return;ProcessDiagnostics.action(ProcessAction.ADD_MODEL);prefilledKey="";keyDraft.invalidate();embeddingEditor=embedding;original=null;originalRevision=null;streamReplies=true;draftId=UUID.randomUUID().toString();name="";key="";reveal=false;model="";budgets=ModelBudgetDraft();resetThinking();thinkingCustom="";query="";allProviders=false;providerReturn="overview";state.clearResult();screen="providers"}
     fun sharedWithOtherPurposes(id:String)=saveForPurpose==ModelPurpose.CHAT&&state.purposes.any{(purpose,value)->purpose!=ModelPurpose.CHAT&&value==id}

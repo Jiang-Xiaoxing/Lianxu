@@ -130,4 +130,23 @@ class ProviderErrorTextTest {
         assertEquals(ChatFailure.TRUNCATED,result.reason)
         assertTrue(result.detail,result.detail.contains("256"))
     }
+    @Test fun http200BadJsonAndBrokenStreamAreLocalDetailsNotProviderBody(){
+        val badJson=run{Fake(it,200,"not-valid-json")}
+        assertEquals(ChatFailure.FORMAT,badJson.reason)
+        assertEquals("local",badJson.meta?.detailSource)
+        val badJsonText=ChatFailureText.full(badJson.reason,badJson.detail,badJson.meta)
+        assertTrue(badJsonText,badJsonText.contains("详细原因：\nHTTP 200"))
+        assertFalse(badJsonText,badJsonText.contains("服务返回的原文："))
+
+        val broken=run{Fake(it,200,failOnBody=true)}
+        assertEquals(ChatFailure.RESPONSE_BROKEN,broken.reason)
+        assertEquals("local",broken.meta?.detailSource)
+        val brokenText=ChatFailureText.full(broken.reason,broken.detail,broken.meta)
+        assertTrue(brokenText,brokenText.contains("详细原因：\nHTTP 200"))
+        assertFalse(brokenText,brokenText.contains("服务返回的原文："))
+
+        val providerErr=run{Fake(it,402,"{\"error\":\"no quota\"}")}
+        assertEquals("provider_http",providerErr.meta?.detailSource)
+        assertTrue(ChatFailureText.full(providerErr.reason,providerErr.detail,providerErr.meta).contains("服务返回的原文：\nHTTP 402"))
+    }
 }

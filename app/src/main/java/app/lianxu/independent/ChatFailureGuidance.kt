@@ -86,17 +86,13 @@ internal object ChatFailureGuidance {
                         actionLabel=actionLabel,
                     )
                 } else {
-                    val steps=buildList {
-                        add("1. 检查当前 Wi‑Fi、移动网络或代理连接是否稳定，确认服务商接口可正常访问。")
-                        add("2. 确认网络正常后，回到聊天页点「重试」。")
-                        if(background.needsBackgroundSettings){
-                            add("3. 如果平时切后台等待回复时也容易断线，可在系统应用设置中开启「允许后台活动」与「不允许优化」。")
-                        }
-                    }
                     FailureGuidance(
                         title=title,
                         summary="在${stage}连接中断了（请求期间应用保持在前台），可能是当前网络波动、代理断开或服务商提前关闭了连接；原消息已保留，没有自动重发。",
-                        steps=steps,
+                        steps=listOf(
+                            "1. 检查当前 Wi‑Fi、移动网络或代理连接是否稳定，确认服务商接口可正常访问。",
+                            "2. 确认网络正常后，回到聊天页点「重试」。",
+                        ),
                     )
                 }
             }

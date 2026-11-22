@@ -46,10 +46,13 @@ import androidx.compose.ui.unit.dp
                         FailureGuidanceAction.OPEN_APP_BACKGROUND_SETTINGS->openBackgroundAccessSettings(context)
                         FailureGuidanceAction.OPEN_NOTIFICATION_SETTINGS->openChatNotificationSettings(context)
                         FailureGuidanceAction.OPEN_MODEL_CONFIG->{
+                            val isAux=turn.failureMeta?.route=="aux_vision"||
+                                turn.failure==ChatFailure.MISSING_VISION_MODEL||
+                                (turn.failureMeta==null&&turn.failureDetail.contains("阶段：辅助看图"))
                             val targetConfigId=turn.failureMeta?.modelConfigId.orEmpty().ifBlank{
-                                if(turn.failure!=ChatFailure.MISSING_VISION_MODEL) turn.configId else ""
+                                if(isAux) "" else turn.configId
                             }
-                            val targetPurpose=if(turn.failureMeta?.route=="aux_vision"||turn.failure==ChatFailure.MISSING_VISION_MODEL) ModelPurpose.AUX_VISION else ModelPurpose.CHAT
+                            val targetPurpose=if(isAux) ModelPurpose.AUX_VISION else ModelPurpose.CHAT
                             vm.openModelsFromChat(turn.friendId,targetConfigId,targetPurpose)
                         }
                     }
@@ -64,11 +67,19 @@ import androidx.compose.ui.unit.dp
 /** The full reason for a failed turn: our one-line explanation, optional stage context, then what the service actually returned. */
 internal object ChatFailureText {
     fun full(failure:ChatFailure?,detail:String,meta:ChatFailureMeta?=null)=buildString{
-        append(failure?.display?:"回复未完成。")
+        val headline=if(failure==ChatFailure.CONNECTION_INTERRUPTED&&(meta?.stage=="connect_or_write"||(meta==null&&detail.contains("发送请求时")))){
+            "发送请求时连接中断了，本次没有采用；原消息保留，可手动重试。"
+        } else failure?.display?:"回复未完成。"
+        append(headline)
         val stageLine=meta?.summaryLine().orEmpty()
         if(stageLine.isNotBlank())append("\n\n失败阶段：\n").append(stageLine)
-        // Provider text starts with its HTTP status; keep it verbatim without appending local metadata.
-        if(detail.isNotBlank())append(if(detail.startsWith("HTTP "))"\n\n服务返回的原文：\n" else "\n\n详细原因：\n").append(detail)
+        // Label as provider raw text only for real non-2xx HTTP responses; local HTTP-200 parse/stream notes stay "详细原因".
+        val isProviderBody=when(meta?.detailSource){
+            "provider_http"->true
+            "local"->false
+            else->detail.startsWith("HTTP ")
+        }
+        if(detail.isNotBlank())append(if(isProviderBody)"\n\n服务返回的原文：\n" else "\n\n详细原因：\n").append(detail)
     }
 }
 @Composable internal fun ChatFailureDialog(text:String,dismiss:()->Unit){

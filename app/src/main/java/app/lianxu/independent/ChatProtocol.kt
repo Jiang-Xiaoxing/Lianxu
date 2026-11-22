@@ -100,8 +100,10 @@ data class ChatFailureMeta(
     val modelId:String="",
     val outputTokens:Int?=null,
     val streamReplies:Boolean?=null,
+    /** "provider_http" when detail is verbatim HTTP status+body from the server; "local" when composed locally. */
+    val detailSource:String="",
 ) {
-    fun hasAny():Boolean = route.isNotBlank()||stage.isNotBlank()||sawBackground||modelConfigId.isNotBlank()||modelId.isNotBlank()||outputTokens!=null||streamReplies!=null
+    fun hasAny():Boolean = route.isNotBlank()||stage.isNotBlank()||sawBackground||modelConfigId.isNotBlank()||modelId.isNotBlank()||outputTokens!=null||streamReplies!=null||detailSource.isNotBlank()
     fun encode():String = org.json.JSONObject().apply {
         if(route.isNotBlank())put("route",route)
         if(stage.isNotBlank())put("stage",stage)
@@ -110,6 +112,7 @@ data class ChatFailureMeta(
         if(modelId.isNotBlank())put("model_id",modelId)
         if(outputTokens!=null)put("output_tokens",outputTokens)
         if(streamReplies!=null)put("stream_replies",streamReplies)
+        if(detailSource.isNotBlank())put("detail_source",detailSource)
     }.toString()
     fun summaryLine():String {
         if(route!="aux_vision")return ""
@@ -131,6 +134,7 @@ data class ChatFailureMeta(
                 modelId=j.optString("model_id",""),
                 outputTokens=if(j.has("output_tokens")&&!j.isNull("output_tokens"))j.optInt("output_tokens") else null,
                 streamReplies=if(j.has("stream_replies")&&!j.isNull("stream_replies"))j.optBoolean("stream_replies") else null,
+                detailSource=j.optString("detail_source",""),
             ).takeIf{it.hasAny()}
         }.getOrNull()
     }

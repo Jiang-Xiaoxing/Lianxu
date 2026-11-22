@@ -56,18 +56,25 @@ class ChatFailureGuidanceTest {
         assertNull(guide.action)
         assertTrue(guide.summary.contains("保持在前台"))
         assertTrue(guide.steps.first().contains("网络或代理"))
+        assertTrue("foreground steps must not mention battery/background settings: ${guide.steps}",
+            guide.steps.none{it.contains("电池")||it.contains("优化")||it.contains("后台活动")})
     }
 
     @Test fun sendStageConnectionAbortMatchesTitleToStage(){
+        val detail="阶段：发送请求时连接中断\nSocketException: Broken pipe"
+        val meta=ChatFailureMeta(route="chat",stage="connect_or_write",sawBackground=false,detailSource="local")
         val guide=ChatFailureGuidance.build(
             ChatFailure.CONNECTION_INTERRUPTED,
-            "阶段：发送请求时连接中断\nSocketException: Broken pipe",
+            detail,
             BackgroundAccessState(ignoringBatteryOptimizations=true),
-            ChatFailureMeta(route="chat",stage="connect_or_write",sawBackground=false)
+            meta
         )
         assertEquals("发送请求时连接中断",guide.title)
         assertTrue(guide.summary.contains("发送请求时"))
         assertFalse(guide.title.contains("等待回复"))
+        val full=ChatFailureText.full(ChatFailure.CONNECTION_INTERRUPTED,detail,meta)
+        assertTrue(full,full.startsWith("发送请求时连接中断了"))
+        assertFalse(full,full.contains("等待回复"))
     }
 
     @Test fun auxVisionTruncationPointsDirectlyToModelConfig(){
@@ -109,11 +116,19 @@ class ChatFailureGuidanceTest {
         val redactedModel=Diagnostics.redact("bad-$secret",listOf(secret))
         assertFalse(redactedModel.contains(secret))
         val rawHttp="HTTP 415 Unsupported Media Type\nunsupported image   "
-        val meta=ChatFailureMeta(route="aux_vision",modelConfigId="vision",modelId=redactedModel,outputTokens=3072,streamReplies=false)
+        val meta=ChatFailureMeta(route="aux_vision",modelConfigId="vision",modelId=redactedModel,outputTokens=3072,streamReplies=false,detailSource="provider_http")
         val full=ChatFailureText.full(ChatFailure.REJECTED,rawHttp,meta)
         assertFalse(full.contains(secret))
         assertTrue(full.contains("失败阶段：\n辅助看图（"))
         assertTrue(full.endsWith("服务返回的原文：\n$rawHttp"))
+
+        val localHttp200=ChatFailureText.full(
+            ChatFailure.FORMAT,
+            "HTTP 200\n服务返回的内容不是有效的 JSON。",
+            ChatFailureMeta(route="chat",stage="read_response_body",detailSource="local")
+        )
+        assertTrue(localHttp200,localHttp200.contains("详细原因：\nHTTP 200\n服务返回的内容不是有效的 JSON。"))
+        assertFalse(localHttp200,localHttp200.contains("服务返回的原文："))
     }
 
     @Test fun notificationGuidanceAndChannelResolutionDistinguishAppVsChannelLevel(){

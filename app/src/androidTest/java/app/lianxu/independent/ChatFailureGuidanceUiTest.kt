@@ -74,7 +74,7 @@ class ChatFailureGuidanceUiTest {
             TextChatResult.Failure(
                 ChatFailure.TRUNCATED,
                 detail="模型返回 finish_reason=length，达到了当前配置的输出上限（3072 token），回复被截断。",
-                meta=ChatFailureMeta(route="aux_vision",stage="read_response_body",modelConfigId="vision-aux",modelId="vision-model",outputTokens=3072,streamReplies=false)
+                meta=ChatFailureMeta(route="aux_vision",stage="read_response_body",modelConfigId="vision-aux",modelId="vision-model",outputTokens=3072,streamReplies=false,detailSource="local")
             )
         )
         ui.waitUntil(15000){vm().ready}
@@ -87,15 +87,48 @@ class ChatFailureGuidanceUiTest {
         ui.onNodeWithText("辅助看图达到输出上限").assertIsDisplayed()
         ui.onNodeWithText("去调大模型配置").assertIsDisplayed().performClick()
         ui.waitUntil(10000){vm().page=="models" && ui.onAllNodesWithTag("config-name").fetchSemanticsNodes().isNotEmpty()}
-        // Directly opened the failing auxiliary vision model editor; navigating back returns to the exact chat with Retry visible.
+        // 1) Directly opened the failing auxiliary vision model editor; a single Back returns straight to chat with Retry visible.
         ui.onNodeWithTag("config-name").assertTextContains("合成辅助看图")
-        ui.onNodeWithTag("config-back").performClick()
-        ui.waitUntil(10000){ui.onAllNodesWithTag("config-overview").fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithTag("config-back").performClick()
         ui.waitUntil(10000){vm().page=="chat" && vm().activeId=="seed-lin"}
         assertEquals("chat",vm().page)
         assertEquals("seed-lin",vm().activeId)
         ui.onNodeWithTag("retry-turn-${failed.id}").assertIsDisplayed()
+
+        // 2) Re-open the failure dialog, jump to the editor, and tap Save -> returns straight to chat with Retry visible.
+        ui.onNodeWithTag("turn-failure-${failed.id}").performClick()
+        ui.waitUntil(10000){ui.onAllNodesWithTag("turn-failure-action").fetchSemanticsNodes().isNotEmpty()}
+        ui.onNodeWithTag("turn-failure-action").performClick()
+        ui.waitUntil(10000){vm().page=="models" && ui.onAllNodesWithTag("config-save").fetchSemanticsNodes().isNotEmpty()}
+        ui.onNodeWithTag("config-save").performClick()
+        ui.waitUntil(10000){vm().page=="chat" && vm().activeId=="seed-lin"}
+        ui.onNodeWithTag("retry-turn-${failed.id}").assertIsDisplayed()
+
+        // 3) Legacy auxiliary failure stored in DB without structured meta (only text stage label) must still target AUX_VISION, not main chat model.
+        nextFailure.set(
+            TextChatResult.Failure(
+                ChatFailure.TRUNCATED,
+                detail="阶段：辅助看图（模型：vision-model，输出上限：3072 token，非流式）\n模型返回 finish_reason=length"
+            )
+        )
+        ui.onNodeWithTag("message-input").performTextInput("测试旧辅助失败记录兼容")
+        ui.onNodeWithTag("send-message").performClick()
+        ui.waitUntil(15000){ui.onAllNodesWithTag("turn-failure-dismiss").fetchSemanticsNodes().isNotEmpty()}
+        ui.onNodeWithTag("turn-failure-dismiss").performClick()
+        val legacyFailed=vm().turns.last()
+        Store(instrumentation.targetContext,fixture.database).use{s->
+            s.writableDatabase.delete("preferences","key=?",arrayOf(ChatLedger.errorMetaKey(legacyFailed.id)))
+        }
+        kotlinx.coroutines.runBlocking{vm().refreshChat()}
+        ui.waitUntil(10000){vm().turns.last{it.id==legacyFailed.id}.failureMeta==null}
+        ui.onNodeWithTag("turn-failure-${legacyFailed.id}").performClick()
+        ui.waitUntil(10000){ui.onAllNodesWithTag("turn-failure-action").fetchSemanticsNodes().isNotEmpty()}
+        ui.onNodeWithText("去调大模型配置").assertIsDisplayed().performClick()
+        ui.waitUntil(10000){vm().page=="models" && ui.onAllNodesWithTag("config-name").fetchSemanticsNodes().isNotEmpty()}
+        ui.onNodeWithTag("config-name").assertTextContains("合成辅助看图")
+        ui.onNodeWithTag("config-back").performClick()
+        ui.waitUntil(10000){vm().page=="chat" && vm().activeId=="seed-lin"}
+        ui.onNodeWithTag("retry-turn-${legacyFailed.id}").assertIsDisplayed()
     }
 
     @Test fun notificationSettingsIntentTargetsAppVsChannelCorrectly() {

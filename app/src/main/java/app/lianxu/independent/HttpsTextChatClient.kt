@@ -69,13 +69,14 @@ class HttpsTextChatClient(
             var sawBackground=DiagnosticEnvironment.isBackground()
             fun noteBackground(){if(DiagnosticEnvironment.isBackground()||DiagnosticEnvironment.backgroundCount()!=initialBgCount){sawBackground=true;requestDiagnostics?.markBackground()}}
             fun shown(text:String)=Diagnostics.redact(text,listOf(key)).take(DETAIL_LIMIT)
-            fun failureMeta(stage:String="",inBg:Boolean=false)=ChatFailureMeta(
+            fun failureMeta(stage:String="",inBg:Boolean=false,detailSource:String="local")=ChatFailureMeta(
                 stage=stage,
                 sawBackground=inBg,
                 modelConfigId=config.id,
                 modelId=Diagnostics.redact(config.modelId,listOf(key)),
                 outputTokens=request.outputLimit,
                 streamReplies=onEvent!=null,
+                detailSource=detailSource,
             )
             var sawVoiceCall=false
             val result=try {
@@ -141,7 +142,7 @@ class HttpsTextChatClient(
                 val error=if(status !in 200..299)diagnosticErrorBody(active,deadline,diagnosticTrace,key) else ErrorBody("",true)
                 val errorBody=error.text
                 if(status !in 200..299)TextChatResult.Failure(if(request.tools.isNotEmpty()&&status in setOf(400,422)&&explicitToolsUnsupported(errorBody))ChatFailure.UNSUPPORTED_TOOLS else when(status){401->ChatFailure.UNAUTHORIZED;402->ChatFailure.PAYMENT;403->ChatFailure.FORBIDDEN;413->if(ImageWire.hasVideo(request))ChatFailure.VIDEO_PROVIDER_LIMIT else ChatFailure.IMAGE_PROVIDER_LIMIT;429->ChatFailure.RATE_LIMIT;in 300..399->ChatFailure.REDIRECT;in 500..599->ChatFailure.SERVER;else->ChatFailure.REJECTED},status,
-                    shown(providerError(status,active.responseMessage,errorBody,error.complete)),meta=failureMeta("http_status",sawBackground||requestDiagnostics?.experiencedBackground==true))
+                    shown(providerError(status,active.responseMessage,errorBody,error.complete)),meta=failureMeta("http_status",sawBackground||requestDiagnostics?.experiencedBackground==true,detailSource="provider_http"))
                 else if(onEvent!=null&&active.contentType.orEmpty().substringBefore(';').trim().equals("text/event-stream",true)){
                     (requestDiagnostics?.count(active.inputStream)?:active.inputStream).use{input->
                         val limited=object:FilterInputStream(input){
@@ -190,8 +191,10 @@ class HttpsTextChatClient(
                 val diagnostic=requestDiagnostics?.timeout(System.nanoTime()>=deadline)
                 transportFailure("http.timeout",e,diagnostic)
                 val status=responded
-                if(status==null)TextChatResult.Failure(ChatFailure.TIMEOUT,detail=shown("等服务商响应超时，没有收到任何回应。\n${e.javaClass.simpleName}: ${e.message.orEmpty()}"))
-                else TextChatResult.Failure(ChatFailure.TIMEOUT,status,shown("HTTP $status\n已经收到响应，但读取回复时超时。"))}
+                val inBg=sawBackground||requestDiagnostics?.experiencedBackground==true
+                val stage=if(status!=null)"read_response_body" else if(requestSent)"await_response_headers" else "connect_or_write"
+                if(status==null)TextChatResult.Failure(ChatFailure.TIMEOUT,detail=shown("等服务商响应超时，没有收到任何回应。\n${e.javaClass.simpleName}: ${e.message.orEmpty()}"),meta=failureMeta(stage,inBg))
+                else TextChatResult.Failure(ChatFailure.TIMEOUT,status,shown("HTTP $status\n已经收到响应，但读取回复时超时。"),meta=failureMeta(stage,inBg))}
             catch(e:StreamRejected){
                 noteBackground()
                 val inBg=sawBackground||requestDiagnostics?.experiencedBackground==true
