@@ -73,11 +73,12 @@ internal object ChatFailureText {
         append(headline)
         val stageLine=meta?.summaryLine().orEmpty()
         if(stageLine.isNotBlank())append("\n\n失败阶段：\n").append(stageLine)
-        // Label as provider raw text only for real non-2xx HTTP responses; local HTTP-200 parse/stream notes stay "详细原因".
+        // Label as provider raw text only for real non-2xx HTTP responses; local HTTP-2xx parse/stream notes stay "详细原因" even for legacy records without detailSource.
+        val legacyHttpStatus=if(detail.startsWith("HTTP ")) detail.substring(5).takeWhile{it.isDigit()}.toIntOrNull() else null
         val isProviderBody=when(meta?.detailSource){
             "provider_http"->true
             "local"->false
-            else->detail.startsWith("HTTP ")
+            else->legacyHttpStatus!=null&&legacyHttpStatus !in 200..299
         }
         if(detail.isNotBlank())append(if(isProviderBody)"\n\n服务返回的原文：\n" else "\n\n详细原因：\n").append(detail)
     }

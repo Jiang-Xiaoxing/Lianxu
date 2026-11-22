@@ -129,6 +129,19 @@ class ChatFailureGuidanceTest {
         )
         assertTrue(localHttp200,localHttp200.contains("详细原因：\nHTTP 200\n服务返回的内容不是有效的 JSON。"))
         assertFalse(localHttp200,localHttp200.contains("服务返回的原文："))
+
+        // Legacy records stored without detailSource must also keep local HTTP 2xx explanations under "详细原因".
+        val legacyLocalHttp200=ChatFailureText.full(
+            ChatFailure.FORMAT,
+            "HTTP 200\n服务返回的内容不是有效的 JSON。"
+        )
+        assertTrue(legacyLocalHttp200,legacyLocalHttp200.contains("详细原因：\nHTTP 200\n服务返回的内容不是有效的 JSON。"))
+        assertFalse(legacyLocalHttp200,legacyLocalHttp200.contains("服务返回的原文："))
+        val legacyProviderHttp415=ChatFailureText.full(
+            ChatFailure.REJECTED,
+            "HTTP 415\nunsupported image"
+        )
+        assertTrue(legacyProviderHttp415,legacyProviderHttp415.contains("服务返回的原文：\nHTTP 415\nunsupported image"))
     }
 
     @Test fun notificationGuidanceAndChannelResolutionDistinguishAppVsChannelLevel(){
