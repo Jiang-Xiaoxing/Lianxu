@@ -44,6 +44,11 @@ class ModelConfigUiTest {
         }
     }
     private class ScriptedChat:TextChatClient {
+        val streamed=AtomicInteger(0)
+        override suspend fun streamEvents(config:ModelConfig,key:String,request:TextChatRequest,onEvent:suspend(TextStreamEvent)->Unit):TextChatResult {
+            streamed.incrementAndGet()
+            return super.streamEvents(config,key,request,onEvent)
+        }
         var expectedKey="synthetic-key-only"
         val calls=AtomicInteger(0)
         val replies=ConcurrentLinkedQueue<CompletableDeferred<TextChatResult>>()
@@ -216,6 +221,7 @@ class ModelConfigUiTest {
         ui.onNodeWithTag("config-test").performScrollTo().performClick()
         ui.waitUntil(10000){state.probe.phase==ProbePhase.FAILED}
         ui.onNodeWithTag("config-probe-inline").assertTextContains("401",substring=true)
+        assertEquals(1,chat.streamed.get())
         assertFalse(state.probe.text.contains("synthetic-key"));shot("04-readable-failure-real-app")
         chat.reply(TextChatResult.Success("OK-4f2a"))
         ui.onNodeWithTag("config-test").performClick()
@@ -255,6 +261,7 @@ class ModelConfigUiTest {
         shot("reply-mode-editor")
         chat.reply(TextChatResult.Failure(ChatFailure.UNAUTHORIZED,401))
         ui.onNodeWithTag("config-test").performScrollTo().performClick();ui.waitUntil(10000){state.probe.phase==ProbePhase.FAILED}
+        assertEquals(0,chat.streamed.get())
         back();ui.waitUntil(10000){state.tests.containsKey("ui-b")}
         light().assertDoesNotExist()
         assertTrue(shownTest("ui-b").contains("synthetic-model-b · 失败："));assertTrue(shownTest("ui-b").contains("401"))

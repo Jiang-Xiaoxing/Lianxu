@@ -74,7 +74,7 @@ class ModelConfigState @JvmOverloads constructor(
         if(!current(config,credential)){staleProbe();return@read}
         val record=ModelTestRecord(System.currentTimeMillis(),config.baseUrl,config.modelId,ok,reason)
         // Persist and expose the result under the same gate as key rotation, with no provider call inside it.
-        if(key.isEmpty()&&vault.list().any{it.id==config.id&&it.providerId==config.providerId&&it.baseUrl==config.baseUrl&&it.modelId==config.modelId}){
+        if(key.isEmpty()&&vault.list().any{it.probeTarget()==config.probeTarget()}){
             statusStore.saveTestNow(config.id,record);tests=tests+(config.id to record);connections=connections+(config.id to display)
         }
         pendingTest=record;probe=display;probeStamp=stamp(config,credential.key)
@@ -93,7 +93,8 @@ class ModelConfigState @JvmOverloads constructor(
         catch(_:Exception) { "" }
     }
     // Ephemeral fingerprint, never persisted or logged.
-    private fun stamp(config:ModelConfig,key:String)=MessageDigest.getInstance("SHA-256").digest(listOf(config.id,config.name,config.providerId,config.baseUrl,config.modelId,key).joinToString("\u0000").toByteArray()).joinToString(""){"%02x".format(it)}
+    private fun ModelConfig.probeTarget() = copy(name = "", memoryOutputTokens = 0)
+    private fun stamp(config:ModelConfig,key:String)=MessageDigest.getInstance("SHA-256").digest(listOf(config.probeTarget().toString(),key).joinToString("\u0000").toByteArray()).joinToString(""){"%02x".format(it)}
     fun save(config:ModelConfig,key:String,purpose:ModelPurpose?=null,original:ModelConfig?=configs.find{it.id==config.id},originalRevision:String?=configRevisions[config.id],onSaved:()->Unit){
         saveConfig(config,key,purpose,false,original,originalRevision,onSaved)
     }
@@ -114,7 +115,7 @@ class ModelConfigState @JvmOverloads constructor(
                 oldKey=if(old!=null)vault.secret(config.id)else""
                 resolved=ModelKeyDraft.resolve(old,config,key){oldKey}
                 ConfigRules.validate(config,resolved)?.let{return@write it}
-                val changedTarget=old?.let{it.baseUrl!=config.baseUrl||it.modelId!=config.modelId||it.providerId!=config.providerId||oldKey!=resolved}?:true
+                val changedTarget=old?.probeTarget()!=config.probeTarget() || oldKey!=resolved
                 // A failed status invalidation must leave the old key in force, never attach its test to a new key.
                 if(changedTarget){statusStore.clearTestNow(config.id);tests=tests-config.id;connections=connections-config.id}
                 attempted=true
@@ -234,7 +235,8 @@ class ModelConfigState @JvmOverloads constructor(
             // 只有发送探针（!fetch）才依赖生成额度；目录获取保持原行为。
             val tokenError=ModelTokenPolicy.error(config)
             if(tokenError!=null){probe=ProbeDisplay(ProbePhase.FAILED,tokenError);return@launch}
-            val result=testClient.complete(config,resolved.key,probeRequest(config))
+            val request=probeRequest(config)
+            val result=if(config.streamReplies)testClient.streamEvents(config,resolved.key,request){} else testClient.complete(config,resolved.key,request)
             if(version!=requestVersion)return@launch
             when(result){
                 is TextChatResult.Success->{

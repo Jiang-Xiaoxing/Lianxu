@@ -288,9 +288,9 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
                     Column {
                         SectionLabel("回复方式")
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(selected = streamReplies, onClick = { streamReplies = true }, label = { Text("流式") },
+                            FilterChip(selected = streamReplies, onClick = { if(!streamReplies){streamReplies = true;changed()} }, label = { Text("流式") },
                                 modifier = Modifier.testTag("reply-mode-stream"))
-                            FilterChip(selected = !streamReplies, onClick = { streamReplies = false }, label = { Text("非流式") },
+                            FilterChip(selected = !streamReplies, onClick = { if(streamReplies){streamReplies = false;changed()} }, label = { Text("非流式") },
                                 modifier = Modifier.testTag("reply-mode-complete"))
                         }
                     }
