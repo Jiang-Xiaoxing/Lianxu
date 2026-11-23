@@ -36,7 +36,16 @@ object ProviderPresets {
 }
 data class ModelConfig(val id:String,val name:String,val providerId:String,val baseUrl:String,val modelId:String,val contextTokens:Int=1048576,val outputTokens:Int=65536,val memoryOutputTokens:Int=0,
     /** 思考设置：default 跟随服务商、off 关闭、on 开启；老配置缺这两个字段时按默认读。 */
-    val thinkingMode:String="default",val thinkingCustom:String="") {
+    val thinkingMode:String="default",val thinkingCustom:String="",val streamReplies:Boolean=true) {
+    // A received v18 reply can still be waiting on its final transaction at upgrade time.
+    internal fun matchesReceivedStamp(stamp: String): Boolean {
+        if (stableDigest(toString()) == stamp) return true
+        if (!streamReplies) return false
+        val fields = "id=$id, name=$name, providerId=$providerId, baseUrl=$baseUrl, modelId=$modelId, " +
+            "contextTokens=$contextTokens, outputTokens=$outputTokens, memoryOutputTokens=$memoryOutputTokens, " +
+            "thinkingMode=$thinkingMode, thinkingCustom=$thinkingCustom"
+        return stableDigest("ModelConfig($fields)") == stamp
+    }
     /** Missing/zero is the legacy contract: keep that saved configuration's original output. */
     fun memoryOutputLimit()=if(memoryOutputTokens==0)outputTokens else memoryOutputTokens
 }
