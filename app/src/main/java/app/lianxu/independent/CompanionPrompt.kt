@@ -35,22 +35,24 @@ object ConservativeTokens:TokenCounter {
 object CompanionPrompt {
     /** Legacy suffix only. Current sends never append it to user text; evidence matching still tolerates old requests. */
     const val THINKING_REMINDER="（这句只给你看：用中文、用你自己的声音在心里想，想的是对方和这件事；要翻要记，直接做就好。不用回应这句。）"
-    const val DEFAULT_THINKING_BODY = "用简体中文，完全站在「我」自己的性格、脾气和口吻里想，想到对方时就用平时的称呼，绝不叫「用户」，也不像助手那样分析任务。先抓住对方这句话真正想表达的劲儿，小事随口顺着接，重要的事想透再回。拿不准的感受或回忆别当成事实。开口只留你会脱口而出的真话，别端着、别讲大道理。"
+    const val DEFAULT_THINKING_BODY = "用简体中文，完全站在「我」自己的性格、脾气、节奏和口吻里想，想到对方时就用平时的称呼，绝不叫「用户」，也不像助手那样分析任务。先抓住对方这句话真正想表达的意思和分量，小事顺着接，重要的事想透再回。拿不准的感受或回忆别当成事实。开口只留真正符合你本人分寸和口吻的话，别写成客服套话或空泛大道理。"
     private fun thinkingSection(body:String) = "[思考语言]\n$body"
     fun thinkingLanguage(roleName:String,addressee:String="对方") = thinkingSection(DEFAULT_THINKING_BODY)
     /** One program-owned system message per request; custom text replaces the default, never appends. */
     internal fun thinkingText(friend:Friend,prompts:RolePrompts,persona:UserPersona)=
         thinkingSection(expand(prompts.thinkingPrompt.ifBlank{DEFAULT_THINKING_BODY},friend,persona))
-    const val DEFAULT_EXPRESSION="像真人在日常聊天里那样说话，完全贴合你的性格、脾气和用词节奏。说人话，少套话、官话和机械反问，别像客服或心理咨询师那样端着讲道理。没聊过的事不编造，也别替对方下结论。"
+    const val DEFAULT_EXPRESSION="默认像真人在日常聊天里那样自然说话，贴合你的性格、脾气、用词节奏和关系远近。少套话、官话和机械反问，别像客服或心理咨询师那样讲道理；不诱导排他依赖，没聊过的事不编造，也别替对方下结论。"
     internal const val NO_MEMORY_TOOLS="本次未提供记忆工具，不能调用记忆回查或写入工具。"
     /** Template tone describes how a proactive message should sound; it is not reply guidance. */
     const val TONE_LABEL="当前性格语气"
     /** Reply rounds drop the tone reference; proactive paths keep it. */
     internal fun replyReferences(values:List<PromptReference>)=values.filterNot{it.label==TONE_LABEL}
     private const val historyHint="必要时可以翻一翻之前的聊天记录。翻了就直说是翻了记录，别装作一直记得。"
-    internal const val REMEMBERING_GUIDANCE="""下面是你现在还记得的事。记得清楚的就顺着聊，记得模糊的就说个大概，想不起来就按你的性格直说不记得，别编细节。
+    /** Shared memory wording without tool-specific history browsing hint (used by tool-less background calls). */
+    internal const val REMEMBERING_BASE="""下面是你现在还记得的事。记得清楚的就顺着聊，记得模糊的就说个大概，想不起来就按你的性格直说不记得，别编细节。
 这些是你们之间的过去，聊到相关的再自然带出来，别像背档案一样一条条念，也不用每次都挂一句「我记得」。
-{{user}}纠正过你的事，就按{{user}}纠正的来。
+{{user}}纠正过你的事，就按{{user}}纠正的来。"""
+    internal const val REMEMBERING_GUIDANCE="""$REMEMBERING_BASE
 平时就靠你记得的聊。$historyHint"""
     /** Used when nothing was recalled: never promise memories that are not in the request. */
     internal const val REMEMBERING_EMPTY="""这一轮没有想起具体的事，就顺着对方这句话本身自然接话，别编没发生过的共同经历或细节。

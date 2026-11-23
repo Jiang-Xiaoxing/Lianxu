@@ -90,7 +90,7 @@ internal class RolePlanner(client:TextChatClient) {
                 appendLine(text)
             }
             appendLine("[companion.reply.v1] 回话时怎么说")
-            appendLine("直接按你的人设说人话，只输出给${name}看的正文。像平时真人聊天那样接话，别端着、别像 AI 助手列提纲或把你的评价、感受、关系分数念给${name}听；不要输出 JSON、字段名、判断表或工具参数，也别假装看过没给你的资料。")
+            appendLine("直接按你的人设、语气和分寸说话，只输出给${name}看的正文。像平时真人聊天那样接话，别像 AI 助手列提纲、套客服模板，或把你的评价、感受、关系分数念给${name}听；不要输出 JSON、字段名、判断表或工具参数，也别假装看过没给你的资料。")
             appendLine("想分开说就用空行隔开，会像连发几条消息一样一条条发出去（最多 4 条）；不想分就写成一段。分不分由你决定。")
             appendLine("聊天记录每条前面的时间（比如「[昨天 22:10]」）和「（隔了 3 天）」是程序加的，只给你参考，回话别照这种格式念出来。")
             if(recordEnabled) instruction(accounting,setOf(CompanionRecord.NAME)) else appendLine(accounting)

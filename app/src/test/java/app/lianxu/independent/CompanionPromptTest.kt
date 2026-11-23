@@ -110,15 +110,20 @@ class CompanionPromptTest {
         assertTrue(m.any{"拿不准的记忆，不得当作确定事实" in it.content&&"未确认建议" in it.content})
     }
     @Test fun overhauledPromptsDropCustomerServiceToneAndBackendStateJargon(){
-        val ready=CompanionPrompt.build(f,RolePrompts(),emptyList(),"你好",persona=UserPersona(address="小星")) as PromptBuild.Ready
-        val header=ready.request.messages.first().content
-        val thinking=ready.request.messages.last().content
-        assertTrue(header.contains(RoleConsistency.REPLY_RULES))
-        for(banned in listOf("适度关心","温和表达不同意见","viewpoint","interest","habit","candidate","developing","paused")){
-            assertFalse("foreground chat header should not contain '$banned'",banned in header)
+        val formalPrompts=RolePrompts(characterDefinition="克制稳重的博物馆修复师，说话正式有分寸。",expression="用词正式、言简意赅，想清楚再回答。")
+        val possessivePrompts=RolePrompts(characterDefinition="黏人爱吃醋的青梅竹马。",expression="短句直来直去，爱耍小性子。")
+        for(prompts in listOf(RolePrompts(),formalPrompts,possessivePrompts)){
+            val ready=CompanionPrompt.build(f,prompts,emptyList(),"你好",persona=UserPersona(address="小星")) as PromptBuild.Ready
+            val systemText=ready.request.messages.filter{it.role=="system"}.joinToString("\n"){it.content}
+            assertTrue(systemText.contains(RoleConsistency.REPLY_RULES))
+            assertTrue("non-exclusive boundary must stay active even with custom expression",systemText.contains("不诱导排他依赖"))
+            for(banned in listOf("适度关心","温和表达不同意见","脱口而出","别端着","viewpoint","interest","habit","candidate","developing","active","paused","人设与成长共同规则")){
+                assertFalse("foreground system prompts should not contain '$banned'",banned in systemText)
+            }
+            val thinking=ready.request.messages.last().content
+            assertTrue(thinking.contains("不像助手那样分析任务"))
+            assertTrue(thinking.contains("真正符合你本人分寸和口吻"))
         }
-        assertTrue(thinking.contains("不像助手那样分析任务"))
-        assertTrue(thinking.contains("脱口而出的真话"))
         val polish=RolePolishProtocol.request(RoleCreationText("合成名","话少毒舌。","","短句","",""),ModelConfig("m","m","custom","https://example.invalid","m",64000,2048))
         assertTrue(polish.messages.first().content.contains("保留原文的口语感、性格棱角和个人味道"))
         assertTrue(polish.messages.first().content.contains("不补写空白字段"))

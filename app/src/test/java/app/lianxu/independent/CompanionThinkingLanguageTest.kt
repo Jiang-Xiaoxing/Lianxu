@@ -5,7 +5,7 @@ import org.junit.Test
 
 class CompanionThinkingLanguageTest {
     @Test fun defaultOrBlankUsesTheApprovedBodyOnceAtTheTail() {
-        val expected = "用简体中文，完全站在「我」自己的性格、脾气和口吻里想，想到对方时就用平时的称呼，绝不叫「用户」，也不像助手那样分析任务。先抓住对方这句话真正想表达的劲儿，小事随口顺着接，重要的事想透再回。拿不准的感受或回忆别当成事实。开口只留你会脱口而出的真话，别端着、别讲大道理。"
+        val expected = "用简体中文，完全站在「我」自己的性格、脾气、节奏和口吻里想，想到对方时就用平时的称呼，绝不叫「用户」，也不像助手那样分析任务。先抓住对方这句话真正想表达的意思和分量，小事顺着接，重要的事想透再回。拿不准的感受或回忆别当成事实。开口只留真正符合你本人分寸和口吻的话，别写成客服套话或空泛大道理。"
         assertEquals(expected,CompanionPrompt.DEFAULT_THINKING_BODY)
         for (raw in listOf("", " \n\t")) {
             val sent = assemble(raw)

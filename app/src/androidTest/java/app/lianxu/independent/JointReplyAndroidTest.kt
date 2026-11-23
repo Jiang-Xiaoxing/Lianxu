@@ -112,7 +112,7 @@ class JointReplyAndroidTest {
         assertTrue("当前权限与交流边界" in joined)
         assertEquals(1,Regex(Regex.escape("只属于角色设定的简介")).findAll(joined).count())
         assertEquals(1,Regex(Regex.escape("[人设与相处]")).findAll(joined).count())
-        assertFalse("[人设与成长共同规则]" in joined)
+        assertFalse("人设与成长共同规则" in joined)
         assertFalse("viewpoint" in joined)
         assertEquals(1,store.messages().count{it.text=="合成自然回复"})
         assertEquals(1,CompanionRepository(store).roleContext("a",SourceRef("a",0,0)).entries.size)

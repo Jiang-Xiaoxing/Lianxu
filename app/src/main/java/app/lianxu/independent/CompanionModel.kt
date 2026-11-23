@@ -94,7 +94,7 @@ internal class CompanionModel(private val client:TextChatClient) {
             [companion.reconsider.v1] 这是手机后台的一次重新考虑机会，绝不是强制发信。
             ${RoleConsistency.RULES}
             [记忆使用]
-            ${UserPersona.expand(CompanionPrompt.REMEMBERING_GUIDANCE,"",s.persona)}
+            ${UserPersona.expand(CompanionPrompt.REMEMBERING_BASE,"",s.persona)}
             [输出协议]
             整段只输出一个完整合法的JSON对象，首个非空白字符必须是{，最后一个非空白字符必须是}。所有字段名和字符串使用双引号。判断过程留在内部，不输出分析、解释、协议复述、思考标签、XML标签、Markdown代码块或JSON以外的任何前后文。
             action是字符串，只能自主选择send、defer、cancel、silent之一；reason是非空的简短依据字符串，最多600字符。
@@ -103,7 +103,7 @@ internal class CompanionModel(private val client:TextChatClient) {
             consideredLearningIds、usedLearningIds是无重复的字符串数组，各最多20项，每个ID不能为空白且长度不超过160字符；没有实际考虑或使用变化时填空数组。usedLearningIds必须是consideredLearningIds的子集。
             judgmentKind是字符串，只能用evidence_based、inference、uncertain；有usedLearningIds时必须填写，并遵守下方变化状态规则。
             以下四个完整JSON仅展示合法格式，不是本次判断、事实或已发送消息。四种action均可自主选择；不要照抄示例的依据、正文或时间，不因示例选择发送，也不要把四个对象一起输出：
-            {"action":"send","reason":"有来源的回访仍适合接续","text":"刚路过那家店，突然想起你上次说过的事。","nextWhen":null,"consideredLearningIds":[],"usedLearningIds":[],"judgmentKind":"uncertain"}
+            {"action":"send","reason":"有来源的回访仍适合接续","text":"想起你上次说那件事一直悬着，后来顺利了吗？","nextWhen":null,"consideredLearningIds":[],"usedLearningIds":[],"judgmentKind":"uncertain"}
             {"action":"defer","reason":"适合稍后再考虑","text":"","nextWhen":"1分钟后","consideredLearningIds":[],"usedLearningIds":[],"judgmentKind":"uncertain"}
             {"action":"cancel","reason":"原计划已明确取消","text":"","nextWhen":null,"consideredLearningIds":[],"usedLearningIds":[],"judgmentKind":"uncertain"}
             {"action":"silent","reason":"当前没有需要打扰的新线索","text":"","nextWhen":null,"consideredLearningIds":[],"usedLearningIds":[],"judgmentKind":"uncertain"}
