@@ -66,15 +66,15 @@ internal object Diagnostics {
         val directory = File(context.filesDir, "diagnostics/$namespace")
         if (identity == directory.absolutePath && detailed) return
         if (identity != directory.absolutePath && detailed) detailed = false
-        configure(directory, context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty())
+        configure(directory, context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty(), ProcessDiagnostics.sessionId)
         detailed = true
     }
 
-    @Synchronized fun configure(directory:File,version:String){
+    @Synchronized fun configure(directory:File,version:String,sessionId:String?=null){
         val key=directory.absolutePath
         if(journal!=null&&identity==key)return
         journal?.close();journal=DiagnosticJournal(directory,version,redactor=knownCredentials);identity=key
-        event("diagnostic.session",mapOf("retention_days" to 7,"segments" to 5,"segment_bytes" to 2*1024*1024,"queue_capacity" to 128,"queue_bytes" to 2*1024*1024))
+        event("diagnostic.session",mapOf("retention_days" to 7,"segments" to 5,"segment_bytes" to 2*1024*1024,"queue_capacity" to 128,"queue_bytes" to 2*1024*1024), trace=sessionId)
     }
     fun registerSecret(secret:String){(journal?.redactor?:knownCredentials).register(secret)}
     /** Chat words, memory text, prompts and replies reach the journal only with 详细诊断 on; otherwise just how long they were. */
@@ -102,6 +102,31 @@ internal object Diagnostics {
         val mono=if(detailed)System.nanoTime() else null
         runCatching{journal?.record(name,trace?:state?.trace?:UUID.randomUUID().toString(),state?.links.orEmpty()+state?.request?.fields().orEmpty()+data+mapOf("span" to state?.span,"parent_span" to state?.parent,"purpose" to state?.purpose)+(if(detailed)environment?.invoke().orEmpty() else emptyMap()),elapsed,secrets,wall,mono)}
     }
+    fun localStep(stage: LocalStep, result: LocalResult, start: Long, turn: ChatTurn?) {
+        val links = traceState.get()?.links.orEmpty()
+        val turnId = (turn?.id ?: links["turn"] as? String)?.takeIf(ChatVoiceDiagnostics::validTurn)
+        val trace = turnId ?: traceState.get()?.trace?.takeIf(ChatVoiceDiagnostics::validTurn) ?: UUID.randomUUID().toString()
+        journal?.record(stage.event, trace, buildMap {
+            put("stage", stage.name)
+            put("result", result.name)
+            if (turnId != null) {
+                put("turn", turnId)
+                (turn?.attempt ?: links["attempt"] as? Int)?.takeIf { it > 0 }?.let { put("attempt", it) }
+                (links["request_number"] as? Long)?.takeIf { it > 0 }?.let { put("request_number", it) }
+            }
+        }, elapsed = (System.nanoTime() - start).coerceAtLeast(0) / 1_000_000)
+    }
+    // The delivery job and the UI need no inherited trace or network payload.
+    fun voice(trace:VoiceTrace, stage:VoiceStage, status:VoiceStatus, reason:VoiceReason?, elapsed:Long?) {
+        if (!ChatVoiceDiagnostics.validTurn(trace.turn) || trace.attempt < 1) return
+        runCatching {
+            journal?.record(ChatVoiceDiagnostics.EVENT, trace.turn, buildMap {
+                (traceState.get()?.links?.get("request_number") as? Long)?.let { put("request_number",it) }
+                put("turn",trace.turn); put("attempt",trace.attempt); put("provider",trace.provider.name);trace.partIndex?.let { put("part_index",it) }
+                put("stage",stage.name); put("status",status.name); reason?.let { put("reason",it.name) }
+            }, elapsed)
+        }
+    }
     fun failure(name:String,error:Throwable,data:Map<String,Any?> = emptyMap(),trace:String?=null,secrets:List<String> = emptyList()){
         synchronized(this) {
             val details = if (detailed) mapOf("error" to error.message, "stack" to error.stackTraceToString()) else emptyMap()
@@ -115,7 +140,7 @@ internal object Diagnostics {
     fun requestState()=traceState.get()?.request
     fun linkedContext(links:Map<String,Any?>):DiagnosticTrace {
         val old=traceState.get()?:DiagnosticTraceState(UUID.randomUUID().toString(),UUID.randomUUID().toString(),null,null)
-        val safe=links.filter{(key,value)->key in setOf("batch","attempt","attempt_id","stage","model_attempt")&&(value is Number||value is String&&value.matches(Regex("[A-Za-z0-9_.:-]{1,100}")))}
+        val safe=links.filter{(key,value)->key in setOf("turn","request_role","request_number","batch","attempt","attempt_id","stage","model_attempt")&&(value is Number||value is String&&value.matches(Regex("[A-Za-z0-9_.:-]{1,100}")))}
         return DiagnosticTrace(old.copy(links=old.links+safe))
     }
     inline fun <T> onThread(state:DiagnosticTraceState?,block:()->T):T {
@@ -133,6 +158,7 @@ internal object Diagnostics {
     }
     suspend fun export(detailed:Boolean):ByteArray=withContext(Dispatchers.IO){
         val active=journal?:error("诊断记录尚未初始化，请返回页面后重试")
+        ProcessDiagnostics.refresh()
         event("diagnostic.export",mapOf("detailed" to detailed));active.export(detailed)
     }
     internal fun installForTest(value:DiagnosticJournal?){journal=value;identity="";detailed=false}

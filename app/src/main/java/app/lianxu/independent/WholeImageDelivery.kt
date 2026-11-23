@@ -13,7 +13,7 @@ internal class WholeImageDelivery private constructor(private val root:File):Clo
     val images=linkedMapOf<ChatImageRef,Image>()
     override fun close(){root.listFiles()?.forEach{it.delete()};root.delete()}
     companion object {
-        fun prepare(context:Context,refs:List<ChatImageRef>,read:(ChatImageRef)->ImageSource,valid:()->Unit):WholeImageDelivery {
+        fun prepare(context:Context,refs:List<ChatImageRef>,read:(ChatImageRef)->ImageSource,valid:()->Unit):WholeImageDelivery = LocalStep.IMAGE_BATCH.observe(enabled = refs.isNotEmpty()) {
             require(refs.size<=ImagePolicy.MAX_IMAGES){"本轮图片数量超过本机请求限制，未丢图或分批"}
             val parent=ImageDisk.root(context.cacheDir);val result=WholeImageDelivery(Files.createTempDirectory(parent.toPath(),"send-").toFile())
             try{for(ref in refs){valid();val original=read(ref);val info=ChatImages.inspect(original)
@@ -42,7 +42,7 @@ internal class WholeImageDelivery private constructor(private val root:File):Clo
                         result.images[ref]=Image(ref,ImageSource(target),if(png)"image/png"else"image/jpeg",label)
                     }finally{bitmap.recycle()}
                 }
-            };valid();return result}
+            };valid();result}
             catch(e:Throwable){result.close();if(e is OutOfMemoryError)throw IllegalArgumentException("本机内存不足，无法压缩整图；原件没有被覆盖或发送",e);throw e}
         }
     }

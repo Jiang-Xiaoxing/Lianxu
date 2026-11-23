@@ -32,7 +32,7 @@ internal object BackupArchive {
         }};valid();return open(work,valid)}catch(e:Throwable){work.close();if(e is OutOfMemoryError)throw IllegalArgumentException("内存不足，无法校验备份；原资料未改动",e);throw e}
     }
     /** Finish and verify the private ZIP before offering a user destination. */
-    fun snapshot(root:JsonObject,files:Map<String,ByteArray>,directory:File,valid:()->Unit):Package {
+    fun snapshot(root:JsonObject,files:Map<String,ByteArray>,directory:File,valid:()->Unit):Package = LocalStep.SNAPSHOT.observe {
         val work=BackupWorkspace.create(directory)
         try{FileOutputStream(work.zip).use{out->
             val checked=object:FilterOutputStream(out){override fun write(b:Int){valid();work.space(1);out.write(b)};override fun write(b:ByteArray,off:Int,len:Int){valid();work.space(len.toLong());out.write(b,off,len)}}
@@ -42,7 +42,7 @@ internal object BackupArchive {
                 override fun close(){flush()}
             }
             write(root,files,BufferedOutputStream(nonClosing,BackupAssetIO.BUFFER),valid);out.fd.sync()
-        };return open(work,valid,false)}catch(e:Throwable){work.close();throw e}
+        };open(work,valid,false)}catch(e:Throwable){work.close();throw e}
     }
     private fun small(z:ZipFile,e:ZipEntry,max:Int,valid:()->Unit):ByteArray {
         require(e.size in 0..max.toLong()){"备份单项内容超过安全上限"};valid()

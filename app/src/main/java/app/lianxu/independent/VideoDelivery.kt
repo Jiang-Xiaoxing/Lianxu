@@ -15,7 +15,8 @@ internal class VideoDelivery private constructor(private val root:File):Closeabl
     val frames=linkedMapOf<ChatImageRef,List<Frame>>()
     override fun close(){root.listFiles()?.forEach{it.delete()};root.delete()}
     companion object {
-        fun prepare(context:Context,refs:List<ChatImageRef>,extract:Boolean,read:(ChatImageRef)->ImageSource,validateCapacity:(List<ChatVideos.Info>)->Unit,valid:()->Unit):VideoDelivery {
+        fun prepare(context:Context,refs:List<ChatImageRef>,extract:Boolean,read:(ChatImageRef)->ImageSource,validateCapacity:(List<ChatVideos.Info>)->Unit,valid:()->Unit):VideoDelivery =
+            (if (extract) LocalStep.VIDEO_FRAMES else LocalStep.VIDEO_ORIGINALS).observe(enabled = refs.isNotEmpty()) {
             val parent=ImageDisk.root(context.cacheDir)
             val result=VideoDelivery(Files.createTempDirectory(parent.toPath(),"video-send-").toFile())
             try{
@@ -50,7 +51,7 @@ internal class VideoDelivery private constructor(private val root:File):Closeabl
                     check(frames.size.toLong()==original.info.frameCount){"视频画面不完整，未发送"}
                     result.frames[ref]=frames
                 }
-                valid();return result
+                valid();result
             }catch(e:Throwable){result.close();if(e is OutOfMemoryError)throw IllegalArgumentException("本机内存不足，无法准备完整视频画面；未跳帧或发送",e);throw e}
         }
     }

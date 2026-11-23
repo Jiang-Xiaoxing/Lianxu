@@ -101,7 +101,7 @@ internal class DiagnosticJournal(private val directory:File,private val version:
     private data class Pending(val event:String,val trace:String,val data:JsonObject,val bytes:Long,val elapsed:Long?,val wall:Long=0,val mono:Long?=null,val barrier:CountDownLatch?=null)
     private companion object {
         /** Small fields that tie an event to its turn, attempt and request; never truncated away. */
-        val CORRELATION_KEYS=setOf("request_id","span","parent_span","purpose","turn","attempt","step","status",
+        val CORRELATION_KEYS=setOf("request_number","request_role","voice_tool_provided","http_status","request_id","span","parent_span","purpose","turn","attempt","step","status",
             "batch","attempt_id","model_attempt","stage","cancel_source","terminal_status","cause_relation","after_terminal_decision","response_bytes","first_byte_ms","last_byte_ms","commit_state","transport_phase","client_write_completed_bytes","write_attempted_bytes","cancel_origin","default_network","activity_visibility","elapsed_realtime_ns","version_code","apk_sha256",
             "reasoning_status","reasoning_chars","reasoning_truncated","chunks","stream_chars","reasoning_chunks","saved","outcome",
             "call_id","name","failure","reason","error_type",
@@ -145,7 +145,10 @@ internal class DiagnosticJournal(private val directory:File,private val version:
                     // A long field (usually the reasoning text) must never take the turn/request correlation
                     // fields down with it: keep those in a structured part and excerpt only the payload.
                     if(raw.length>excerptLimit){truncated.incrementAndGet();addProperty("truncated",true);addProperty("original_chars",raw.length);addProperty("omitted_chars",raw.length-excerptLimit)
-                        add("data",JsonObject().apply{clean.entrySet().forEach{(k,v)->if(k in CORRELATION_KEYS&&v.toString().length<=512)add(k,v)}})
+                        add("data",JsonObject().apply{
+                            clean.entrySet().forEach{(k,v)->if(k in CORRELATION_KEYS&&v.toString().length<=512)add(k,v)}
+                            BasicDiagnosticFields.project(p.event,clean)?.entrySet()?.forEach { (k,v) -> if(!has(k)) add(k,v) }
+                        })
                         addProperty("data_excerpt",raw.take(excerptLimit))
                     }else add("data",clean)
                 }
@@ -155,6 +158,7 @@ internal class DiagnosticJournal(private val directory:File,private val version:
     }
     private fun prune(){
         val now=System.currentTimeMillis()
+        ProcessEvidence.prune(File(directory,"process"),now)
         var next=Long.MAX_VALUE
         currentStartedAt=0
         directory.listFiles().orEmpty().forEach { file ->
@@ -183,11 +187,14 @@ internal class DiagnosticJournal(private val directory:File,private val version:
     fun export(detailed:Boolean):ByteArray {
         val complete=flush()
         return synchronized(lock){prune();buildString{
-            append(gson.toJson(mapOf("format" to "lianxu-diagnostics","version" to 1,"detailed" to detailed,"flush_complete" to complete,"dropped_events" to dropped.get(),"session_truncated_events" to truncated.get(),"session_started" to started,"session_rotations" to rotations.get(),"session_removed_segments" to expired.get(),"history_window_bounded" to true,"retention_days" to keepMillis/(24*60*60*1000),"max_disk_bytes" to segmentBytes.toLong()*segments,"notice" to "仅包含限额内仍保留的本机记录；轮转前历史可能已清理，截断或丢失均有标记。"))).append('\n')
+            append(gson.toJson(mapOf("format" to "lianxu-diagnostics","version" to 1,"detailed" to detailed,"flush_complete" to complete,"dropped_events" to dropped.get(),"session_truncated_events" to truncated.get(),"drop_count_scope" to "current_process", "prior_process_unflushed_events" to "unknown", "session_started" to started,"session_rotations" to rotations.get(),"session_removed_segments" to expired.get(),"history_window_bounded" to true,"process_record_max_bytes" to 4096,"retention_days" to keepMillis/(24*60*60*1000),"max_disk_bytes" to segmentBytes.toLong()*segments,"notice" to "仅包含限额内仍保留的本机记录；轮转前历史可能已清理，截断或丢失均有标记。"))).append('\n')
             for(i in segments-1 downTo 0)File(directory,"events-$i.jsonl").takeIf{it.exists()}?.forEachLine(Charsets.UTF_8){line->
                 val row=runCatching{JsonParser.parseString(line).asJsonObject}.getOrNull()
                 if(row==null)append("{\"event\":\"diagnostic.corrupt_line\"}\n") else {
-                    if(!detailed){row.remove("data");row.remove("data_excerpt")}
+                    if(!detailed){
+                        val data=row.remove("data");row.remove("data_excerpt")
+                        if (data?.isJsonObject == true) BasicDiagnosticFields.project(row["event"]?.asString.orEmpty(),data.asJsonObject)?.let { row.add("data",it) }
+                    }
                     if (row.has("data_excerpt") && !row.has("redaction_version")) {
                         row.addProperty("data_excerpt","[旧版截断片段已省略]")
                     }
@@ -195,6 +202,7 @@ internal class DiagnosticJournal(private val directory:File,private val version:
                     append(redactor.clean(row)).append('\n')
                 }
             }
+            ProcessEvidence.rows(File(directory,"process")).forEach { append(redactor.clean(it)).append('\n') }
         }.toByteArray(Charsets.UTF_8)}
     }
     override fun close(){flush();closed=true;worker.interrupt();worker.join(4000)}

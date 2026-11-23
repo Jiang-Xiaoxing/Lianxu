@@ -55,19 +55,22 @@ internal object BackupKeySeal {
     }
 
     /** Puts the keys back into the models; a wrong password is reported as such, never as a broken file. */
-    fun open(root:JsonObject,password:CharArray):JsonObject {
+    fun open(root:JsonObject,password:CharArray?):JsonObject {
         if(!sealed(root))return root
-        val lock=root[FIELD].asJsonObject
-        require(lock["v"]?.asInt==1&&lock["kdf"]?.asString=="PBKDF2WithHmacSHA256"){"不支持的备份密钥锁"}
-        val iterations=lock["iterations"].asInt;require(iterations in 100_000..5_000_000){"备份密钥锁参数无效"}
-        val salt=unb64(lock,"salt");val iv=unb64(lock,"iv");val data=unb64(lock,"data")
-        require(salt.size==16&&iv.size==12&&data.size in 16..1_000_000){"备份密钥锁参数无效"}
-        val cipher=Cipher.getInstance("AES/GCM/NoPadding").apply{init(Cipher.DECRYPT_MODE,derive(password,salt,iterations),GCMParameterSpec(128,iv));updateAAD(AAD.toByteArray())}
-        val plain=try{cipher.doFinal(data)}catch(_:AEADBadTagException){throw WrongPassword()}
-        val keys=try{com.google.gson.JsonParser.parseString(String(plain,Charsets.UTF_8)).asJsonObject}finally{plain.fill(0)}
-        val copy=root.deepCopy();copy.remove(FIELD)
-        copy["models"].asJsonArray.forEach{m->val j=m.asJsonObject;val id=j["config"].asJsonObject["id"].asString;keys[id]?.let{j.add("key",it)}}
-        return copy
+        return LocalStep.UNSEAL.observe {
+            val supplied = password ?: throw NeedsPassword()
+            val lock=root[FIELD].asJsonObject
+            require(lock["v"]?.asInt==1&&lock["kdf"]?.asString=="PBKDF2WithHmacSHA256"){"不支持的备份密钥锁"}
+            val iterations=lock["iterations"].asInt;require(iterations in 100_000..5_000_000){"备份密钥锁参数无效"}
+            val salt=unb64(lock,"salt");val iv=unb64(lock,"iv");val data=unb64(lock,"data")
+            require(salt.size==16&&iv.size==12&&data.size in 16..1_000_000){"备份密钥锁参数无效"}
+            val cipher=Cipher.getInstance("AES/GCM/NoPadding").apply{init(Cipher.DECRYPT_MODE,derive(supplied,salt,iterations),GCMParameterSpec(128,iv));updateAAD(AAD.toByteArray())}
+            val plain=try{cipher.doFinal(data)}catch(_:AEADBadTagException){throw WrongPassword()}
+            val keys=try{com.google.gson.JsonParser.parseString(String(plain,Charsets.UTF_8)).asJsonObject}finally{plain.fill(0)}
+            val copy=root.deepCopy();copy.remove(FIELD)
+            copy["models"].asJsonArray.forEach{m->val j=m.asJsonObject;val id=j["config"].asJsonObject["id"].asString;keys[id]?.let{j.add("key",it)}}
+            copy
+        }
     }
     /** Just checks the password, for the import dialog. */
     fun check(root:JsonObject,password:CharArray){open(root,password)}
