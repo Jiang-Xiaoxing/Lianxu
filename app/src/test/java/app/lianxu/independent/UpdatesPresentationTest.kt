@@ -4,6 +4,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class UpdatesPresentationTest {
+    @Test fun release105HasThreeShortHighlightsAndPreservesPreviousEntry(){
+        val note=requireNotNull(LocalReleaseNotes.forVersion(64))
+        assertEquals("1.0.5",note.version)
+        assertEquals(3,UpdatesPresentation.noticeSummary(note).size)
+        assertTrue(UpdatesPresentation.noticeSummary(note).all{it.length<=32})
+        assertTrue(note.changes.any{"辅助看图全面沿用" in it})
+        assertTrue(note.changes.any{"一键跳转" in it})
+        assertEquals("1.0.4",LocalReleaseNotes.forVersion(63)?.version)
+    }
     @Test fun mediaReleaseHasThreeShortHighlightsAndPreservesThePreviousEntry(){
         val note=requireNotNull(LocalReleaseNotes.forVersion(63))
         assertEquals("1.0.4",note.version)

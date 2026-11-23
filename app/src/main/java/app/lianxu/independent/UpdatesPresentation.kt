@@ -10,6 +10,11 @@ internal object UpdatesPresentation {
     fun experienceFor(installedCode:Long)=experienceChanges.takeIf{installedCode==60L}
     /** Startup highlights only; the updates page keeps the complete facts and limitations. */
     fun noticeSummary(note:LocalReleaseNote):List<String> = when(note.code){
+        64L->listOf(
+            "新增角色语音与文语混排，大模型配置按用途分页。",
+            "辅助看图全面沿用所选模型 API 配置，取消单独上限。",
+            "报错分类更明确，新增步骤指引与一键跳转设置或模型。"
+        )
         63L->listOf(
             "聊天可发图片和视频，视频默认逐秒抽帧。",
             "离开聊天页后可继续等待和查看回复。",
@@ -28,6 +33,11 @@ internal object UpdatesPresentation {
         else->summary(note)
     }
     fun summary(note:LocalReleaseNote):List<String> = when(note.code){
+        64L->listOf(
+            "新增角色语音回复与语音条，大模型配置按用途分页并改进真发连接测试。",
+            "辅助看图全面沿用模型输出上限、上下文、流式和思考配置，支持长观察备份。",
+            "细化断连与截断报错，提供一键跳转系统后台、通知或对应模型编辑页的引导。"
+        )
         63L->listOf(
             "聊天支持图片与视频，工具包可选择媒体理解方式。",
             "聊天请求可在后台继续，完整回复保存后可回看。",
