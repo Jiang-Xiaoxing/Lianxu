@@ -10,6 +10,11 @@ internal object UpdatesPresentation {
     fun experienceFor(installedCode:Long)=experienceChanges.takeIf{installedCode==60L}
     /** Startup highlights only; the updates page keeps the complete facts and limitations. */
     fun noticeSummary(note:LocalReleaseNote):List<String> = when(note.code){
+        65L->listOf(
+            "提示词整体翻新，去掉客服腔与后台英文术语泄露。",
+            "聊天与思考更贴合自写人设，正式或直率都按人设来。",
+            "同步优化建角色、润色、主动发消息、看图与语音提示词。"
+        )
         64L->listOf(
             "新增角色语音与文语混排，大模型配置按用途分页。",
             "辅助看图沿用模型 API 配置，观察上限提至 10 万字。",
@@ -33,6 +38,11 @@ internal object UpdatesPresentation {
         else->summary(note)
     }
     fun summary(note:LocalReleaseNote):List<String> = when(note.code){
+        65L->listOf(
+            "整体翻新前台聊天、默认思考与回话提示词，去除客服腔与后台英文状态词泄露。",
+            "前台改用纯中文相处规则，按自写人设节奏说话并保留成长优先级与安全边界。",
+            "同步优化角色生成、创建润色、主动发消息、语音口语分段与图片视频反注入提示。"
+        )
         64L->listOf(
             "新增角色语音回复与语音条，大模型配置按用途分页并改进真发连接测试。",
             "辅助看图全面沿用模型输出上限、上下文、流式和思考配置，支持长观察备份。",
