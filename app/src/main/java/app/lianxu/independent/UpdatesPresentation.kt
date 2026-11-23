@@ -12,7 +12,7 @@ internal object UpdatesPresentation {
     fun noticeSummary(note:LocalReleaseNote):List<String> = when(note.code){
         64L->listOf(
             "新增角色语音与文语混排，大模型配置按用途分页。",
-            "辅助看图全面沿用所选模型 API 配置，取消单独上限。",
+            "辅助看图沿用模型 API 配置，观察上限提至 10 万字。",
             "报错分类更明确，新增步骤指引与一键跳转设置或模型。"
         )
         63L->listOf(
