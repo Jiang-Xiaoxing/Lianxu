@@ -84,4 +84,3 @@ class BreezeStudioContractTest {
         } finally {AppServices.voiceConnections=old;resolver.delete(uri,null,null)}
     }
 }
-

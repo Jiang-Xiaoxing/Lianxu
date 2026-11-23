@@ -44,4 +44,3 @@ class BreezeVoiceToolTest {
         } finally {store.close();app.deleteDatabase(name)}
     }
 }
-

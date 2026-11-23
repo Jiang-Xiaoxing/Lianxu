@@ -216,4 +216,3 @@ class BreezeVoiceEntryTest {
         }finally{AppServices.voiceConnections=old;VoiceConnectProbe.reachable=oldProbe;resolver.delete(uri,null,null)}
     }
 }
-

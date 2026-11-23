@@ -167,4 +167,3 @@ internal class BreezeVoiceAccount(context: Context) {
         return result.values.toList()
     }
 }
-

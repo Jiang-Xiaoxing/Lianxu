@@ -174,4 +174,3 @@ private class StudioPlayer(private val cache:File) {
             if(heard&&rights&&recording!=null)runAction{candidate=studio.clone(owner,recording,true);saved=false;name=""}
         }){Text("确认上传到 BreezeBlue")}})
 }
-

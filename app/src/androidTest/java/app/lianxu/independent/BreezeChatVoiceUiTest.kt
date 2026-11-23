@@ -176,4 +176,3 @@ class BreezeChatVoiceUiTest {
         assertFalse(ChatVoiceDelivery.file(app,third).exists())
     }
 }
-
