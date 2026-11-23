@@ -83,7 +83,12 @@ internal class ChatImageRoute(private val store:Store,private val vault:ModelVau
                   val existing=if(auxiliary)ConservativeTokens.tokens(context.input).toLong()+receiver.outputTokens.toLong()+1024 else request.messages.sumOf{ConservativeTokens.tokens(it.content).toLong()+it.images.size*2048L+8}+imageRefs.size*2048L+request.outputLimit
                   val remaining=receiver.contextTokens-existing
                   var count=0L
-                  for(info in infos){if(info.frameCount>remaining/2048-count)throw CompanionModelFailure(ChatFailure.CONTEXT_CAPACITY,"按配置的上下文容量估算，完整逐秒画面可能超限，请选择容量更大的接收模型。");if(!auxiliary)count+=info.frameCount}
+                  for(info in infos){
+                      if(info.frameCount>remaining/2048-count)throw CompanionModelFailure(ChatFailure.CONTEXT_CAPACITY,
+                          "按配置的上下文容量估算，完整逐秒画面可能超限，请选择容量更大的接收模型。",
+                          if(auxiliary)auxFailureMeta(receiver,receiverKey,chatKey) else chatFailureMeta(chatKey))
+                      if(!auxiliary)count+=info.frameCount
+                  }
               }
           },valid)}catch(e:IllegalArgumentException){throw CompanionModelFailure(ChatFailure.VIDEO_PREPARATION,e.message.orEmpty())}
           videoPrepared.use{videos->

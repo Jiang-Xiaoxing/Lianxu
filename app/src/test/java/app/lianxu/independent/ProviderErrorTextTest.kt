@@ -18,7 +18,7 @@ class ProviderErrorTextTest {
     private val config=ModelConfig("fake","合成","custom","https://example.invalid/v1","fake-model",16000,2048)
     private val request=TextChatRequest(listOf(WireMessage("user","你好")),256)
 
-    private class Fake(url:URL,val status:Int?,val body:String="",val failOnBody:Boolean=false,val failConnect:IOException?=null):HttpsURLConnection(url){
+    private open class Fake(url:URL,val status:Int?,val body:String="",val failOnBody:Boolean=false,val failConnect:IOException?=null):HttpsURLConnection(url){
         override fun getCipherSuite()=""
         override fun getLocalCertificates():Array<Certificate>?=null
         override fun getServerCertificates():Array<Certificate> = emptyArray()
@@ -129,6 +129,28 @@ class ProviderErrorTextTest {
         val result=run{Fake(it,200,body)}
         assertEquals(ChatFailure.TRUNCATED,result.reason)
         assertTrue(result.detail,result.detail.contains("256"))
+    }
+    @Test fun partialNonStreamingVoiceToolReportsTheProviderStopReason(){
+        for(reason in listOf("length","max_tokens","max_output_tokens")){
+            val body="""{"choices":[{"finish_reason":"$reason","message":{"tool_calls":[{"function":{"name":"send_short_voice","arguments":"{"}}]}}]}"""
+            val result=run{Fake(it,200,body)}
+            assertEquals(ChatFailure.TRUNCATED,result.reason)
+            assertTrue(result.rejectedVoiceCall)
+            assertEquals(200,result.httpStatus)
+            assertTrue(result.detail.contains(reason))
+            assertEquals(false,result.meta?.streamReplies)
+        }
+    }
+    @Test fun emptyCompletedStreamRetainsTheResponseStage()=runBlocking {
+        val stream="data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+        val client=HttpsTextChatClient(HttpsConnectionFactory{object:Fake(it,200,stream){
+            override fun getContentType()="text/event-stream"
+        }})
+        val result=client.streamEvents(config,key,request){} as TextChatResult.Failure
+        assertEquals(ChatFailure.FORMAT,result.reason)
+        assertEquals(200,result.httpStatus)
+        assertEquals("read_response_body",result.meta?.stage)
+        assertEquals(true,result.meta?.streamReplies)
     }
     @Test fun http200BadJsonAndBrokenStreamAreLocalDetailsNotProviderBody(){
         val badJson=run{Fake(it,200,"not-valid-json")}

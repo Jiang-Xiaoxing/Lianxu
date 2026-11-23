@@ -141,6 +141,7 @@ class HttpsTextChatClient(
                 Diagnostics.event("http.response",mapOf("status" to status,"content_type" to active.contentType,"content_encoding" to active.contentEncoding,"content_length" to active.contentLengthLong,"stream" to (onEvent!=null)),trace=diagnosticTrace,secrets=listOf(key))
                 val error=if(status !in 200..299)diagnosticErrorBody(active,deadline,diagnosticTrace,key) else ErrorBody("",true)
                 val errorBody=error.text
+                noteBackground()
                 if(status !in 200..299)TextChatResult.Failure(if(request.tools.isNotEmpty()&&status in setOf(400,422)&&explicitToolsUnsupported(errorBody))ChatFailure.UNSUPPORTED_TOOLS else when(status){401->ChatFailure.UNAUTHORIZED;402->ChatFailure.PAYMENT;403->ChatFailure.FORBIDDEN;413->if(ImageWire.hasVideo(request))ChatFailure.VIDEO_PROVIDER_LIMIT else ChatFailure.IMAGE_PROVIDER_LIMIT;429->ChatFailure.RATE_LIMIT;in 300..399->ChatFailure.REDIRECT;in 500..599->ChatFailure.SERVER;else->ChatFailure.REJECTED},status,
                     shown(providerError(status,active.responseMessage,errorBody,error.complete)),meta=failureMeta("http_status",sawBackground||requestDiagnostics?.experiencedBackground==true,detailSource="provider_http"))
                 else if(onEvent!=null&&active.contentType.orEmpty().substringBefore(';').trim().equals("text/event-stream",true)){
@@ -160,7 +161,10 @@ class HttpsTextChatClient(
                             outputLimit=request.outputLimit)
                         // The final content check rejects after a readable stream; name it instead of leaving a bare FORMAT.
                         if(streamed is TextChatResult.Failure)Diagnostics.event("http.stream_rejected",mapOf("reason" to streamed.reason.name,"check" to "content_check","detail" to "")+guard.snapshot(),trace=diagnosticTrace,secrets=listOf(key))
-                        streamed
+                        if(streamed is TextChatResult.Failure) {
+                            noteBackground()
+                            streamed.copy(httpStatus=status,meta=failureMeta("read_response_body",sawBackground))
+                        } else streamed
                     }
                 }else {
                     val response=(requestDiagnostics?.count(active.inputStream)?:active.inputStream).use {input->val output=ByteArrayOutputStream();val buffer=ByteArray(8192)
@@ -170,14 +174,16 @@ class HttpsTextChatClient(
                             if(!continuation.isActive)return@submit
                             val n=input.read(buffer,0,minOf(buffer.size,2*1024*1024+1-output.size()));if(n<0)break;output.write(buffer,0,n)
                         };output.toByteArray()}
-                    if(response.size>2*1024*1024)TextChatResult.Failure(ChatFailure.FORMAT) else {
+                    noteBackground()
+                    if(response.size>2*1024*1024)TextChatResult.Failure(ChatFailure.FORMAT,status,
+                        "HTTP $status\n响应正文超过本机读取上限（2 MiB）。",meta=failureMeta("read_response_body",sawBackground)) else {
                         val raw=String(response,Charsets.UTF_8)
                         JSONObject(raw).optJSONObject("usage")?.let{usage->
                             val counts=listOf("prompt_tokens","completion_tokens","total_tokens").map{usage.optLong(it,-1)}
                             if(counts.all{it>=0})Diagnostics.event("http.usage",mapOf("input_count" to counts[0],"output_count" to counts[1],"total_count" to counts[2]),trace=diagnosticTrace)
                         }
                         parse(raw,key,request.tools.map(::toolNameOf).toSet(),StructuredResponsePolicy.supportsJsonObject(config),outputLimit=request.outputLimit){sawVoiceCall=true}.let{parsed->
-                            if(parsed is TextChatResult.Failure&&parsed.meta==null)parsed.copy(meta=failureMeta("read_response_body",sawBackground||requestDiagnostics?.experiencedBackground==true)) else parsed
+                            if(parsed is TextChatResult.Failure&&parsed.meta==null)parsed.copy(httpStatus=status,meta=failureMeta("read_response_body",sawBackground||requestDiagnostics?.experiencedBackground==true)) else parsed
                         }.also{result->
                             if(result is TextChatResult.Success&&onEvent!=null){
                                 if(result.displayReasoning.isNotEmpty())onEvent(TextStreamEvent.Reasoning(result.displayReasoning))
@@ -188,6 +194,7 @@ class HttpsTextChatClient(
                 }
             }catch(e:RequestTooLarge){TextChatResult.Failure(ChatFailure.IMAGE_LIMIT,detail="完整JSON请求体超过本机发送上限，本次未连接或发送；没有删图、降质或换服务")}
             catch(e:SocketTimeoutException){
+                noteBackground()
                 val diagnostic=requestDiagnostics?.timeout(System.nanoTime()>=deadline)
                 transportFailure("http.timeout",e,diagnostic)
                 val status=responded
@@ -200,7 +207,12 @@ class HttpsTextChatClient(
                 val inBg=sawBackground||requestDiagnostics?.experiencedBackground==true
                 Diagnostics.event("http.stream_rejected",mapOf("reason" to e.reason.name,"check" to e.check,"detail" to e.detail)+guard.snapshot(),trace=diagnosticTrace,secrets=listOf(key))
                 TextChatResult.Failure(e.reason,responded,shown((responded?.let{"HTTP $it\n"}?:"")+"回复流没有通过检查：${e.check}"+(if(e.detail.isNotBlank())"\n${e.detail}" else "")),meta=failureMeta("read_response_body",inBg))}
-            catch(e:SSLException){transportFailure("http.tls_failed",e);TextChatResult.Failure(ChatFailure.TLS,detail=shown("${e.javaClass.simpleName}: ${e.message.orEmpty()}"),meta=failureMeta("connect_or_write",sawBackground||requestDiagnostics?.experiencedBackground==true))}
+            catch(e:SSLException){
+                noteBackground()
+                transportFailure("http.tls_failed",e)
+                val stage=if(responded!=null)"read_response_body" else if(requestSent)"await_response_headers" else "connect_or_write"
+                TextChatResult.Failure(ChatFailure.TLS,responded,shown("${e.javaClass.simpleName}: ${e.message.orEmpty()}"),meta=failureMeta(stage,sawBackground))
+            }
             // A parser exception can quote the raw payload, including native reasoning: its message is never shown.
             catch(e:org.json.JSONException){Diagnostics.event("http.format_failed",mapOf("error_type" to e.javaClass.name),trace=diagnosticTrace);TextChatResult.Failure(ChatFailure.FORMAT,responded,shown((responded?.let{"HTTP $it\n"}?:"")+"服务返回的内容不是有效的 JSON。"),meta=failureMeta("read_response_body",sawBackground||requestDiagnostics?.experiencedBackground==true))}
             catch(e:Exception){
@@ -360,6 +372,10 @@ class HttpsTextChatClient(
         val choice=JSONObject(raw).optJSONArray("choices")?.optJSONObject(0)?:return TextChatResult.Failure(ChatFailure.FORMAT)
         val message=choice.optJSONObject("message")?:return TextChatResult.Failure(ChatFailure.FORMAT)
         message.optJSONArray("tool_calls")?.let { if(hasVoiceName(it)) observeVoice() }
+        val reason=choice.optString("finish_reason")
+        if(reason in setOf("length","max_tokens","max_output_tokens"))
+            return TextChatResult.Failure(ChatFailure.TRUNCATED,detail="模型返回 finish_reason=$reason，" +
+                (outputLimit?.let{"达到了当前配置的输出上限（$it token）。"}?:"达到了输出上限。"))
         val displayReasoning=nativeReasoning(message)?.second.orEmpty()
         if(displayReasoning.length>256*1024||displayReasoning.isNotEmpty()&&displayReasoning.contains(key))return TextChatResult.Failure(ChatFailure.FORMAT)
         if(!message.isNull("function_call"))return TextChatResult.Failure(ChatFailure.TOOLS_UNAVAILABLE)
@@ -379,8 +395,6 @@ class HttpsTextChatClient(
             if(reasoning.length>256*1024||reasoning.isNotEmpty()&&reasoning.contains(key))return TextChatResult.Failure(ChatFailure.FORMAT)
             return TextChatResult.Success(content,parsed,reasoning.takeIf{it.isNotEmpty()}?.let{ProviderContinuation(it)},displayReasoning)
         }
-        val reason=choice.optString("finish_reason")
-        if(reason=="length")return TextChatResult.Failure(ChatFailure.TRUNCATED,detail=outputLimit?.let{"模型返回 finish_reason=length，达到了当前配置的输出上限（$it token），回复被截断。"}?:"模型返回 finish_reason=length，达到了输出上限，回复被截断。")
         if(reason !in setOf("stop","end_turn"))return TextChatResult.Failure(ChatFailure.FORMAT)
         // Some compatible providers embed thinking in content. Never show or retain it as dialogue.
         val text=message.opt("content") as? String ?:return TextChatResult.Failure(ChatFailure.FORMAT)
