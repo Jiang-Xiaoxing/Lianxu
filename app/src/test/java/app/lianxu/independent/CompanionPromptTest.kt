@@ -109,4 +109,34 @@ class CompanionPromptTest {
         assertEquals(raw,m.single{it.role=="user"}.content);assertTrue(m.single{it.turnContext}.content.contains("程序时间参考"));assertTrue(m.last().thinkingContext)
         assertTrue(m.any{"拿不准的记忆，不得当作确定事实" in it.content&&"未确认建议" in it.content})
     }
+    @Test fun overhauledPromptsDropCustomerServiceToneAndBackendStateJargon(){
+        val planner=RolePlanner(object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest)=TextChatResult.Failure(ChatFailure.NETWORK)})
+        val config=ModelConfig("m","m","custom","https://example.invalid","m",64000,2048)
+        val persona=UserPersona(address="小星")
+        val now=1_700_000_000_000L
+        val current=SourceRef(f.id,1L,1)
+        val roleContext=RoleContext(f.id,current,mapOf(1L to current),emptyList(),emptyList(),listOf(RoleLearningState("learning-1","habit","聊天方式","先听再问","active",current)),emptyList())
+        val formalPrompts=RolePrompts(characterDefinition="克制稳重的博物馆修复师，说话正式有分寸。",expression="用词正式、言简意赅，想清楚再回答。")
+        val possessivePrompts=RolePrompts(characterDefinition="黏人爱吃醋的青梅竹马。",expression="短句直来直去，爱耍小性子。")
+        for(prompts in listOf(RolePrompts(),formalPrompts,possessivePrompts)){
+            val base=CompanionPrompt.build(f,prompts,emptyList(),"你好",persona=persona) as PromptBuild.Ready
+            val prepared=planner.prepareReply(base,config,"你好",ExperienceProposal(),roleContext,now,readAllowed=false,semantic=emptyMap(),toolReserve=0,recordEnabled=false,persona=persona) as PromptBuild.Ready
+            val systemText=prepared.request.messages.filter{it.role=="system"}.joinToString("\n"){it.content}
+            assertTrue(systemText.contains("[companion.reply.v1]"))
+            assertTrue(systemText.contains(RoleConsistency.REPLY_RULES))
+            assertTrue("non-exclusive boundary must stay active even with custom expression",systemText.contains("不诱导排他依赖"))
+            if(prompts.expression.isNotBlank())assertTrue(systemText.contains(prompts.expression))
+            for(banned in listOf("适度关心","温和表达不同意见","脱口而出","别端着","viewpoint","interest","habit","candidate","developing","active","paused","人设与成长共同规则")){
+                assertFalse("prepared foreground system prompts should not contain '$banned'",banned in systemText)
+            }
+            val thinking=prepared.request.messages.last().content
+            assertTrue(thinking.contains("不像助手那样分析任务"))
+            assertTrue(thinking.contains("真正符合你本人分寸和口吻"))
+        }
+        val polish=RolePolishProtocol.request(RoleCreationText("合成名","话少毒舌。","","短句","",""),config)
+        assertTrue(polish.messages.first().content.contains("保留原文的口语感、性格棱角和个人味道"))
+        assertTrue(polish.messages.first().content.contains("不补写空白字段"))
+        @Suppress("UNCHECKED_CAST") val voiceDesc=(OrderedChatReply.definition["function"] as Map<String,Any>)["description"] as String
+        assertTrue(voiceDesc.contains("自然口语化"))
+    }
 }

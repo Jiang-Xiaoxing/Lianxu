@@ -11,7 +11,7 @@ internal object OrderedChatReply {
     const val PREFIX = "chat-reply-layout:"
     val definition = mapOf("type" to "function", "function" to mapOf(
         "name" to "send_short_voice",
-        "description" to "根据角色、上下文和对方当下的偏好决定怎么说。全部用文字时直接自然回复；不方便听时用文字。想发语音或对方希望听你说时，用这个工具一次提交整轮回复：segments 按实际发送顺序列出每条文字或语音，条数和顺序随对话需要。只写要说的原话，不另发正文，不写类型标签。",
+        "description" to "根据角色、上下文和对方当下的偏好决定怎么说。全部用文字时直接自然回复；不方便听时用文字。想发语音或对方希望听你说时，用这个工具一次提交整轮回复：segments 按实际发送顺序列出每条文字或语音，条数和顺序随对话需要。语音段要像真人开口说话一样自然口语化，贴合角色口吻，别念书面语、括弧动作或标点；文字段按平时聊天习惯写。只写要说的原话，不另发正文，不写类型标签。",
         "parameters" to mapOf("type" to "object", "additionalProperties" to false, "required" to listOf("segments"),
             "properties" to mapOf("segments" to mapOf("type" to "array", "items" to mapOf(
                 "type" to "object", "additionalProperties" to false, "required" to listOf("type","text"),

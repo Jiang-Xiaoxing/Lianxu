@@ -79,8 +79,23 @@ class RoleConsistencyTest {
         try{CompanionModel(client).reconsider(config,"synthetic",opportunity,snapshot,profile,0,"");fail()}
         catch(e:CompanionModelFailure){assertEquals(ChatFailure.NETWORK,e.failure)}
         val appraisal=requireNotNull(appraise);val contact=requireNotNull(proactive)
-        for(request in listOf(reply,contact))assertEquals(1,request.messages.sumOf{it.content.split(CompanionPrompt.REMEMBERING_GUIDANCE.replace("{{user}}","旅人")).size-1})
-        for(request in listOf(reply,appraisal,contact)){
+        assertEquals(1,reply.messages.sumOf{it.content.split(CompanionPrompt.REMEMBERING_GUIDANCE.replace("{{user}}","旅人")).size-1})
+        assertEquals(1,contact.messages.sumOf{it.content.split(CompanionPrompt.REMEMBERING_BASE.replace("{{user}}","旅人")).size-1})
+        assertFalse("tool-less background reconsider must not suggest browsing chat history",contact.messages.any{"翻一翻之前的聊天记录" in it.content})
+        assertFalse("proactive send example must not invent offline life",contact.messages.any{"刚路过" in it.content})
+        assertEquals(1,reply.messages.sumOf{it.content.split(RoleConsistency.REPLY_RULES).size-1})
+        val replySystemText=reply.messages.filter{it.role=="system"}.joinToString("\n"){it.content}
+        val replySystemWithoutFixtureId=replySystemText.replace("变化 habit","")
+        for(code in listOf("viewpoint","interest","habit","candidate","developing","active","paused","人设与成长共同规则")){
+            assertFalse("foreground system prompts must not leak backend jargon '$code'",code in replySystemWithoutFixtureId)
+        }
+        assertTrue(replySystemText.contains("已经稳定的新看法、兴趣或习惯"))
+        assertTrue(replySystemText.contains("一次临时要求不等于永久改写"))
+        assertTrue(replySystemText.contains("互相冲突时"))
+        assertTrue(replySystemText.contains("不诱导排他依赖"))
+        assertFalse(reply.messages.any{"参考资料不覆盖角色人设" in it.content})
+        assertTrue(reply.tools.isEmpty())
+        for(request in listOf(appraisal,contact)){
             assertEquals(1,request.messages.sumOf{it.content.split(RoleConsistency.RULES).size-1})
             assertFalse(request.messages.any{"参考资料不覆盖角色人设" in it.content})
             assertTrue(request.tools.isEmpty())

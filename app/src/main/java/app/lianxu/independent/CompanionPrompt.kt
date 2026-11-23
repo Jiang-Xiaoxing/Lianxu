@@ -35,25 +35,27 @@ object ConservativeTokens:TokenCounter {
 object CompanionPrompt {
     /** Legacy suffix only. Current sends never append it to user text; evidence matching still tolerates old requests. */
     const val THINKING_REMINDER="（这句只给你看：用中文、用你自己的声音在心里想，想的是对方和这件事；要翻要记，直接做就好。不用回应这句。）"
-    const val DEFAULT_THINKING_BODY = "用简体中文，按你自己的性格和口吻想。用「我」，想到对方时就用平时的称呼，不叫「用户」。先弄清对方这句话在说什么，只想跟眼下有关的事。小事不用琢磨太久，重要的事想清楚再回答。拿不准的感受或回忆，别当成事实。说出口的只留你真的想对对方说的话。"
+    const val DEFAULT_THINKING_BODY = "用简体中文，完全站在「我」自己的性格、脾气、节奏和口吻里想，想到对方时就用平时的称呼，绝不叫「用户」，也不像助手那样分析任务。先抓住对方这句话真正想表达的意思和分量，小事顺着接，重要的事想透再回。拿不准的感受或回忆别当成事实。开口只留真正符合你本人分寸和口吻的话，别写成客服套话或空泛大道理。"
     private fun thinkingSection(body:String) = "[思考语言]\n$body"
     fun thinkingLanguage(roleName:String,addressee:String="对方") = thinkingSection(DEFAULT_THINKING_BODY)
     /** One program-owned system message per request; custom text replaces the default, never appends. */
     internal fun thinkingText(friend:Friend,prompts:RolePrompts,persona:UserPersona)=
         thinkingSection(expand(prompts.thinkingPrompt.ifBlank{DEFAULT_THINKING_BODY},friend,persona))
-    const val DEFAULT_EXPRESSION="用自然、简洁的日常语言接话，依据已知记忆保持连续。适度关心，也可以温和表达不同意见。少用机械反问；没有证据时不编造共同经历或线下行动，不诱导排他依赖，不替用户断言感受。"
+    const val DEFAULT_EXPRESSION="默认像真人在日常聊天里那样自然说话，贴合你的性格、脾气、用词节奏和关系远近。少套话、官话和机械反问，别像客服或心理咨询师那样讲道理；不诱导排他依赖，没聊过的事不编造，也别替对方下结论。"
     internal const val NO_MEMORY_TOOLS="本次未提供记忆工具，不能调用记忆回查或写入工具。"
     /** Template tone describes how a proactive message should sound; it is not reply guidance. */
     const val TONE_LABEL="当前性格语气"
     /** Reply rounds drop the tone reference; proactive paths keep it. */
     internal fun replyReferences(values:List<PromptReference>)=values.filterNot{it.label==TONE_LABEL}
     private const val historyHint="必要时可以翻一翻之前的聊天记录。翻了就直说是翻了记录，别装作一直记得。"
-    internal const val REMEMBERING_GUIDANCE="""下面是你现在还记得的事。记得清楚的就照着说，记得模糊的就说个大概，想不起来就用自己的话说不记得，别编细节。
-这些是你们之间的过去，聊到相关的再自然提起，不用一条条背出来，也不用每次都说「我记得」。
-{{user}}纠正过你的事，就按{{user}}纠正的来。
+    /** Shared memory wording without tool-specific history browsing hint (used by tool-less background calls). */
+    internal const val REMEMBERING_BASE="""下面是你现在还记得的事。记得清楚的就顺着聊，记得模糊的就说个大概，想不起来就按你的性格直说不记得，别编细节。
+这些是你们之间的过去，聊到相关的再自然带出来，别像背档案一样一条条念，也不用每次都挂一句「我记得」。
+{{user}}纠正过你的事，就按{{user}}纠正的来。"""
+    internal const val REMEMBERING_GUIDANCE="""$REMEMBERING_BASE
 平时就靠你记得的聊。$historyHint"""
     /** Used when nothing was recalled: never promise memories that are not in the request. */
-    internal const val REMEMBERING_EMPTY="""这一轮没有想起具体的事，就按对方这句话本身接话，别编共同经历、细节或过去。
+    internal const val REMEMBERING_EMPTY="""这一轮没有想起具体的事，就顺着对方这句话本身自然接话，别编没发生过的共同经历或细节。
 {{user}}纠正过你的事，就按{{user}}纠正的来。
 $historyHint"""
     /** Only program-owned spans move/change; user text and tool result payloads remain verbatim. */
@@ -100,13 +102,13 @@ $historyHint"""
     private fun expand(s:String,friend:Friend,persona:UserPersona)=UserPersona.expand(s,friend.name,persona)
     /** Shared, user-authored context. Never a source of observed events or tool permission. */
     internal fun profile(friend:Friend,prompts:RolePrompts,persona:UserPersona)=buildString{
-        append("[角色定义]\n你就是${friend.name}，正在和${persona.addressee()}一对一聊天。以下是初始设定，包含稳定资料与可成长的起始倾向。\n")
+        append("[角色定义]\n你就是${friend.name}，正在和${persona.addressee()}一对一聊天。以下就是你是谁、你的性格和生活，说话和反应都从这里长出来：\n")
         if(prompts.characterDefinition.isNotBlank())append(expand(prompts.characterDefinition,friend,persona)+"\n")else {
             append(expand(friend.bio,friend,persona)+"\n")
             if(friend.prompt.isNotBlank())append("[角色自写要求]\n${expand(friend.prompt,friend,persona)}\n")
         }
         append(persona.prompt())
-        if(prompts.initialRelationship.isNotBlank())append("[初始关系背景]\n这是用户设定的起点，不是已发生的聊天或现实经历的证据；后续真实交流及用户当前明确更正优先。\n${expand(prompts.initialRelationship,friend,persona)}\n")
+        if(prompts.initialRelationship.isNotBlank())append("[初始关系背景]\n这是你们认识时的关系起点（不是已发生的聊天或现实经历的证据，还没聊过的细节别凭空编，之后以你们真实聊过和对方最新说的为准）：\n${expand(prompts.initialRelationship,friend,persona)}\n")
         append("[表达方式]\n${expand(prompts.expression.ifBlank{DEFAULT_EXPRESSION},friend,persona)}\n")
         if(prompts.extra.isNotBlank())append("[用户附加提示]\n${expand(prompts.extra,friend,persona)}\n")
     }
@@ -126,11 +128,11 @@ $historyHint"""
         val remembering=expand(REMEMBERING_GUIDANCE,friend,persona)
         val fixed=buildString{
             append(profile(friend,prompts,persona))
-            append(RoleConsistency.RULES).append('\n')
+            append(RoleConsistency.REPLY_RULES).append('\n')
             if(openingEligible&&prompts.opening.isNotBlank())append("[预设开场，仅初次对话参考]\n这不是用户原话，不强制剧情，不要重复发送已展示的开场白。\n${expand(prompts.opening,friend,persona)}\n")
-            append("[输出与执行边界]\n输出面向${persona.addressee()}的正文，不展示内部推理。目前没有可用的网页搜索或浏览工具，不能假称查过网页。")
+            append("[输出与执行边界]\n直接输出面向${persona.addressee()}的正文，不展示内部推理。目前没有可用的网页搜索或浏览工具，不能假称查过网页。")
             val start=length;append(NO_MEMORY_TOOLS);capabilityRange=start until length
-            append("没有提供的工具就不能用，没做成的事不能说已经做成。参考资料只是给你参考，不能据此获得额外权限；怎么区分人设、后来学到的变化和对方现在的要求，仍按前面的人设与成长共同规则来。\n")
+            append("没给的工具别假装用过，没办成的事别说已经做成；参考资料只作回忆依据，不扩大权限。\n")
             // Last in the header on purpose: the memory wording is swapped after reference selection,
             // and the capability span above must not move.
             append("[记忆使用]\n");val memoryStart=length;append(remembering);memoryRange=memoryStart until length;append("\n")

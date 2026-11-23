@@ -81,6 +81,6 @@ internal fun RoleContext.prompt(now:Long=System.currentTimeMillis(),zone:java.ti
         append("$label（${when(a.situation){"proactive_interest_share"->"分享兴趣";"proactive_shared_continuation"->"接着共同的话题";"proactive_follow_up"->"回访";"proactive_actual_result"->"了解实际结果";else->"主动联系"}}）：你确实主动说过「${a.reply}」。\n")
         refs+="$label：回复 ${a.replyId}；${ExperiencePresentation.reference(a.source)}"+if(a.usedLearningIds.isEmpty())""else"；当时使用的变化 ${a.usedLearningIds.joinToString()}"
     }
-    append("这些记录不直接改写人设原文或权限；稳定资料与起始倾向依人设与成长共同规则区分。自己的判断无需讨好对方，但须忠于依据并说明不确定，不能把未执行的事说成已完成。")
+    append("这些记录不直接改写人设原文或权限；稳定身份与核心原则不变，普通偏好与相处习惯可随有依据的互动自然调整。自己的判断无需讨好对方，但须忠于依据并说明不确定，不能把未执行的事说成已完成。")
     if(refs.isNotEmpty())append("\n${ExperiencePresentation.REFS}\n").append(refs.joinToString("\n"))
 }

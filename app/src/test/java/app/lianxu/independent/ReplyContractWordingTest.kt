@@ -42,9 +42,10 @@ class ReplyContractWordingTest {
 
     @Test fun boundariesSurviveWithoutTheSteps(){
         val system=replySystem()
-        for(hint in listOf("不用跟着对方的情绪走","也不用每次都说自己有什么感受","先顾好对方这会儿要你做的事、说过的界限和你能做的范围","不同意也可以，温和地说出来就好")){
+        for(hint in listOf("不用强行附和或跟着对方的情绪走","也不用每次都说自己有什么感受","先顾好对方这会儿要你做的事、说过的界限和你能做的范围","有不同意见或小脾气时，按你自己的性子直接说出来就好")){
             assertTrue("边界句应保留：$hint",hint in system)
         }
+        assertFalse("不再强行要求温和客服腔","温和地说出来" in system)
         val mood=system.lines().first{"的心情是" in it}
         assertFalse("这一行用称呼，不用「用户」","用户" in mood)
         assertFalse("不再是说明书腔","不复制用户情绪" in system)
