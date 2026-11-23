@@ -19,15 +19,25 @@ internal object ToolboxPreferences {
     }
     fun encodeOrder(values:List<String>):String=JSONArray(values).toString().also{order(it)}
     suspend fun loadOrder(store:Store)=order(store.preference(ORDER_KEY,encodeOrder(defaultOrder)))
-    suspend fun saveOrder(store:Store,values:List<String>)=store.setPreference(ORDER_KEY,encodeOrder(values))
+    suspend fun saveOrder(store:Store,values:List<String>)=LocalStep.TOOLBOX_ORDER.observe(result = LocalResult::insert) { store.setPreference(ORDER_KEY,encodeOrder(values)) }
     fun videoMode(stored:String)=if(stored.isBlank()) VideoMode.FRAMES else VideoMode.valueOf(stored)
     suspend fun videoMode(store:Store)=videoMode(store.preference(VIDEO_KEY,""))
     fun videoMode(db:android.database.sqlite.SQLiteDatabase)=videoMode(ChatImages.setting(db,VIDEO_KEY))
     suspend fun saveVideoMode(store:Store,mode:VideoMode)=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
-        val db=store.writableDatabase;db.beginTransaction()
-        try{for((key,value) in listOf(VIDEO_KEY to mode.name,VIDEO_REVISION to java.util.UUID.randomUUID().toString()))
-            db.insertWithOnConflict("preferences",null,android.content.ContentValues().apply{put("key",key);put("value",value)},android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE)
-            db.setTransactionSuccessful()
-        }finally{db.endTransaction()}
+        LocalStep.VIDEO_MODE.observe(result = { it }) {
+            var result = LocalResult.COMPLETED
+            val db = store.writableDatabase
+            db.beginTransaction()
+            try {
+                for ((key, value) in listOf(VIDEO_KEY to mode.name, VIDEO_REVISION to java.util.UUID.randomUUID().toString())) {
+                    val values = android.content.ContentValues().apply { put("key",key); put("value",value) }
+                    val row = db.insertWithOnConflict("preferences", null, values, android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE)
+                    if (row == -1L) result = LocalResult.WRITE_REJECTED
+                }
+                db.setTransactionSuccessful()
+            } finally { db.endTransaction() }
+            result
+        }
+        Unit
     }
 }

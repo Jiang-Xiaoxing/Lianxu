@@ -82,7 +82,10 @@ internal fun memoryFailureFor(code:String):ChatFailure=when(code){
 }
 sealed interface TextChatResult {    data class Success(val text:String,val toolCalls:List<ChatToolCall> = emptyList(),@Transient val continuation:ProviderContinuation?=null,val displayReasoning:String=""):TextChatResult
     /** detail: what the provider actually said (HTTP status plus body) or the low-level error, keys masked. */
-    data class Failure(val reason:ChatFailure,val httpStatus:Int?=null,val detail:String=""):TextChatResult
+    data class Failure(val reason:ChatFailure,val httpStatus:Int?=null,val detail:String=""):TextChatResult {
+        // Set only when the wire parser recognized this tool but could not return a tool batch.
+        internal var rejectedVoiceCall = false
+    }
 }
 /** Native provider fields only; neither event is a completed/committed reply. */
 sealed interface TextStreamEvent {

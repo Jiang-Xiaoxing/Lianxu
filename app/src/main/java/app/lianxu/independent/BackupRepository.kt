@@ -41,14 +41,14 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
     private fun row(c:Cursor)=JsonObject().apply{c.columnNames.forEachIndexed{i,k->when(c.getType(i)){Cursor.FIELD_TYPE_NULL->add(k,JsonNull.INSTANCE);Cursor.FIELD_TYPE_INTEGER->addProperty(k,c.getLong(i));Cursor.FIELD_TYPE_STRING->addProperty(k,c.getString(i));Cursor.FIELD_TYPE_FLOAT->addProperty(k,c.getDouble(i));else->error("资料含不支持的列类型")}}}
     private fun prefs(db:SQLiteDatabase)=db.rawQuery("SELECT key,value FROM preferences ORDER BY key",null).use{c->buildMap{while(c.moveToNext())put(c.getString(0),c.getString(1))}}
     private fun roleKey(key:String,id:String,turns:Set<String>,batches:Set<String>):Boolean =
-        key in setOf(RolePromptStore.key(id),RelationStorage.key(id),ReplyAccountingQueue.batchKey(id),"role-examples:$id",MemoryAssociations.key(id))||key.startsWith("memory-reference-v1:$id:")||turns.any{key=="memory-recall-usage:$it"||key==ChatToolJournal.key(it)||key==ReplyAccountingQueue.key(it)||key==ReplyAccountingQueue.readsKey(it)}||batches.any{key=="memory-dropped:$it"}
+        key in setOf(RolePromptStore.key(id),RelationStorage.key(id),ReplyAccountingQueue.batchKey(id),"role-examples:$id",MemoryAssociations.key(id))||key.startsWith("memory-reference-v1:$id:")||turns.any{key=="memory-recall-usage:$it"||key==ChatToolJournal.key(it)||key==OrderedChatReply.PREFIX+it||key==ReplyAccountingQueue.key(it)||key==ReplyAccountingQueue.readsKey(it)}||batches.any{key=="memory-dropped:$it"}
     /**
      * Rebuildable rows that a backup leaves out: relationship caches and the derived core-memory selection
      * are recomputed from the restored data. Per-turn tool receipts (the pills shown on old rounds) cannot be
      * recomputed, so they travel with their role; only receipts whose turn belongs to no role are skipped.
      */
     private val derivedPrefixes=listOf("relationship-cache:","memory-core-set:")
-    private fun ignored(key:String)=derivedPrefixes.any{key.startsWith(it)}||key.startsWith(ChatToolJournal.PREFIX)||key.startsWith("memory-tools:")||key.startsWith(ChatLedger.ERROR_PREFIX)||key.startsWith(ContactFailures.ERROR_PREFIX)||key.startsWith(ModelStatusStore.PREFIX)||key.startsWith("memory-batch-failure:")||key.startsWith("memory-vectors-v1:")||key.startsWith("model-vault-generation:")
+    private fun ignored(key:String)=derivedPrefixes.any{key.startsWith(it)}||key.startsWith(ChatToolJournal.PREFIX)||key.startsWith(OrderedChatReply.PREFIX)||key.startsWith("memory-tools:")||key.startsWith(ChatLedger.ERROR_PREFIX)||key.startsWith(ContactFailures.ERROR_PREFIX)||key.startsWith(ModelStatusStore.PREFIX)||key.startsWith("memory-batch-failure:")||key.startsWith("memory-vectors-v1:")||key.startsWith("model-vault-generation:")
     private fun snapshot(db:SQLiteDatabase,id:String,files:MutableMap<String,BackupAssetSource>,budget:Budget=Budget(),valid:()->Unit={}):JsonObject {
         val friend=db.rawQuery("SELECT * FROM friends WHERE id=?",arrayOf(id)).use{check(it.moveToFirst()){ "角色已不存在" };row(it).also(budget::json)}
         val tables=JsonObject();order.forEach{table->tables.add(table,rows(db,table,id,budget))}
@@ -102,7 +102,10 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
         try{validate(db,prepared.root,prepared.files,valid);context[Job]?.invokeOnCompletion{cause->if(cause!=null)prepared.close()};Export(prepared.root,prepared.files)}catch(e:Throwable){prepared.close();throw e}
     }}
     private fun modelJson(row:BackupModel,includeKeys:Boolean)=JsonObject().apply{add("config",Gson().toJsonTree(row.config));if(includeKeys)addProperty("key",row.secret.orEmpty())}
-    private fun models(root:JsonObject)=root["models"].asJsonArray.map{v->val j=v.asJsonObject;require(j.keySet()==if(root["includesKeys"].asBoolean&&!BackupKeySeal.sealed(root))setOf("config","key")else setOf("config"));val fields=j["config"].asJsonObject.keySet();val required=setOf("id","name","providerId","baseUrl","modelId","contextTokens","outputTokens");val optional=setOf("memoryOutputTokens","thinkingMode","thinkingCustom");require(fields.containsAll(required)&&optional.containsAll(fields-required));val cfg=j["config"].asJsonObject.deepCopy();for((k,d) in listOf("thinkingMode" to "default","thinkingCustom" to "")){if(cfg.has(k))require(cfg.get(k).isJsonPrimitive&&cfg.get(k).asJsonPrimitive.isString){"模型配置无效"}else cfg.addProperty(k,d)};val config=Gson().fromJson(cfg,ModelConfig::class.java)
+    private fun models(root:JsonObject)=root["models"].asJsonArray.map{v->val j=v.asJsonObject;require(j.keySet()==if(root["includesKeys"].asBoolean&&!BackupKeySeal.sealed(root))setOf("config","key")else setOf("config"));val fields=j["config"].asJsonObject.keySet();val required=setOf("id","name","providerId","baseUrl","modelId","contextTokens","outputTokens");val optional=setOf("memoryOutputTokens","thinkingMode","thinkingCustom","streamReplies");require(fields.containsAll(required)&&optional.containsAll(fields-required));val cfg=j["config"].asJsonObject.deepCopy();for((k,d) in listOf("thinkingMode" to "default","thinkingCustom" to "")){if(cfg.has(k))require(cfg.get(k).isJsonPrimitive&&cfg.get(k).asJsonPrimitive.isString){"模型配置无效"}else cfg.addProperty(k,d)}
+        if (cfg.has("streamReplies")) require(cfg["streamReplies"].isJsonPrimitive && cfg["streamReplies"].asJsonPrimitive.isBoolean) { "模型回复方式无效" }
+        else cfg.addProperty("streamReplies", true)
+        val config=Gson().fromJson(cfg,ModelConfig::class.java)
         require(config.id.matches(Regex("[a-zA-Z0-9-]{1,80}"))&&config.name.length<=200&&config.modelId.length<=200&&config.baseUrl.length<=2000&&ConfigRules.validate(config,"validation-placeholder")==null&&ThinkingMode.entries.any{it.key==config.thinkingMode}&&config.thinkingCustom.length<=4000&&ThinkingFields.customError(config.thinkingCustom)==null){"模型配置无效"}
         val key=if(j.has("key"))j["key"].asString else null;require(key==null||key.length<=4096&&key.none{it.isWhitespace()||it.code<32}){"密钥字段格式无效"};BackupModel(config,key)
     }
@@ -236,7 +239,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
         require(mode in setOf("ADD","REPLACE"));require(mode!="REPLACE"||pack.all||target!=null){"请选择要覆盖的角色"}
         require(pack.legacy==null){"请通过旧格式兼容入口导入"}
         val safe=pack.copy(root=pack.root.deepCopy());val relationReport=RelationshipBackup.sanitize(safe.root)
-        validate(db,safe.root,safe.files,valid)
+        LocalStep.PREVIEW_VALIDATE.observe { validate(db,safe.root,safe.files,valid) }
         if(mode=="REPLACE"&&target!=null)require(db.rawQuery("SELECT 1 FROM friends WHERE id=?",arrayOf(target)).use{it.moveToFirst()})
         val impact=if(mode=="ADD")"新增 ${pack.roles.size()} 个独立角色及全部包内角色资料；保留当前角色、设置、模型服务和密钥，不启用包内凭据。"else if(pack.all)"替换软件全部角色、聊天、记忆、关系、资源、设置和模型配置。${if(pack.includesKeys&&BackupKeySeal.sealed(pack.root))"备份里的 API 密钥用备份密码加了密，覆盖时需要输入导出时设的密码。"else if(pack.includesKeys)"备份含可直接使用的 API 密钥，请勿分享。"else "备份没有密钥：仅按原服务身份和原端点匹配保留，不能匹配的原安全配置会另行保留，不自动选择。"}不会恢复在途任务或自动请求模型。"else "替换明确选中的角色全部资料和资源，其他角色及全局模型配置保留。"
         val hashes=assetHashes(safe.files,valid);Preview(safe,mode,target,fingerprint(db,valid),contentDigest(safe,hashes),impact,relationReport,hashes)
@@ -252,26 +255,25 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
         val pack=plan.pack.copy(root=plan.pack.root.deepCopy())
         val valid={check(lease.isActive()){ "导入已取消" };checkpoint()}
         // Only a full replace puts the package's keys to use, so only then is the backup password needed.
-        val keysRoot=if(plan.mode=="REPLACE"&&pack.all&&BackupKeySeal.sealed(pack.root))BackupKeySeal.open(pack.root,password?:throw BackupKeySeal.NeedsPassword()) else pack.root
+        val keysRoot=if(plan.mode=="REPLACE"&&pack.all&&BackupKeySeal.sealed(pack.root)) BackupKeySeal.open(pack.root,password) else pack.root
         val action={
         require(plan.mode!="REPLACE"||confirmed){"覆盖需要明确确认"};if(plan.mode=="REPLACE"){if(pack.all)store.memorySummary.requireAllEditable()else store.memorySummary.requireEditable(requireNotNull(plan.target))};val db=store.writableDatabase;var staged:ModelVault.Prepared?=null
         db.beginTransaction();var committed=false
         try {
-            check(lease.isActive()){ "导入已取消" };require(contentDigest(pack,assetHashes(pack.files,valid))==plan.contentDigest){"备份内容已变化，请重新预览"};require(fingerprint(db,valid)==plan.fingerprint){"资料或配置已变化，请重新预览"};validate(db,pack.root,pack.files,valid)
+            check(lease.isActive()){ "导入已取消" };LocalStep.RECHECK.observe { require(contentDigest(pack,assetHashes(pack.files,valid))==plan.contentDigest){"备份内容已变化，请重新预览"};require(fingerprint(db,valid)==plan.fingerprint){"资料或配置已变化，请重新预览"};validate(db,pack.root,pack.files,valid) }
             val pages=db.rawQuery("PRAGMA page_count",null).use{it.moveToFirst();it.getLong(0)}
             val pageSize=db.rawQuery("PRAGMA page_size",null).use{it.moveToFirst();it.getLong(0)}
             val resources=BackupAssetIO.total(pack.files);val metadata=pack.root.toString().toByteArray(Charsets.UTF_8).size.toLong()
             val needed=Math.addExact(Math.multiplyExact(resources,2),Math.addExact(metadata*4,if(plan.mode=="REPLACE")Math.multiplyExact(pages,pageSize)else 0))
-            ImageDisk.space(store.applicationContext.filesDir,needed,availableSpace(store.applicationContext.filesDir));valid()
+            LocalStep.CHECK_SPACE.observe { ImageDisk.space(store.applicationContext.filesDir,needed,availableSpace(store.applicationContext.filesDir)) };valid()
             val restoredAvatar=if(plan.mode=="REPLACE"&&pack.all)pack.root["preferences"].asJsonObject[UserAvatarData.KEY]?.asString?.let(UserAvatarData::forRestore)else null
-            if(plan.mode=="REPLACE"&&pack.all){staged=vault.prepareRestore(models(keysRoot),pack.root["selections"].asJsonObject.entrySet().associate{(k,v)->ModelPurpose.entries.first{it.key==k} to v.asString},pack.includesKeys);clearAll(db);checkpoint()}
-            val imported=pack.roles.map{v->val old=v.asJsonObject;val target=if(plan.mode=="REPLACE"&&!pack.all)plan.target!! else UUID.randomUUID().toString();if(plan.mode=="REPLACE"&&!pack.all)clearRole(db,target);restore(db,old,target,pack.files,valid,plan.assetDigests);target}
+            if(plan.mode=="REPLACE"&&pack.all){staged=LocalStep.STAGE_MODELS.observe { vault.prepareRestore(models(keysRoot),pack.root["selections"].asJsonObject.entrySet().associate{(k,v)->ModelPurpose.entries.first{it.key==k} to v.asString},pack.includesKeys) };clearAll(db);checkpoint()}
+            val imported=LocalStep.RESTORE_ROWS.observe { pack.roles.map{v->val old=v.asJsonObject;val target=if(plan.mode=="REPLACE"&&!pack.all)plan.target!! else UUID.randomUUID().toString();if(plan.mode=="REPLACE"&&!pack.all)clearRole(db,target);restore(db,old,target,pack.files,valid,plan.assetDigests);target} }
             if(plan.mode=="REPLACE"&&pack.all){pack.root["preferences"].asJsonObject.entrySet().forEach{(k,v)->if(k==UserAvatarData.KEY){restoredAvatar?.let{pref(db,k,it)}}else pref(db,k,v.asString)};pref(db,vault.generationKey,staged!!.generation)
                 // This database already has the current schema; an older backup without the marker must not reopen proactive recall later.
                 pref(db,MemoryForgetting.RECALL_DEFAULT_MIGRATED,"true")}
-            checkpoint();check(lease.commit{db.setTransactionSuccessful();true}){ "导入已取消" }
-            db.endTransaction();committed=true
-            staged?.let{vault.finishRestore(it)}
+            checkpoint();LocalStep.COMMIT.observe { check(lease.commit{db.setTransactionSuccessful();true}){ "导入已取消" };db.endTransaction() };committed=true
+            staged?.let{ LocalStep.FINISH_MODELS.observe { vault.finishRestore(it) } }
             imported
         }finally{
             try{if(db.inTransaction())db.endTransaction()}finally{
@@ -359,6 +361,7 @@ internal class BackupRemapper(private val old:String,private val id:String,priva
         if(key.startsWith("memory-reference-v1:$old:")){val n=key.substringAfterLast(':').toLong();return "memory-reference-v1:$id:${messages[n]?:error("原话引用缺失")}"}
         if(key.startsWith("memory-recall-usage:"))return "memory-recall-usage:"+(strings[key.removePrefix("memory-recall-usage:")]?:error("轮次引用缺失"))
         if(key.startsWith("memory-dropped:"))return "memory-dropped:"+(strings[key.removePrefix("memory-dropped:")]?:error("批次引用缺失"))
+        if(key.startsWith(OrderedChatReply.PREFIX))return OrderedChatReply.PREFIX+(strings[key.removePrefix(OrderedChatReply.PREFIX)]?:error("轮次引用缺失"))
         if(key.startsWith(ChatToolJournal.PREFIX))return ChatToolJournal.key(strings[key.removePrefix(ChatToolJournal.PREFIX)]?:error("轮次引用缺失"))
         error("不支持的角色设置")
     }

@@ -5,7 +5,7 @@ import kotlinx.coroutines.*
 import java.util.UUID
 
 /** User text is durable before draft acknowledgement; only the owning attempt can append a reply. */
-class ConversationRunner(private val scope:CoroutineScope,private val store:Store,private val vault:ModelVault,private val client:TextChatClient,private val processing:ProcessingRepository,private val memory:MemoryEngine,private val changed:suspend()->Unit,private val notice:(String)->Unit,private val settled:suspend()->Unit={},private val displayReplies:Boolean=false,private val ownForegroundRequests:Boolean=false,private val onIdle:()->Unit={}) {
+class ConversationRunner(private val scope:CoroutineScope,private val store:Store,private val vault:ModelVault,private val client:TextChatClient,private val processing:ProcessingRepository,private val memory:MemoryEngine,private val changed:suspend()->Unit,private val notice:(String)->Unit,private val settled:suspend()->Unit={},private val displayReplies:Boolean=false,private val ownForegroundRequests:Boolean=false,private val isReadingChat:((String)->Boolean)?=null,private val appInForeground:(()->Boolean)?=null,private val onIdle:()->Unit={}) {
     private val ledger=ChatLedger(store)
     private val modelStatus=ModelStatusStore(store,vault.statusNamespace)
     private val companion=CompanionRepository(store){AppServices.companionClock()}
@@ -201,14 +201,49 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
             }
         }
     }
-    private suspend fun awaitDisplay(st:AttemptState,current:()->Boolean){
-        while(!st.delivery.completed.isCompleted){
+    private suspend fun finalTranscript(role:String,st:AttemptState,streamReplies:Boolean,current:()->Boolean):String {
+        while(streamReplies && !st.delivery.completed.isCompleted){
             currentCoroutineContext().ensureActive()
             if(!current())throw CompanionModelFailure(ChatFailure.SOURCE_CHANGED)
+            // Away from this chat there is no page to acknowledge the durable final bubbles.
+            // Keep the visible prefix intact in case stop wins before the transaction commits.
+            if (isReadingChat?.invoke(role) == false) break
             withTimeoutOrNull(250){st.delivery.completed.await()}
         }
         st.displaySave?.join()
+        return st.delivery.bubbles.joinToString("\n\n")
     }
+
+    private fun submitVoiceParts(turn:ChatTurn,reply:ReceivedChatReply,body:String) {
+        val target=reply.voiceTarget ?: return
+        val parts=OrderedChatReply.decode(body,reply.replyLayout) ?: return
+        val app=store.applicationContext
+        val account=BreezeVoiceAccount(app)
+        val lastVoice=parts.indexOfLast { it.voice }
+        parts.forEachIndexed { index,part ->
+            if(part.voice){
+                val id=OrderedChatReply.audioKey(turn,body,index)
+                ChatVoiceDelivery.submit(app,turn.friendId,id,valid={
+                    account.target(turn.friendId)==target && store.readableDatabase.rawQuery(
+                        "SELECT 1 FROM chat_turns t JOIN messages m ON m.id=t.assistant_message_id WHERE t.id=? AND t.attempt=? AND t.state='COMPLETED' AND m.body=? AND NOT EXISTS(SELECT 1 FROM message_state s WHERE s.message_id=m.id AND s.deleted=1)",
+                        arrayOf(turn.id,turn.attempt.toString(),body)).use { it.moveToFirst() }
+                },trace=VoiceTrace(turn.id,turn.attempt,target.provider,index),visibility={
+                    when(appInForeground?.invoke()){
+                        false->VoiceStatus.APP_BACKGROUND
+                        true->if(isReadingChat?.invoke(turn.friendId)==true) VoiceStatus.CHAT_VISIBLE else VoiceStatus.OTHER_PAGE
+                        null->VoiceStatus.VISIBILITY_UNKNOWN
+                    }
+                }){ account.synthesize(turn.friendId,RequestedVoiceReply(part.text,target),moreVoiceParts=index<lastVoice) }
+            }
+        }
+    }
+
+    private suspend fun notifySavedReply(turn: ChatTurn) {
+        savedReplyNotification(turn, isReadingChat, { ledger.completedMessageId(turn) },
+            { id -> ChatReplyNotifications.post(store.applicationContext, turn, id) },
+            { error -> Diagnostics.failure("chat.reply.notification.failed", error) })
+    }
+
     private suspend fun restoreDelivery(turn:ChatTurn,reply:ReceivedChatReply,lease:ChatAttemptLease,lock:kotlinx.coroutines.sync.Mutex,st:AttemptState){
         lock.lock(lease);st.locked=true
         ReplyGate.enter(turn.friendId);st.gated=true
@@ -216,7 +251,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         val config=withContext(Dispatchers.IO){vault.list().find{it.id==turn.configId}}?:throw CompanionModelFailure(ChatFailure.SOURCE_CHANGED)
         val route=ChatImageRoute(store,vault,client,turn,config,st.epoch){lease.isActive()}
         fun current()=lease.isActive()&&AppMutationGate.epoch()==st.epoch&&vault.purposeId(ModelPurpose.CHAT)==turn.configId&&
-            stableDigest(config.toString())==reply.configStamp&&vault.matchesCached(config)&&ledger.hasReceived(turn.id,turn.attempt)&&route.validReceived(store.readableDatabase,reply.images)&&
+            config.matchesReceivedStamp(reply.configStamp)&&vault.matchesCached(config)&&ledger.hasReceived(turn.id,turn.attempt)&&route.validReceived(store.readableDatabase,reply.images)&&
             companion.current(store.readableDatabase,reply.companion)&&processing.referenceCurrent(turn.friendId,reply.referencesStamp)
         if(context.stamp!=reply.contextStamp||!current())throw CompanionModelFailure(ChatFailure.SOURCE_CHANGED)
         st.current=::current
@@ -224,15 +259,17 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         val tools=MemoryTools(processing,turn,context.input,ProcessingRepository.References(emptyList(),emptyList(),reply.referencesStamp,reply.memory.at),active=::current)
         val activities=ledger.activities(turn.id)
         st.delivery.restoreFinal(reply.bubbles)
-        previews=previews+(turn.friendId to ChatReplyPreview(turn.id,turn.attempt,text=reply.bubbles.joinToString("\n\n"),reasoning=reply.reasoning,
+        if (config.streamReplies && reply.replyLayout==null) previews=previews+(turn.friendId to ChatReplyPreview(turn.id,turn.attempt,text=reply.bubbles.joinToString("\n\n"),reasoning=reply.reasoning,
             phase=ChatReplyPhase.REPLYING,tools=activities,bubbles=st.delivery.bubbles,visible=st.delivery.visible))
-        if(!displayReplies)st.delivery.acknowledge(st.delivery.bubbles.size)
-        awaitDisplay(st,::current)
-        val saved=ledger.finishWithMemory(turn.id,turn.attempt,st.delivery.spoken,lease,reply.contextStamp,{db->
-            route.commit(db,reply.images);tools.commit(db,reply.memory);companion.finishReply(db,turn,reply.companion)
+        if(!displayReplies || reply.replyLayout!=null)st.delivery.acknowledge(st.delivery.bubbles.size)
+        val transcript=finalTranscript(turn.friendId,st,config.streamReplies,::current)
+        val saved=ledger.finishWithMemory(turn.id,turn.attempt,transcript,lease,reply.contextStamp,{db->
+            route.commit(db,reply.images);tools.commit(db,reply.memory);companion.finishReply(db,turn,reply.companion);OrderedChatReply.save(db,turn.id,reply.replyLayout)
         },reply.reasoning,::current)
         if(!saved)throw CompanionModelFailure(ChatFailure.SOURCE_CHANGED)
         st.settled[0]=true;st.settled[2]=true
+        notifySavedReply(turn)
+        submitVoiceParts(turn,reply,transcript)
         changed()
     }
     /** What one attempt shares with its cleanup; allocated up front so the cancellation path allocates nothing new. */
@@ -401,7 +438,7 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
             }
         }
         val voiceAccount=BreezeVoiceAccount(store.applicationContext)
-        fun toolRunner()=MemoryTools(processing,current,context.input,refs,companionIndex,memoryVectors=vectors,queryCache=queryCache,relationEnabled=needsPlan,controlTool=controlTool,freshControlContext={requireNotNull(freshControlContext).invoke()},contactTool=contactTool,contactTime=appraisalTime,contactZone=contactZone,contactScheduling=contactScheduling,voiceTarget={voiceAccount.target(friendId)}){modelCurrent()&&companion.current(store.readableDatabase,companionState)&&processing.referenceCurrent(friendId,refs.stamp)}
+        fun toolRunner()=MemoryTools(processing,current,context.input,refs,companionIndex,memoryVectors=vectors,queryCache=queryCache,relationEnabled=needsPlan,controlTool=controlTool,freshControlContext={requireNotNull(freshControlContext).invoke()},contactTool=contactTool,contactTime=appraisalTime,contactZone=contactZone,contactScheduling=contactScheduling,voiceEligibility={voiceAccount.eligibility(friendId)}){modelCurrent()&&companion.current(store.readableDatabase,companionState)&&processing.referenceCurrent(friendId,refs.stamp)}
         val accountRecord=false // Mood/relationship review waits for the configured batch, never the reply.
         fun toolReserve()=toolRunner().reservedTokens()
         fun jointReserve()=if(needsPlan)planner.replyFixedTokens(interpretation,roleState,appraisalTime,rules.proactiveRecall,accountRecord,context.persona)+(context.recent.size+6)*8 else 0
@@ -454,9 +491,9 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
             // so an old JSON envelope can never be shown as its reply and saved as the whole shell.
             var decoder=ChatDisplayDecoder()
             val raw=withContext(Dispatchers.IO){tools.run(credentials.config,credentials.key,(built as PromptBuild.Ready).request.copy(conversationId=ProviderRequestMetadata.conversation(friendId)),imageRoute,
-                onResponseStart={decoder=ChatDisplayDecoder();resetPreview()},onEvent={event->receive(event,decoder)},onToolActivity={showTool(it)})}
+                onResponseStart={decoder=ChatDisplayDecoder();resetPreview()},onEvent=if(credentials.config.streamReplies) { event -> receive(event,decoder) } else null,onToolActivity={showTool(it)})}
             if(raw is TextChatResult.Success){
-                val text=tools.spokenReply?.text?:ChatDisplayDecoder().append(raw.text)
+                val text=if(tools.orderedParts!=null) raw.text else ChatDisplayDecoder().append(raw.text)
                 if(text.isBlank()||text.length>16000)TextChatResult.Failure(ChatFailure.REPLY_TEXT_INVALID)else raw.copy(text=text)
             }else raw
         }
@@ -465,39 +502,37 @@ class ConversationRunner(private val scope:CoroutineScope,private val store:Stor
         modelStatus.recordCall(credentials.config.id,"聊天",result is TextChatResult.Success,(result as? TextChatResult.Failure)?.reason?.display.orEmpty())
         when(result){
             is TextChatResult.Success->{
-                withContext(Dispatchers.Main.immediate){currentCoroutineContext().ensureActive();st.delivery.update(result.text,final=true)}
+                val parts=withContext(Dispatchers.Main.immediate){
+                    currentCoroutineContext().ensureActive()
+                    val ordered=tools.orderedParts
+                    if(ordered==null){st.delivery.update(result.text,final=true);null}
+                    else st.delivery.finishOrdered(ordered)?:throw CompanionModelFailure(ChatFailure.REPLY_TEXT_INVALID)
+                }
                 val receipt=ReceivedChatReply(st.delivery.bubbles,result.displayReasoning,context.stamp,refs.stamp,
                     stableDigest(credentials.config.toString()),companionState.copy(prompt="",overview="",learning=emptyList(),references=emptyList(),roleProfile="",replyPrompt="",proactivePrompt=""),
-                    imageRoute.receivedEffects(),tools.receivedEffects(),st.settled[1])
+                    imageRoute.receivedEffects(),tools.receivedEffects(),st.settled[1],parts?.let(OrderedChatReply::encode),tools.spokenReply?.target)
                 if(!ledger.saveReceived(current,receipt,lease){modelCurrent()&&companion.current(store.readableDatabase,companionState)&&processing.referenceCurrent(friendId,refs.stamp)})
                     throw CompanionModelFailure(ChatFailure.SOURCE_CHANGED)
                 ChatRequestOwner.release(st.owner)
                 currentCoroutineContext().ensureActive()
                 withContext(Dispatchers.Main.immediate){
-                    if(!displayReplies || tools.spokenReply!=null)st.delivery.acknowledge(st.delivery.bubbles.size)
-                    if(tools.spokenReply==null) previews[friendId]?.takeIf{it.turnId==current.id&&it.attempt==current.attempt}?.let{
+                    if(!displayReplies || parts!=null)st.delivery.acknowledge(st.delivery.bubbles.size)
+                    if(credentials.config.streamReplies && parts==null) previews[friendId]?.takeIf{it.turnId==current.id&&it.attempt==current.attempt}?.let{
                         previews=previews+(friendId to it.copy(text=result.text,phase=ChatReplyPhase.REPLYING,bubbles=st.delivery.bubbles,visible=if(displayReplies)it.visible else st.delivery.visible))
                     }
                 }
 
                 fun receivedCurrent()=modelCurrent()&&ledger.hasReceived(current.id,current.attempt)
                 st.current=::receivedCurrent
-                awaitDisplay(st,::receivedCurrent)
-                val saved=ledger.finishWithMemory(current.id,current.attempt,st.delivery.spoken,lease,context.stamp,{db->imageRoute.commit(db);tools.commit(db);companion.finishReply(db,current,companionState)},displayReasoning=result.displayReasoning){
+                val transcript=finalTranscript(friendId,st,credentials.config.streamReplies,::receivedCurrent)
+                val saved=ledger.finishWithMemory(current.id,current.attempt,transcript,lease,context.stamp,{db->imageRoute.commit(db);tools.commit(db);companion.finishReply(db,current,companionState);OrderedChatReply.save(db,current.id,receipt.replyLayout)},displayReasoning=result.displayReasoning){
                     receivedCurrent()&&companion.current(store.readableDatabase,companionState)&&processing.referenceCurrent(friendId,refs.stamp)
                 }
                 if(!saved)ledger.fail(current.id,current.attempt,ChatFailure.SOURCE_CHANGED)
                 else {
                     st.settled[0]=true;st.settled[2]=true
-                    tools.spokenReply?.let { reply ->
-                        val id=ChatVoiceDelivery.key(friendId,current.id,current.attempt,reply.text)
-                        val app=store.applicationContext
-                        ChatVoiceDelivery.submit(app,friendId,id,valid={
-                            voiceAccount.target(friendId)==reply.target && store.readableDatabase.rawQuery(
-                                "SELECT 1 FROM chat_turns t JOIN messages m ON m.id=t.assistant_message_id WHERE t.id=? AND t.attempt=? AND t.state='COMPLETED' AND m.body=? AND NOT EXISTS(SELECT 1 FROM message_state s WHERE s.message_id=m.id AND s.deleted=1)",
-                                arrayOf(current.id,current.attempt.toString(),reply.text)).use { it.moveToFirst() }
-                        }){voiceAccount.synthesize(friendId,reply)}
-                    }
+                    notifySavedReply(current)
+                    submitVoiceParts(current,receipt,transcript)
                     memory.afterChat(friendId)
                     settled()
                 }

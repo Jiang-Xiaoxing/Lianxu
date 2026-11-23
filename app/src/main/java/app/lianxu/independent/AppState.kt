@@ -43,7 +43,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     var notificationTarget by mutableStateOf<Long?>(null);private set
     internal suspend fun settleCompanion(){companionNotifications.reconcile();CompanionScheduler.enqueue(getApplication(),companion)}
     internal suspend fun changeCompanionPermission(role:String,enabled:Boolean){
-        companion.setPolicy(role,enabled,CompanionRuntime.owner)
+        LocalStep.COMPANION_PERMISSION.observe { companion.setPolicy(role,enabled,CompanionRuntime.owner) }
         if(!enabled)CompanionScheduler.cancel(getApplication(),role)
         if(activeId==role)companionPolicy=companion.contactPolicies()[role]?:"disabled"
         settleCompanion();reload()
@@ -75,6 +75,10 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
         if(forget)companion.forget(role,id)else companion.stopReminder(role,id)
         settleCompanion();reload()
     }}
+    internal var chatHostLifecycle: androidx.lifecycle.Lifecycle? = null
+    internal fun isReadingChat(role: String) = page == "chat" && activeId == role &&
+        chatHostLifecycle?.currentState?.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) == true
+
     internal fun notificationOpen(role:String,id:Long){viewModelScope.launch{
         while(!ready)delay(20)
         reload()
@@ -178,8 +182,10 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
             val written=withContext(Dispatchers.IO){runCatching{diagnosticSave.withLock{
                 val current=diagnosticDetailed
                 val raw=if(current)"1" else "0"
-                diagnosticPersist?.invoke(raw)
-                store.savePreference(EXPORT_DETAIL_PREF,raw)
+                LocalStep.DIAGNOSTIC_FORMAT.observe(result = LocalResult::insert) {
+                    diagnosticPersist?.invoke(raw)
+                    store.savePreference(EXPORT_DETAIL_PREF,raw)
+                }
                 current
             }}.getOrNull()}
             // The disk always reflects the newest completed write, whatever the switch shows now.
@@ -221,7 +227,16 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     private suspend fun recoverProcessing(){memory.recover();ReplyAccountingScheduler.recover(store)}
     fun foreground(){if(ready)viewModelScope.launch{runCatching{companion.checkContinuity(CompanionRuntime.owner);settleCompanion();reload();recoverProcessing()}}}
     // A chat attempt belongs to its role, not to the currently visible page.
-    fun open(page: String, id: String = "") { if(page=="detail") detailReturn=this.page;if(page=="settings-memory")memorySettingsReturn=this.page;if(page=="processing-role")processingReturn=if(this.page=="detail")"detail" else "processing"; cancelSearch(); this.page=page; activeId=id; error="" }
+    fun open(page: String, id: String = "") {
+        ProcessDiagnostics.action(if(page=="models") ProcessAction.OPEN_MODELS else ProcessAction.OPEN)
+        if (page == "detail") detailReturn = this.page
+        if (page == "settings-memory") memorySettingsReturn = this.page
+        if (page == "processing-role") processingReturn = if (this.page == "detail") "detail" else "processing"
+        cancelSearch()
+        this.page = page
+        activeId = id
+        error = ""
+    }
     fun back() { if(page=="chat" && memoryChatReturn){memoryChatReturn=false;memoryChatRequest.consume();page="processing-role";return}; if(page=="search-detail")page="search" else if(page=="settings-memory")page=memorySettingsReturn else if(page=="role-companion")page="toolbox-contact" else if(page.startsWith("toolbox-"))page="toolbox" else if(page=="role-voice"||page=="role-prompts"||page=="role-learning"||page=="role-relationship")page="detail" else if(page=="processing-role")page=processingReturn else if(page=="detail") page=detailReturn else { cancelSearch(); page="home" }; error="" }
     fun home() {cancelSearch(); page="home"; error="" }
     fun startSearch(){cancelSearch();page="search";error=""}
@@ -326,7 +341,7 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
                 val resolver=getApplication<Application>().contentResolver
                 requireNotNull(resolver.openInputStream(uri)).use{UserAvatarData.prepare(BackupArchive.bounded(it,BackupArchive.MAX_FILE))}
             }
-            store.savePreference(UserAvatarData.KEY,raw)
+            LocalStep.AVATAR.observe(result = LocalResult::insert) { store.savePreference(UserAvatarData.KEY,raw) }
             refreshUserAvatar()
         }
     }

@@ -16,7 +16,9 @@ internal class ChatRunnerBinding private constructor(private val key:Pair<String
             if(!binding::runner.isInitialized){
                 binding.memory=MemoryEngine(binding.scope,processing,ModelAccess(vault),client,{binding.host?.refreshChat()})
                 binding.runner=ConversationRunner(binding.scope,store,vault,client,processing,binding.memory,{binding.host?.refreshChat()},
-                    {binding.host?.chatNotice(it)},{binding.host?.settleCompanion()},displayReplies=true,ownForegroundRequests=true,onIdle=binding::releaseIfDetached)
+                    {binding.host?.chatNotice(it)},{binding.host?.settleCompanion()},displayReplies=true,ownForegroundRequests=true,
+                    isReadingChat={role -> binding.host?.isReadingChat(role) == true},
+                    appInForeground={binding.host?.chatHostLifecycle?.currentState?.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)==true},onIdle=binding::releaseIfDetached)
             }
             return binding
         }

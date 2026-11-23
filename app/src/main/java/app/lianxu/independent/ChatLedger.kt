@@ -9,7 +9,7 @@ import java.util.UUID
 import java.security.MessageDigest
 
 enum class TurnState { PENDING,COMPLETED,FAILED,CANCELLED,INTERRUPTED,SUPERSEDED }
-data class ChatTurn(val id:String,val friendId:String,val userMessageId:Long,val assistantMessageId:Long?,val state:TurnState,val attempt:Int,val configId:String,val failure:ChatFailure?,val toolActivities:List<ChatToolActivity> = emptyList(),val failureDetail:String="")
+data class ChatTurn(val id:String,val friendId:String,val userMessageId:Long,val assistantMessageId:Long?,val state:TurnState,val attempt:Int,val configId:String,val failure:ChatFailure?,val toolActivities:List<ChatToolActivity> = emptyList(),val failureDetail:String="",val replyLayout:String?=null)
 
 /** Local exactly-once persistence, not a promise of remote provider billing idempotency. */
 class ChatLedger(private val store:Store,private val session:String=processSession) {
@@ -38,7 +38,7 @@ class ChatLedger(private val store:Store,private val session:String=processSessi
     }
     private fun queryAll():List<ChatTurn> {
         val details=store.readableDatabase.rawQuery("SELECT key,value FROM preferences WHERE key LIKE ?",arrayOf("$ERROR_PREFIX%")).use{c->buildMap{while(c.moveToNext())put(c.getString(0).removePrefix(ERROR_PREFIX),c.getString(1))}}
-        return store.readableDatabase.rawQuery("SELECT id,friend_id,user_message_id,assistant_message_id,state,attempt,config_id,error_code FROM chat_turns ORDER BY user_message_id",null).use{c->buildList{while(c.moveToNext()){val t=read(c);add(t.copy(toolActivities=ChatToolJournal.read(store.readableDatabase,t.id).map{if(t.state!=TurnState.PENDING&&it.state=="running")it.copy(state="unknown")else it},failureDetail=if(t.state==TurnState.FAILED)details[t.id].orEmpty() else ""))}}}
+        return store.readableDatabase.rawQuery("SELECT id,friend_id,user_message_id,assistant_message_id,state,attempt,config_id,error_code,p.value AS reply_layout FROM chat_turns LEFT JOIN preferences p ON p.key='${OrderedChatReply.PREFIX}'||chat_turns.id ORDER BY user_message_id",null).use{c->buildList{while(c.moveToNext()){val t=read(c);add(t.copy(replyLayout=c.getString(c.getColumnIndexOrThrow("reply_layout")),toolActivities=ChatToolJournal.read(store.readableDatabase,t.id).map{if(t.state!=TurnState.PENDING&&it.state=="running")it.copy(state="unknown")else it},failureDetail=if(t.state==TurnState.FAILED)details[t.id].orEmpty() else ""))}}}
     }
     internal suspend fun activities(id:String)=withContext(Dispatchers.IO){ChatToolJournal.read(store.readableDatabase,id)}
     internal suspend fun recordActivity(id:String,attempt:Int,item:ChatToolActivity)=withContext(Dispatchers.IO){atomic{db->
@@ -128,6 +128,11 @@ class ChatLedger(private val store:Store,private val session:String=processSessi
     }
     suspend fun fail(id:String,attempt:Int,error:ChatFailure,detail:String="")=transition(id,attempt,TurnState.FAILED,error,detail)
     suspend fun cancel(id:String,attempt:Int)=transition(id,attempt,TurnState.CANCELLED,null)
+    internal suspend fun completedMessageId(expected:ChatTurn):Long? = withContext(Dispatchers.IO) {
+        turn(store.readableDatabase, expected.id)?.takeIf {
+            it.state == TurnState.COMPLETED && it.attempt == expected.attempt && it.friendId == expected.friendId
+        }?.assistantMessageId
+    }
     internal suspend fun spoken(id:String):String=withContext(Dispatchers.IO){
         store.readableDatabase.rawQuery("SELECT m.body FROM chat_turns t JOIN messages m ON m.id=t.assistant_message_id WHERE t.id=?",arrayOf(id)).use{if(it.moveToFirst())it.getString(0)else ""}
     }

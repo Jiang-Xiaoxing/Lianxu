@@ -53,7 +53,7 @@ class ModelConfigState @JvmOverloads constructor(
         val rows=vault.list();val selected=vault.defaultId()
         val selections=ModelPurpose.entries.associateWith{vault.purposeId(it)}
         val revisions=rows.associate{it.id to vault.recordStamp(it.id)}
-        val readTests=rows.mapNotNull{c->statusStore.testNow(c.id)?.let{c.id to it}}.toMap()
+        val readTests=rows.mapNotNull{c->statusStore.testNow(c.id)?.takeIf{it.baseUrl==c.baseUrl && it.model==c.modelId}?.let{c.id to it}}.toMap()
         val readCalls=rows.mapNotNull{c->statusStore.lastCallNow(c.id)?.let{c.id to it}}.toMap()
         // Publish the whole local snapshot before releasing the mutation gate; an older refresh cannot restore cleared tests.
         auxiliaryVision=ChatImages.enabled(storage.readableDatabase);configs=rows;defaultId=selected;purposes=selections;configRevisions=revisions;tests=readTests;calls=readCalls
@@ -105,7 +105,7 @@ class ModelConfigState @JvmOverloads constructor(
         var attempted=false;var configurationConfirmed=false;var selectionConfirmed=false
         try {
             var old:ModelConfig?=null;var oldKey="";var resolved="";var keep=false;var committedRevision=""
-            val invalid=withContext(Dispatchers.IO){AppMutationGate.write<String?>{
+            val invalid=LocalStep.MODEL_CONFIG.observe(result = { result: String? -> if (result == null) LocalResult.COMPLETED else LocalResult.INVALID_INPUT }) { withContext(Dispatchers.IO){AppMutationGate.write<String?>{
                 if(protectOthers&&ModelPurpose.entries.any{it!=ModelPurpose.CHAT&&vault.purposeId(it)==config.id})throw SharedCreationModel()
                 old=vault.list().find{it.id==config.id}
                 if(old!=original)throw StaleModelEditor()
@@ -127,6 +127,7 @@ class ModelConfigState @JvmOverloads constructor(
                 committedRevision=vault.recordStamp(config.id)
                 null
             }}
+            }
             if(invalid!=null){message(invalid,true);return@launch}
             reload()
             AppMutationGate.read{connections=if(keep&&vault.recordStamp(config.id)==committedRevision)connections+(config.id to probe) else connections-config.id}
@@ -167,7 +168,7 @@ class ModelConfigState @JvmOverloads constructor(
         if(busy)return;saving=true
         viewModelScope.launch{
             var attempted=false;var confirmed=false
-            try{withContext(Dispatchers.IO){attempted=true;vault.setPurpose(purpose,id);confirmed=true};reload();message("用途选择已保存，没有发起网络请求。")}
+            try{withContext(Dispatchers.IO){attempted=true;LocalStep.MODEL_PURPOSE.observe { vault.setPurpose(purpose,id) };confirmed=true};reload();message("用途选择已保存，没有发起网络请求。")}
             catch(e:CancellationException){throw e}
             catch(_:Exception){message(if(confirmed)"用途选择已保存，但状态刷新未完成。返回后可重新读取。"else if(attempted)"用途写入未确认，可能已改变。请返回核对或重试。"else"用途保存失败，请重试。",true)}finally{saving=false}
         }

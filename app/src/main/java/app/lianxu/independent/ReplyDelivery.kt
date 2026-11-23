@@ -46,6 +46,25 @@ internal class ReplyDelivery {
         finished = final
         settle()
     }
+    /** A late tool cannot rewrite a bubble the user has already seen. Ignore its parallel
+     * assistant content when it was still a draft, and retain prefixes from previous rounds. */
+    fun finishOrdered(parts: List<ReplyPart>): List<ReplyPart>? {
+        if(stopped) return null
+        var repeated=0
+        while(repeated<minOf(restored.size,parts.size) && restored[repeated]==parts[repeated].text) repeated++
+        val planned = parts.drop(repeated)
+        val previousRoundSize = earlier.size - ChatBubbleSegments.capped(restored).size
+        val overlap = (minOf(planned.size, previousRoundSize) downTo 1).firstOrNull { count ->
+            earlier.takeLast(count) == planned.take(count).map { it.text }
+        } ?: 0
+        val tail = planned.drop(overlap)
+        if(current.take(shown)!=tail.take(shown).map { it.text }) return null
+        current=tail.map { it.text }
+        finished=true
+        settle()
+        return earlier.dropLast(overlap).map { ReplyPart(it,false) } + planned
+    }
+
     fun nextResponse() {
         if (stopped) return
         earlier += current.take(shown)

@@ -65,6 +65,7 @@ class HttpsTextChatClient(
             // Whether the provider answered at all: only "no answer" is reported as 网络连不上.
             var responded:Int?=null
             fun shown(text:String)=Diagnostics.redact(text,listOf(key)).take(DETAIL_LIMIT)
+            var sawVoiceCall=false
             val result=try {
                 if(!continuation.isActive)return@submit
                 requestDiagnostics?.phase("prepare_body",mapOf("dns_tls_timing" to "not_exposed_by_urlconnection","server_received_bytes" to "unobservable","timeout_ms" to budget))
@@ -108,7 +109,18 @@ class HttpsTextChatClient(
                     ImageWire.write(body,request,requestDiagnostics?.observe(out)?:out)
                     requestDiagnostics?.phase("close_output_stream")
                 }
-                requestDiagnostics?.stage("http.request_sent",mapOf("request_bytes" to requestBytes,"stream" to (onEvent!=null)))
+                requestDiagnostics?.let { diagnostic ->
+                    val sent = buildMap<String,Any> {
+                        put("request_bytes",requestBytes); put("stream",onEvent!=null)
+                        if (capturedTrace?.links?.get("request_role") == "ordinary_chat") {
+                            val tools = body.optJSONArray("tools")
+                            put("voice_tool_provided", (0 until (tools?.length() ?: 0)).any { i ->
+                                tools?.optJSONObject(i)?.optJSONObject("function")?.optString("name") == "send_short_voice"
+                            })
+                        }
+                    }
+                    diagnostic.stage("http.request_sent",sent)
+                }
                 requestDiagnostics?.phase("await_response_headers")
                 val status=active.responseCode;responded=status
                 requestDiagnostics?.phase("read_response_body",mapOf("http_status" to status))
@@ -124,7 +136,7 @@ class HttpsTextChatClient(
                             override fun read():Int{val n=`in`.read(one,0,1);if(n>0){guard.read(one,0,1)?.let{throw StreamRejected(it)};return one[0].toInt() and 0xff};return -1}
                             override fun read(b:ByteArray,off:Int,len:Int):Int{val n=`in`.read(b,off,len);if(n>0)guard.read(b,off,n)?.let{throw StreamRejected(it)};return n}
                         }
-                        val streamed=readSse(limited.bufferedReader(),onEvent,key,request.tools.map(::toolNameOf).toSet(),StructuredResponsePolicy.supportsJsonObject(config),legacyContentResult,guard,
+                        val streamed=readSse(limited.bufferedReader(),onEvent,key,request.tools.map(::toolNameOf).toSet(),StructuredResponsePolicy.supportsJsonObject(config),legacyContentResult,guard,observeVoice={sawVoiceCall=true},
                             beforeRead={
                                 if(!continuation.isActive)throw StreamRejected("interrupted",reason=ChatFailure.INTERRUPTED)
                                 val remaining=((deadline-System.nanoTime())/1_000_000L).toInt();if(remaining<=0)throw SocketTimeoutException();active.readTimeout=minOf(budget,remaining)
@@ -148,7 +160,7 @@ class HttpsTextChatClient(
                             val counts=listOf("prompt_tokens","completion_tokens","total_tokens").map{usage.optLong(it,-1)}
                             if(counts.all{it>=0})Diagnostics.event("http.usage",mapOf("input_count" to counts[0],"output_count" to counts[1],"total_count" to counts[2]),trace=diagnosticTrace)
                         }
-                        parse(raw,key,request.tools.map(::toolNameOf).toSet(),StructuredResponsePolicy.supportsJsonObject(config)).also{result->
+                        parse(raw,key,request.tools.map(::toolNameOf).toSet(),StructuredResponsePolicy.supportsJsonObject(config)){sawVoiceCall=true}.also{result->
                             if(result is TextChatResult.Success&&onEvent!=null){
                                 if(result.displayReasoning.isNotEmpty())onEvent(TextStreamEvent.Reasoning(result.displayReasoning))
                                 onEvent(TextStreamEvent.Content(result.text))
@@ -175,6 +187,7 @@ class HttpsTextChatClient(
                 if(status==null)TextChatResult.Failure(if(unreachable(e))ChatFailure.NETWORK else ChatFailure.UNKNOWN,detail=shown(if(unreachable(e))"没有收到服务商的任何回应。\n$raw" else raw))
                 else TextChatResult.Failure(ChatFailure.RESPONSE_BROKEN,status,shown("HTTP $status\n$raw"))}
             finally{requestDiagnostics?.transferEnd(responded);diagnosticDisconnect(connection.getAndSet(null));diagnosticDisconnect(c)}
+            if(result is TextChatResult.Failure && sawVoiceCall) result.rejectedVoiceCall=true
             if(continuation.isActive)continuation.resume(result)
           }
         }
@@ -205,7 +218,7 @@ class HttpsTextChatClient(
     }
     private class StreamRejected(val check:String,val detail:String="",val reason:ChatFailure=streamCheckFailure(check)):Exception()
     /** Choice zero only. Native reasoning has its own event and is never promoted to dialogue. */
-    private fun readSse(reader:BufferedReader,onEvent:(TextStreamEvent)->Unit,key:String,allowedTools:Set<String>,retainContinuation:Boolean,legacyContentResult:Boolean,guard:SseStreamGuard,beforeRead:()->Unit,onProgress:(SseStreamGuard)->Unit):TextChatResult {
+    private fun readSse(reader:BufferedReader,onEvent:(TextStreamEvent)->Unit,key:String,allowedTools:Set<String>,retainContinuation:Boolean,legacyContentResult:Boolean,guard:SseStreamGuard,observeVoice:()->Unit,beforeRead:()->Unit,onProgress:(SseStreamGuard)->Unit):TextChatResult {
         data class Partial(val id:StringBuilder=StringBuilder(),val name:StringBuilder=StringBuilder(),val args:StringBuilder=StringBuilder())
         val data=StringBuilder();val text=StringBuilder();val reasoning=StringBuilder();val protocolReasoning=StringBuilder();val calls=sortedMapOf<Int,Partial>()
         val events=TextStreamEventCoalescer(onEvent);var reasoningField:String?=null
@@ -239,7 +252,10 @@ class HttpsTextChatClient(
             if(!delta.isNull("function_call"))throw StreamRejected("tools_unavailable",reason=ChatFailure.TOOLS_UNAVAILABLE)
             val fragments=delta.optJSONArray("tool_calls")
             if(fragments!=null&&fragments.length()>0){
-                if(allowedTools.isEmpty())throw StreamRejected("tools_unavailable",reason=ChatFailure.TOOLS_UNAVAILABLE)
+                if(allowedTools.isEmpty()){
+                    if(hasVoiceName(fragments)) observeVoice()
+                    throw StreamRejected("tools_unavailable",reason=ChatFailure.TOOLS_UNAVAILABLE)
+                }
                 if(finished)reject("after_finish")
                 for(i in 0 until fragments.length()){
                     val part=runCatching{fragments.getJSONObject(i)}.getOrElse{reject("tool_shape")};val index=part.opt("index")
@@ -261,6 +277,7 @@ class HttpsTextChatClient(
                 if(!legacyContentResult||allowedTools.isEmpty())events.append(TextStreamEvent.Content(content))
             }
             if(!choice.isNull("finish_reason")){
+                if(calls.values.any { "send_short_voice".contentEquals(it.name) }) observeVoice()
                 val reason=choice.getString("finish_reason")
                 if(reason in setOf("length","max_tokens","max_output_tokens"))throw StreamRejected("finish_length",reason=ChatFailure.TRUNCATED)
                 if(reason !in setOf("stop","end_turn","tool_calls"))reject("finish_value")
@@ -296,9 +313,13 @@ class HttpsTextChatClient(
         (parameter=="tools"&&code in setOf("unsupported_parameter")) ||
             (Regex("model.{0,100}(?:does not support|doesn’t support|cannot support) (?:the )?(?:tools?|function calling)\\b|(?:tools?|function calling) (?:is|are) not supported (?:by|for|with) (?:this |the )?model").containsMatchIn(message))
     }.getOrDefault(false)
-    internal fun parse(raw:String,key:String,allowedTools:Set<String> = emptySet(),retainContinuation:Boolean=false):TextChatResult {
+    private fun hasVoiceName(calls:JSONArray) = (0 until minOf(calls.length(),8)).any {
+        calls.optJSONObject(it)?.optJSONObject("function")?.optString("name")=="send_short_voice"
+    }
+    internal fun parse(raw:String,key:String,allowedTools:Set<String> = emptySet(),retainContinuation:Boolean=false,observeVoice:()->Unit={}):TextChatResult {
         val choice=JSONObject(raw).optJSONArray("choices")?.optJSONObject(0)?:return TextChatResult.Failure(ChatFailure.FORMAT)
         val message=choice.optJSONObject("message")?:return TextChatResult.Failure(ChatFailure.FORMAT)
+        message.optJSONArray("tool_calls")?.let { if(hasVoiceName(it)) observeVoice() }
         val displayReasoning=nativeReasoning(message)?.second.orEmpty()
         if(displayReasoning.length>256*1024||displayReasoning.isNotEmpty()&&displayReasoning.contains(key))return TextChatResult.Failure(ChatFailure.FORMAT)
         if(!message.isNull("function_call"))return TextChatResult.Failure(ChatFailure.TOOLS_UNAVAILABLE)

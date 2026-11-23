@@ -19,7 +19,8 @@ import java.net.URLEncoder
 
 
 internal data class SavedVoice(val id: String, val name: String)
-internal data class VoiceTarget(val account: String, val voice: String, val generation: Long, val catalog: Long = 0)
+internal data class VoiceTarget(val account: String, val voice: String, val generation: Long, val catalog: Long = 0, val provider: VoiceVendor = VoiceVendor.OTHER)
+internal data class VoiceEligibility(val target: VoiceTarget? = null, val reason: VoiceReason? = null)
 internal data class RequestedVoiceReply(val text: String, val target: VoiceTarget)
 
 internal class BreezeVoiceAccount(context: Context) {
@@ -60,25 +61,34 @@ internal class BreezeVoiceAccount(context: Context) {
         trySend(Triple(account,prefs.getLong("catalog",0),prefs.getBoolean("ready",false)))
         awaitClose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
     }.distinctUntilChanged()
-    fun target(role: String): VoiceTarget? = synchronized(stateLock) {
-        if (switching || !enabled(role) || !prefs.getBoolean("ready",false)) return null
+    fun target(role: String) = eligibility(role).target
+
+    fun eligibility(role: String): VoiceEligibility = synchronized(stateLock) {
+        if (!enabled(role)) return VoiceEligibility(reason = VoiceReason.ROLE_DISABLED)
+        if (switching) return VoiceEligibility(reason = VoiceReason.SERVICE_NOT_READY)
         val owner = account
-        val record=java.io.File(app.noBackupFilesDir,"breezeblue-speech/tts-$owner.enc")
-        if(!record.isFile && !java.io.File(record.path+".bak").isFile) return null
-        val voice = selected(role) ?: return null
-        if (owner.isEmpty() || prefs.getString("blocked:$owner:$role",null)==voice || voices().none { it.id == voice }) return null
-        return VoiceTarget(owner, voice, prefs.getLong("gen:$role",0),prefs.getLong("catalog",0))
+        if (owner.isEmpty()) return VoiceEligibility(reason = VoiceReason.MISSING_CREDENTIAL)
+        val record = java.io.File(app.noBackupFilesDir, "breezeblue-speech/tts-$owner.enc")
+        if (!record.isFile && !java.io.File(record.path + ".bak").isFile)
+            return VoiceEligibility(reason = VoiceReason.MISSING_CREDENTIAL)
+        if (!prefs.getBoolean("ready", false)) return VoiceEligibility(reason = VoiceReason.SERVICE_NOT_READY)
+        val voice = selected(role) ?: return VoiceEligibility(reason = VoiceReason.NO_VOICE)
+        if (prefs.getString("blocked:$owner:$role", null) == voice)
+            return VoiceEligibility(reason = VoiceReason.ROLE_VOICE_BLOCKED)
+        if (voices().none { it.id == voice }) return VoiceEligibility(reason = VoiceReason.NO_VOICE)
+        VoiceEligibility(VoiceTarget(owner, voice, prefs.getLong("gen:$role",0), prefs.getLong("catalog",0), VoiceVendor.BREEZEBLUE))
     }
     private fun currentKey() = account.takeIf { it.isNotEmpty() }?.let { ModelVault.existingSecret(app.noBackupFilesDir,"breezeblue-speech","tts-$it") }
     internal fun keyFor(owner:String):String? = currentKey()?.takeIf { owner.isNotEmpty() && account==owner && stableDigest(it)==owner }
-    suspend fun synthesize(role: String, reply: RequestedVoiceReply): ByteArray {
+    suspend fun synthesize(role: String, reply: RequestedVoiceReply, moreVoiceParts:Boolean=false): ByteArray {
         check(target(role) == reply.target)
         val provider = BreezeBlueSpeechProvider({
             currentKey()?.takeIf { target(role) == reply.target && stableDigest(it) == reply.target.account }
         }, AppServices.voiceConnections)
         return try { provider.synthesize(reply.text,reply.target.voice) }
         catch (e: BreezeBlueSpeechException) {
-            if (e.code in listOf(401,403,404,429) || e.code in 500..599 || e.reason in listOf(BreezeBlueSpeechException.Reason.MISSING_CREDENTIAL,BreezeBlueSpeechException.Reason.NETWORK,BreezeBlueSpeechException.Reason.TIMEOUT))
+            val transient=e.code in 500..599 || e.reason in listOf(BreezeBlueSpeechException.Reason.NETWORK,BreezeBlueSpeechException.Reason.TIMEOUT)
+            if (e.code in listOf(401,403,404,429) || e.reason==BreezeBlueSpeechException.Reason.MISSING_CREDENTIAL || transient && !moreVoiceParts)
                 synchronized(stateLock) {
                     if (target(role)==reply.target) {
                         if(e.code==404) prefs.edit().putString("blocked:${reply.target.account}:$role",reply.target.voice).apply()

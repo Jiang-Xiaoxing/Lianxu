@@ -108,7 +108,18 @@ internal object ChatImages {
     fun enabled(db:SQLiteDatabase)=setting(db,SWITCH)=="1"
     fun routeStamp(db:SQLiteDatabase)=listOf(SWITCH,SWITCH_REVISION,ToolboxPreferences.VIDEO_KEY,ToolboxPreferences.VIDEO_REVISION).joinToString(":"){setting(db,it)}
     fun setEnabled(db:SQLiteDatabase,value:Boolean){
-        db.beginTransaction();try{for((k,v) in listOf(SWITCH to if(value)"1"else"0",SWITCH_REVISION to UUID.randomUUID().toString()))db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",k);put("value",v)},SQLiteDatabase.CONFLICT_REPLACE);db.setTransactionSuccessful()}finally{db.endTransaction()}
+        LocalStep.AUX_VISION.observe(result = { it }) {
+            var result = LocalResult.COMPLETED
+            db.beginTransaction()
+            try {
+                for ((k,v) in listOf(SWITCH to if(value)"1"else"0", SWITCH_REVISION to UUID.randomUUID().toString())) {
+                    val row = db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",k);put("value",v)},SQLiteDatabase.CONFLICT_REPLACE)
+                    if (row == -1L) result = LocalResult.WRITE_REJECTED
+                }
+                db.setTransactionSuccessful()
+            } finally { db.endTransaction() }
+            result
+        }
     }
     fun redact(value:String)=value.replace(Regex("""data(?::|\\u003a)image(?:\\*/|\\u002f)[^\s"'<>]*""",RegexOption.IGNORE_CASE),"[图片数据已省略]")
         .replace(Regex("""data(?::|\\u003a)video(?:\\*/|\\u002f)[^\s"'<>]*""",RegexOption.IGNORE_CASE),"[视频数据已省略]")

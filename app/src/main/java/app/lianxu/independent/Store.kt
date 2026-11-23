@@ -103,14 +103,18 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
         writableDatabase.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",key);put("value",value)},SQLiteDatabase.CONFLICT_REPLACE)
     } }
     internal suspend fun updateRolePrompts(id:String,change:(RolePrompts)->RolePrompts)=withContext(Dispatchers.IO){AppMutationGate.read{
-        val db=writableDatabase;db.beginTransaction()
-        try{
-            require(db.rawQuery("SELECT 1 FROM friends WHERE id=?",arrayOf(id)).use{it.moveToFirst()}){"角色已不存在，请返回列表。"}
-            val key=RolePromptStore.key(id)
-            val old=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(key)).use{if(it.moveToFirst())RolePromptStore.decode(it.getString(0)) else RolePrompts()}
-            db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",key);put("value",RolePromptStore.encode(change(old)))},SQLiteDatabase.CONFLICT_REPLACE)
-            db.setTransactionSuccessful()
-        }finally{db.endTransaction()}
+        LocalStep.ROLE_PROMPTS.observe(result = LocalResult::insert) {
+            val db=writableDatabase;db.beginTransaction()
+            try{
+                require(db.rawQuery("SELECT 1 FROM friends WHERE id=?",arrayOf(id)).use{it.moveToFirst()}){"角色已不存在，请返回列表。"}
+                val key=RolePromptStore.key(id)
+                val old=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(key)).use{if(it.moveToFirst())RolePromptStore.decode(it.getString(0)) else RolePrompts()}
+                val row=db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",key);put("value",RolePromptStore.encode(change(old)))},SQLiteDatabase.CONFLICT_REPLACE)
+                db.setTransactionSuccessful()
+                row
+            }finally{db.endTransaction()}
+        }
+        Unit
     }}
     internal fun persona(db:SQLiteDatabase):UserPersona {
         fun value(key:String)=db.rawQuery("SELECT value FROM preferences WHERE key=?",arrayOf(key)).use{if(it.moveToFirst())it.getString(0)else""}
@@ -118,12 +122,16 @@ class Store(context: Context, name: String = AppServices.databaseName) : SQLiteO
     }
     suspend fun persona()=withContext(Dispatchers.IO){AppMutationGate.read{persona(readableDatabase)}}
     suspend fun savePersona(value:UserPersona)=withContext(Dispatchers.IO){AppMutationGate.read{
-        val p=value.normalized();val db=writableDatabase;db.beginTransaction()
-        try{
-            db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",UserPersona.KEY);put("value",p.encode())},SQLiteDatabase.CONFLICT_REPLACE)
-            if(p.name.isBlank())db.delete("preferences","key=?",arrayOf("nickname"))else db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key","nickname");put("value",p.name)},SQLiteDatabase.CONFLICT_REPLACE)
-            db.setTransactionSuccessful()
-        }finally{db.endTransaction()}
+        LocalStep.PROFILE.observe(result = { it }) {
+            val p=value.normalized();val db=writableDatabase;db.beginTransaction()
+            try{
+                val profile=db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",UserPersona.KEY);put("value",p.encode())},SQLiteDatabase.CONFLICT_REPLACE)
+                val nickname=if(p.name.isBlank()){db.delete("preferences","key=?",arrayOf("nickname"));true}else db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key","nickname");put("value",p.name)},SQLiteDatabase.CONFLICT_REPLACE) != -1L
+                db.setTransactionSuccessful()
+                if(profile == -1L || !nickname) LocalResult.WRITE_REJECTED else LocalResult.COMPLETED
+            }finally{db.endTransaction()}
+        }
+        Unit
     }}
     internal fun seedOpening(db:SQLiteDatabase,id:String,opening:String){
         if(opening.isNotBlank()&&!db.rawQuery("SELECT 1 FROM messages WHERE friend_id=? LIMIT 1",arrayOf(id)).use{it.moveToFirst()}){

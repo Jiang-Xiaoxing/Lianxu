@@ -18,7 +18,7 @@ class BreezeVoiceToolTest {
             for(mode in listOf("off","on","disabledDuringCall","ordinary")) {
                 var eligible=if(mode=="off") null else target
                 val turn=ChatLedger(store).begin("a","本地样例",config.id)
-                val tools=MemoryTools(repo,turn,"本地样例",repo.references("a","本地样例",turn.userMessageId),voiceTarget={eligible}){true}
+                val tools=MemoryTools(repo,turn,"本地样例",repo.references("a","本地样例",turn.userMessageId),voiceEligibility={VoiceEligibility(eligible, if(eligible==null) VoiceReason.ROLE_DISABLED else null)}){true}
                 val request=TextChatRequest(listOf(WireMessage("user","本地样例")))
                 val client=object:TextChatClient{
                     override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {

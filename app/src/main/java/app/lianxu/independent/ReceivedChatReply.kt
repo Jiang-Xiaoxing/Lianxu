@@ -12,7 +12,9 @@ internal data class ReceivedChatReply(
     val companion:CompanionSnapshot,
     val images:ReceivedImageEffects,
     val memory:ReceivedMemoryEffects,
-    val recordAccepted:Boolean
+    val recordAccepted:Boolean,
+    val replyLayout:String?=null,
+    val voiceTarget:VoiceTarget?=null
 ) {
     companion object {
         fun create(db:SQLiteDatabase){

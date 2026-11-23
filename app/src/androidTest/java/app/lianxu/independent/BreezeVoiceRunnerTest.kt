@@ -52,11 +52,14 @@ class BreezeVoiceRunnerTest {
                     }
                 }
             }
+            assertEquals(VoiceReason.ROLE_DISABLED,account.eligibility(name).reason)
             val list=account.refresh("fixture-account-one")
             assertEquals(listOf("v1","v2"),list.map{it.id})
+            account.enable(name,true)
+            assertEquals(VoiceReason.NO_VOICE,account.eligibility(name).reason)
             account.bind(name,list.last(),account.accountId());account.enable(name,true)
             badCatalog=true;assertTrue(runCatching{account.refresh()}.isFailure)
-            assertEquals("v2",account.selected(name));assertNull(account.target(name))
+            assertEquals("v2",account.selected(name));assertEquals(VoiceReason.SERVICE_NOT_READY,account.eligibility(name).reason)
             badCatalog=false;account.refresh()
             val repo=ProcessingRepository(store)
             store.add(listOf(Friend(name,"合成角色","本地样例")),false)
@@ -79,6 +82,18 @@ class BreezeVoiceRunnerTest {
             val id=ChatVoiceDelivery.pending.value.single()
             release.countDown();withTimeout(10000){while(id in ChatVoiceDelivery.pending.value)delay(20)}
             assertArrayEquals(audio,ChatVoiceDelivery.file(app,id).readBytes())
+            for (detailed in listOf(false,true)) {
+                val ids=store.readableDatabase.rawQuery("SELECT id FROM chat_turns WHERE friend_id=?",arrayOf(name)).use { c ->
+                    buildSet { while(c.moveToNext())add(c.getString(0)) }
+                }
+                val voice=Diagnostics.export(detailed).decodeToString().lineSequence().filter { it.isNotBlank() }
+                    .map { org.json.JSONObject(it) }.filter { it.optString("event")=="chat.voice" && it.optString("trace") in ids }
+                    .map { it.getJSONObject("data") }.toList()
+                assertEquals(2,voice.count { it.optString("stage")=="OFFER" && it.optString("status")=="OFFERED" })
+                assertTrue(voice.any { it.optString("status")=="CALLED" })
+                assertTrue(voice.any { it.optString("status")=="NOT_CALLED" })
+                assertTrue(voice.any { it.optString("stage")=="CACHE" && it.optString("status")=="SUCCEEDED" })
+            }
             badSpeech=true
             send("第三轮")
             withTimeout(6000){while(ChatVoiceDelivery.pending.value.isNotEmpty())delay(20)}

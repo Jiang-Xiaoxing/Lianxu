@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.database.sqlite.SQLiteDatabase
 import com.google.gson.Gson
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -11,7 +12,7 @@ import java.time.Instant
 
 /** Adapts our optional recall tools and FusedMemoryWriter to Lianxu's source/version transactions. */
 internal class MemoryTools(private val repo:ProcessingRepository,private val turn:ChatTurn,private val input:String,
-    private val initial:ProcessingRepository.References,private val companionIndex:CompanionVectorIndex?=null,private val allowWrite:Boolean=true,private val memoryVectors:MemoryVectorIndex?=null,private val queryCache:QueryEmbeddingCache?=null,private val relationEnabled:Boolean=false,private val controlTool:(suspend(JSONObject)->Map<String,Any>)?=null,private val recordTool:(suspend(String)->Map<String,Any>)?=null,private val freshControlContext:(suspend()->Pair<TextChatRequest,ProcessingRepository.References>)?=null,private val recordNeedsExperience:Boolean=false,private val contactTool:(suspend(String)->Map<String,Any>)?=null,private val contactTime:Long=0,private val contactZone:java.time.ZoneId=java.time.ZoneId.systemDefault(),private val contactScheduling:Boolean=true,private val voiceTarget:(()->VoiceTarget?)?=null,private val active:()->Boolean) {
+    private val initial:ProcessingRepository.References,private val companionIndex:CompanionVectorIndex?=null,private val allowWrite:Boolean=true,private val memoryVectors:MemoryVectorIndex?=null,private val queryCache:QueryEmbeddingCache?=null,private val relationEnabled:Boolean=false,private val controlTool:(suspend(JSONObject)->Map<String,Any>)?=null,private val recordTool:(suspend(String)->Map<String,Any>)?=null,private val freshControlContext:(suspend()->Pair<TextChatRequest,ProcessingRepository.References>)?=null,private val recordNeedsExperience:Boolean=false,private val contactTool:(suspend(String)->Map<String,Any>)?=null,private val contactTime:Long=0,private val contactZone:java.time.ZoneId=java.time.ZoneId.systemDefault(),private val contactScheduling:Boolean=true,private val voiceEligibility:()->VoiceEligibility={VoiceEligibility(reason=VoiceReason.SERVICE_NOT_READY)},private val active:()->Boolean) {
     private var contactAttempts=0
     private var controlAttempts=0
     private var recordAttempts=0
@@ -122,10 +123,12 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
     suspend fun run(config:ModelConfig,key:String,request:TextChatRequest,client:TextChatClient,onResponseStart:(suspend()->Unit)?=null,onEvent:(suspend(TextStreamEvent)->Unit)?=null,onToolActivity:(suspend(ChatToolActivity)->Unit)?=null):TextChatResult = runLoop(config,key,request,client,onResponseStart,onEvent,onToolActivity)
     /** A rejected structured candidate cannot leave writes for the next candidate to commit. */
     suspend fun discardCandidate()=repo.tx{db->db.delete("preferences","key=?",arrayOf(stageKey));Unit}
+    var orderedParts: List<ReplyPart>? = null
+        private set
     var spokenReply: RequestedVoiceReply? = null
         private set
 
-    private fun definitions()=(if(voiceTarget?.invoke()!=null)listOf(ChatVoiceDelivery.definition)else emptyList())+(if(contactTool!=null)listOf(ImmediateContact.definition(turn.userMessageId,contactTime,contactZone,contactScheduling))else emptyList())+(if(controlTool!=null)listOf(JointControl.definition)else emptyList())+(if(recordTool!=null)listOf(CompanionRecord.definition(turn.userMessageId,recordNeedsExperience))else emptyList())+(if(rules.proactiveRecall)buildAgentRecallToolDefinitions(true) else emptyList())+(if(rules.immediateWrite&&allowWrite&&writeSourceAllowed)listOf(writeDefinition()) else emptyList())+(if(rules.proactiveRecall)listOf(mapOf("type" to "function","function" to mapOf("name" to "agent_memory_read","description" to "按问题读取当前有效角色记忆","parameters" to mapOf("type" to "object","properties" to mapOf("query" to mapOf("type" to "string")),"required" to listOf("query"))))) else emptyList())
+    private fun definitions(target:VoiceTarget?=voiceEligibility().target)=(if(target!=null)listOf(ChatVoiceDelivery.definition)else emptyList())+(if(contactTool!=null)listOf(ImmediateContact.definition(turn.userMessageId,contactTime,contactZone,contactScheduling))else emptyList())+(if(controlTool!=null)listOf(JointControl.definition)else emptyList())+(if(recordTool!=null)listOf(CompanionRecord.definition(turn.userMessageId,recordNeedsExperience))else emptyList())+(if(rules.proactiveRecall)buildAgentRecallToolDefinitions(true) else emptyList())+(if(rules.immediateWrite&&allowWrite&&writeSourceAllowed)listOf(writeDefinition()) else emptyList())+(if(rules.proactiveRecall)listOf(mapOf("type" to "function","function" to mapOf("name" to "agent_memory_read","description" to "按问题读取当前有效角色记忆","parameters" to mapOf("type" to "object","properties" to mapOf("query" to mapOf("type" to "string")),"required" to listOf("query"))))) else emptyList())
     internal fun reservedTokens():Int {val offered=definitions()+(if(relationEnabled)listOf(RelationshipRecall.definition)else emptyList());return if(offered.isEmpty())0 else ConservativeTokens.tokens(gson.toJson(offered))+(if(rules.proactiveRecall)ConservativeTokens.tokens(CompanionRecallBudget.QUERY_RULES) else 0)+768}
     /** Read-only planning, before any model/tool execution. Same messages and cost as the first send. */
     internal suspend fun initialCapacityFailure(config:ModelConfig,request:TextChatRequest):ChatFailure? {
@@ -136,7 +139,7 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
         val outgoing=CompanionPrompt.forSend(request.copy(messages=initialMessages),offered)
         return if(requestCost(outgoing,offered)>=config.contextTokens)ChatFailure.CONTEXT_CAPACITY else null
     }
-    private fun noTools()=voiceTarget?.invoke()==null&&controlTool==null&&contactTool==null&&recordTool==null&&!relationEnabled&&!rules.proactiveRecall&&!(rules.immediateWrite&&allowWrite&&writeSourceAllowed)
+    private fun noTools(eligibility:VoiceEligibility=voiceEligibility())=eligibility.target==null&&controlTool==null&&contactTool==null&&recordTool==null&&!relationEnabled&&!rules.proactiveRecall&&!(rules.immediateWrite&&allowWrite&&writeSourceAllowed)
     private fun messageMaps(messages:List<WireMessage>)=messages.map{m->buildMap<String,Any>{
         put("role",m.role);put("content",m.content)
         if(m.name.isNotEmpty())put("name",m.name)
@@ -179,18 +182,30 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
     }
     private suspend fun runLoop(config:ModelConfig,key:String,request:TextChatRequest,client:TextChatClient,onResponseStart:(suspend()->Unit)?,onEvent:(suspend(TextStreamEvent)->Unit)?,onToolActivity:(suspend(ChatToolActivity)->Unit)?):TextChatResult {
         deliveredMemories.clear();deliveredMemories.addAll(request.messages.flatMap{it.memoryIds})
-        suspend fun send(value:TextChatRequest):TextChatResult {
+        fun trace(target:VoiceTarget?)=VoiceTrace(turn.id,turn.attempt,target?.provider ?: VoiceVendor.UNKNOWN)
+        var requestNumber = 0L
+        suspend fun send(value:TextChatRequest, eligibility: VoiceEligibility, fallback: Boolean = false): TextChatResult =
+            withContext(Diagnostics.linkedContext(mapOf("turn" to turn.id, "attempt" to turn.attempt, "request_role" to "ordinary_chat", "request_number" to ++requestNumber))) {
+            val target = eligibility.target
+            val voice = trace(target)
+            val provided = value.tools.any { toolNameOf(it) == "send_short_voice" }
             onResponseStart?.invoke()
-            return if(onEvent==null)client.complete(config,key,value)else client.streamEvents(config,key,value,onEvent)
+            voice.offer(provided, eligibility.reason, fallback)
+            val result=if(onEvent==null)client.complete(config,key,value)else client.streamEvents(config,key,value,onEvent)
+            voiceRejection(result,value)?.let { reason ->
+                trace(target).rejected(target,reason)
+            }
+            voice.response(provided, result)
+            result
         }
-        suspend fun withoutTools():TextChatResult {
+        suspend fun withoutTools(eligibility: VoiceEligibility):TextChatResult {
             if(!active())return TextChatResult.Failure(ChatFailure.SOURCE_CHANGED)
-            val result=send(CompanionPrompt.forSend(request,emptyList()))
+            val result=send(CompanionPrompt.forSend(request,emptyList()), eligibility)
             return if(result is TextChatResult.Success&&result.toolCalls.isNotEmpty())TextChatResult.Failure(ChatFailure.TOOLS_UNAVAILABLE) else result
         }
-        if(noTools())return withoutTools()
+        voiceEligibility().let { if(noTools(it))return withoutTools(it) }
         val messages=initialMessages(request).toMutableList()
-        if(noTools())return withoutTools()
+        voiceEligibility().let { if(noTools(it))return withoutTools(it) }
         val progress=RecallProgress()
         val failedRecords=mutableSetOf<Int>()
         // The old 8-step loop allowed 7 tool batches before a no-tool answer. Keep that
@@ -200,8 +215,9 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
             kotlinx.coroutines.yield()
             currentCoroutineContext().ensureActive();if(!active()||repo.memoryRules(repo.store.readableDatabase)!=rulesState)return TextChatResult.Failure(ChatFailure.SOURCE_CHANGED)
             val actor="${turn.id}:${turn.attempt}:$step"
-            val offeredVoice=voiceTarget?.invoke()
-            val definitions=definitions()+(if(relationEnabled)listOf(RelationshipRecall.definition)else emptyList())
+            val eligibility=voiceEligibility()
+            val offeredVoice=eligibility.target
+            val definitions=definitions(offeredVoice)+(if(relationEnabled)listOf(RelationshipRecall.definition)else emptyList())
             val stepDefinitions=definitions.filterNot{(contactAttempts>=3&&toolNameOf(it)==ImmediateContact.NAME)||(controlAttempts>=3&&toolNameOf(it)==JointControl.NAME)||(recordAttempts>=3&&toolNameOf(it)==CompanionRecord.NAME)||(relationCalls>RelationshipRecall.LIMIT&&toolNameOf(it)==RelationshipRecall.NAME)||(writeBatches>=7&&toolNameOf(it)=="agent_memory_update")||(progress.stopped!=null&&toolNameOf(it) in CompanionRecallBudget.readNames)}
             val preparedMessages=CompanionPrompt.forSend(request.copy(messages=messages.toList()),stepDefinitions).messages
             val maps=messageMaps(preparedMessages)
@@ -214,28 +230,24 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
             if(requestCost(outgoing,offered)>config.contextTokens)return TextChatResult.Failure(ChatFailure.CONTEXT_CAPACITY)
             // One batch span per model request so its reasoning, tool calls and reply can be tied
             // back to the same turn even when the tool loop runs several requests.
-            val result=Diagnostics.span("model.batch",mapOf("turn" to turn.id,"attempt" to turn.attempt,"step" to step,"offered_tools" to offered.map(::toolNameOf))){send(outgoing)}
+            val result=Diagnostics.span("model.batch",mapOf("turn" to turn.id,"attempt" to turn.attempt,"step" to step,"offered_tools" to offered.map(::toolNameOf))){send(outgoing,eligibility)}
             if(result is TextChatResult.Success&&result.displayReasoning.isNotEmpty())displayReasoning+=result.displayReasoning
             currentCoroutineContext().ensureActive();if(!active()||repo.memoryRules(repo.store.readableDatabase)!=rulesState)return TextChatResult.Failure(ChatFailure.SOURCE_CHANGED)
             if(step==0L&&offered.isNotEmpty()&&result is TextChatResult.Failure&&result.reason==ChatFailure.UNSUPPORTED_TOOLS){
                 if(!active()||repo.memoryRules(repo.store.readableDatabase)!=rulesState)return TextChatResult.Failure(ChatFailure.SOURCE_CHANGED)
-                val fallback=send(CompanionPrompt.forSend(request,emptyList()))
+                val fallback=send(CompanionPrompt.forSend(request,emptyList()),eligibility,fallback=true)
                 if(fallback is TextChatResult.Success&&fallback.toolCalls.isNotEmpty())return TextChatResult.Failure(ChatFailure.TOOLS_UNAVAILABLE)
                 return if(fallback is TextChatResult.Success)fallback.copy(displayReasoning=displayReasoning+fallback.displayReasoning)else fallback
             }
             if(result !is TextChatResult.Success)return result
             // Thinking is kept across tool rounds: the saved display must match what the user watched.
             if(result.toolCalls.isEmpty())return result.copy(displayReasoning=displayReasoning)
-            if(result.toolCalls.size>8||result.toolCalls.any{c->c.name !in offered.map(::toolNameOf)})return TextChatResult.Failure(ChatFailure.TOOLS_UNAVAILABLE)
-            val speech=result.toolCalls.singleOrNull()?.takeIf{it.name=="send_short_voice"}
-            if(result.toolCalls.any{it.name=="send_short_voice"}) {
-                val sentence=speech?.let { runCatching{JSONObject(it.arguments).opt("text") as? String}.getOrNull() }
-                if(sentence.isNullOrBlank() || sentence.length>600 || sentence.codePointCount(0,sentence.length)>300 ||
-                    sentence.any { it.isISOControl() } || !Charsets.UTF_8.newEncoder().canEncode(sentence))
-                    return TextChatResult.Failure(ChatFailure.REPLY_TEXT_INVALID)
-                if(offeredVoice!=null && voiceTarget?.invoke()==offeredVoice) spokenReply=RequestedVoiceReply(sentence,offeredVoice)
-                return result.copy(text=sentence,toolCalls=emptyList(),continuation=null,displayReasoning=displayReasoning)
+            if(result.toolCalls.size>8||result.toolCalls.any{c->c.name !in offered.map(::toolNameOf)}) {
+                if(result.toolCalls.any{it.name=="send_short_voice"} && offered.any{toolNameOf(it)=="send_short_voice"}) trace(offeredVoice).rejected(offeredVoice,VoiceReason.INVALID_CALL)
+                return TextChatResult.Failure(ChatFailure.TOOLS_UNAVAILABLE)
             }
+            if(result.toolCalls.any{it.name=="send_short_voice"})
+                return finishVoiceTool(result,displayReasoning,offeredVoice,{voiceEligibility().target},trace(offeredVoice), onParts={ orderedParts=it }){spokenReply=it}
             // Display metadata only: even two responses at the same thinking offset stay separate.
             val recallDisplayGroup=java.util.UUID.randomUUID().toString()
             if(result.toolCalls.any{it.name=="agent_memory_update"})writeBatches++
@@ -421,4 +433,38 @@ internal class MemoryTools(private val repo:ProcessingRepository,private val tur
         // The receipt may only offer the row this transaction really wrote.
         ChatToolJournal.linkMemory(db,turn.id,turn.attempt,linked)
     }
+}
+
+internal fun voiceRejection(result: TextChatResult, request: TextChatRequest): VoiceReason? {
+    val sawVoice = when (result) {
+        is TextChatResult.Failure -> result.rejectedVoiceCall
+        is TextChatResult.Success -> result.toolCalls.any { it.name == "send_short_voice" }
+    }
+    if (!sawVoice) return null
+    if (request.tools.none { toolNameOf(it) == "send_short_voice" }) return VoiceReason.NOT_OFFERED
+    if (result !is TextChatResult.Failure) return null
+    return when (result.reason) {
+        ChatFailure.TOOLS_UNAVAILABLE, ChatFailure.FORMAT, ChatFailure.REPLY_TEXT_INVALID -> VoiceReason.INVALID_CALL
+        else -> VoiceReason.INCOMPLETE_RESPONSE
+    }
+}
+
+internal fun finishVoiceTool(result:TextChatResult.Success,displayReasoning:String,offeredVoice:VoiceTarget?,
+    voiceTarget:(()->VoiceTarget?)?,trace:VoiceTrace,onParts:(List<ReplyPart>)->Unit={},accept:(RequestedVoiceReply)->Unit):TextChatResult {
+    val speech=result.toolCalls.singleOrNull()?.takeIf{it.name=="send_short_voice"}
+    val parts=speech?.let { OrderedChatReply.parse(it.arguments) }
+    if(parts==null) {
+        trace.rejected(offeredVoice,VoiceReason.INVALID_CALL)
+        return TextChatResult.Failure(ChatFailure.REPLY_TEXT_INVALID)
+    }
+    val sentence=OrderedChatReply.body(parts)
+    onParts(parts)
+    if(offeredVoice!=null && voiceTarget?.invoke()==offeredVoice) {
+        accept(RequestedVoiceReply(sentence,offeredVoice))
+        trace.record(VoiceStage.TOOL,VoiceStatus.ACCEPTED)
+    } else {
+        trace.rejected(offeredVoice,VoiceReason.TARGET_CHANGED)
+        ChatVoiceDiagnostics.outcome(trace,VoiceStatus.TEXT_FALLBACK,VoiceReason.TARGET_CHANGED)
+    }
+    return result.copy(text=sentence,toolCalls=emptyList(),continuation=null,displayReasoning=displayReasoning)
 }

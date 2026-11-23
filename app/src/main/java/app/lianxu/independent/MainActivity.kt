@@ -59,6 +59,11 @@ class MainActivity:ComponentActivity(){
         if(changed)vm.creationPolisher.cancel()
         creationDraft=if(changed)value.copy(polished=null,usePolished=false)else value
     }
+    if (vm.ready && vm.page!="models") SideEffect {
+        ProcessDiagnostics.view(if(vm.page!="home") vm.page else when(vm.tab) {
+            1 -> "contacts"; 2 -> "settings"; 3 -> "profile"; else -> "home"
+        })
+    }
     val encounterHome=encounter.shouldShow(vm.ready,vm.friends.isNotEmpty(),vm.page)
     val guidedCreate=vm.page=="create"&&encounter.destination==FirstEncounterDestination.CREATE
     LaunchedEffect(vm.page){if(vm.page=="home"){encounter=encounter.returned();creationConfigOpen=false}}
@@ -76,7 +81,15 @@ class MainActivity:ComponentActivity(){
         rememberedChatIds=known.intersect(live).toList()
     }}
     // Role generation belongs to the ViewModel; backgrounding only pauses its animation.
-    DisposableEffect(lifecycle){val observer=LifecycleEventObserver{_,event->if(event==Lifecycle.Event.ON_START)vm.foreground()};lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}}
+    DisposableEffect(lifecycle, vm) {
+        vm.chatHostLifecycle = lifecycle
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_START) vm.foreground() }
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            if (vm.chatHostLifecycle === lifecycle) vm.chatHostLifecycle = null
+        }
+    }
     BackHandler(vm.page!="home"&&!guidedCreate){vm.back()}
     CompositionLocalProvider(LocalRoleAvatars provides vm.roleAvatars){Surface(Modifier.fillMaxSize(),color=if(encounterHome||guidedCreate)FirstEncounterPaper else Chrome){Column(Modifier.safeDrawingPadding().imePadding()){
         if(vm.error.isNotEmpty())Text(vm.error,Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer).padding(12.dp),style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onErrorContainer)

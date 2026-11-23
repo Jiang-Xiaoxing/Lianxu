@@ -95,6 +95,22 @@ class CompleteBackupAndroidTest {
         val old=oldTarget.vault.list().single()
         assertEquals(65536,old.contextTokens);assertEquals(4096,old.outputTokens);assertEquals(4096,old.memoryOutputLimit())
     }
+    @Test fun replyModeRestoresAndMissingLegacyFieldDefaultsToStreaming()=runBlocking {
+        val saved=config().copy(streamReplies=false)
+        f.vault.save(saved,"synthetic-key-original")
+        val restored=fixture()
+        roundTrip(restored,true,true)
+        assertEquals(saved,restored.vault.list().single())
+        val export=f.backup.export(null,true,pw())
+        val config=export.root["models"].asJsonArray[0].asJsonObject["config"].asJsonObject
+        assertFalse(config["streamReplies"].asBoolean)
+        config.addProperty("streamReplies","false")
+        assertTrue(runCatching { f.backup.preview(pack(export),"REPLACE") }.isFailure)
+        config.remove("streamReplies")
+        val legacy=fixture()
+        legacy.backup.commit(legacy.backup.preview(pack(export),"REPLACE"),true,password=pw())
+        assertTrue(legacy.vault.list().single().streamReplies)
+    }
     @Test fun invalidMemoryBudgetIsRejectedBeforeRestoreChangesAnything()=runBlocking{
         val export=f.backup.export(null,true,pw())
         export.root["models"].asJsonArray[0].asJsonObject["config"].asJsonObject.addProperty("memoryOutputTokens",-1)

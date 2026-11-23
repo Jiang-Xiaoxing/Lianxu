@@ -1,5 +1,7 @@
 package app.lianxu.independent
 
+import android.content.Context
+import java.io.File
 import kotlinx.coroutines.ensureActive
 
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -28,6 +30,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.flow.first
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,6 +60,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+internal val LocalChatVoiceFile = staticCompositionLocalOf<(Context, String) -> File> { ChatVoiceDelivery::file }
+
 private suspend fun LazyListState.showEndOf(index:Int){
     scrollToItem(index)
     val info=layoutInfo
@@ -71,6 +79,17 @@ private suspend fun LazyListState.showEndOf(index:Int){
             verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){
             ControlIcon("memory",androidx.compose.ui.graphics.lerp(Muted,GreenText,reveal),16.dp)
             ChatCapsuleLabel(pill.text,reveal,MaterialTheme.typography.labelMedium,GreenText,loading="正在整理…",textAlign=androidx.compose.ui.text.style.TextAlign.Center)
+        }
+    }
+}
+
+@Composable internal fun ObserveVoiceRow(turn:ChatTurn, status:VoiceStatus, reason:VoiceReason?, part:Int?=null, visible:()->Boolean) {
+    val lifecycle=LocalLifecycleOwner.current.lifecycle
+    val currentVisible by rememberUpdatedState(visible)
+    LaunchedEffect(turn.id,turn.attempt,part,status,reason,lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            snapshotFlow { currentVisible() }.first { it }
+            ChatVoiceDiagnostics.shown(turn,status,reason,part)
         }
     }
 }
@@ -131,6 +150,8 @@ private suspend fun LazyListState.showEndOf(index:Int){
     var imageError by remember(friend.id){mutableStateOf("")}
     var viewedImage by remember(friend.id){mutableStateOf<ChatMediaPreview?>(null)}
     val pendingVoice by ChatVoiceDelivery.pending.collectAsState()
+    val voicePlayback = rememberChatVoicePlayback()
+    val voiceFileFor = LocalChatVoiceFile.current
     val voiceRevision by ChatVoiceDelivery.revision.collectAsState()
     val context=LocalContext.current
     val imageScope=rememberCoroutineScope()
@@ -266,13 +287,21 @@ private suspend fun LazyListState.showEndOf(index:Int){
                                     }
                                     val voiceTurn=if(message.mine)null else vm.turns.firstOrNull{it.assistantMessageId==message.id}
                                     val voiceId=voiceTurn?.let{ChatVoiceDelivery.key(friend.id,it.id,it.attempt,message.text)}
-                                    val pendingVoice by ChatVoiceDelivery.pending.collectAsState()
-                                    val revision by ChatVoiceDelivery.revision.collectAsState()
-                                    val app=LocalContext.current
-                                    val voiceFile=remember(voiceId,voiceRevision){voiceId?.let{ChatVoiceDelivery.file(context,it)}?.takeIf{it.isFile}}
-                                    if(voiceFile!=null) Box(Modifier.onGloballyPositioned{val p=it.localToWindow(Offset.Zero);bounds=Rect(p,it.size.toSize())}.testTag("message-${message.id}")){ChatVoiceBubble(voiceFile,message.text){controlMessage=message}}
+                                    val voiceFile=remember(voiceId,voiceRevision,context,voiceFileFor){voiceId?.let{voiceFileFor(context,it)}?.takeIf{it.isFile}}
+                                    val ordered=remember(voiceTurn?.replyLayout,message.text){ OrderedChatReply.decode(message.text,voiceTurn?.replyLayout) }
+                                    if(ordered!=null && voiceTurn!=null) {
+                                        Column(Modifier.widthIn(max=width).onGloballyPositioned{val p=it.localToWindow(Offset.Zero);bounds=Rect(p,it.size.toSize())}.testTag("message-${message.id}"),verticalArrangement=Arrangement.spacedBy(5.dp)){
+                                            OrderedAssistantBubbles(ordered,voiceTurn,message.text,voicePlayback,
+                                                shape,colors.primary.copy(alpha=if(message.id in highlightIds)highlightAlpha else 0f),
+                                                { controlMessage=message }) { rect -> vm.isReadingChat(friend.id) && viewedImage==null && controlMessage==null && !rect.isEmpty && rect.overlaps(viewport) }
+                                        }
+                                    } else if(voiceFile!=null) Box(Modifier.widthIn(max=width).onGloballyPositioned{val p=it.localToWindow(Offset.Zero);bounds=Rect(p,it.size.toSize())}.testTag("message-${message.id}")){ChatVoiceBubble(voiceFile,message.text,voicePlayback,manage={controlMessage=message}) { status,reason ->
+                                        if(voiceTurn!=null) ObserveVoiceRow(voiceTurn,status,reason){vm.isReadingChat(friend.id) && viewedImage==null && controlMessage==null && !bounds.isEmpty && bounds.overlaps(viewport)}
+                                    }}
                                     else if(voiceId!=null && voiceId in pendingVoice) Text("正在合成语音…",Modifier.combinedClickable(onClick={},onLongClick={controlMessage=message}),style=MaterialTheme.typography.bodySmall,color=Muted)
                                     else Column(Modifier.widthIn(max=width).onGloballyPositioned{val p=it.localToWindow(Offset.Zero);bounds=Rect(p,it.size.toSize())}.testTag("message-${message.id}").semantics(mergeDescendants=true){text=androidx.compose.ui.text.AnnotatedString(message.text)}.combinedClickable(onClick={},onLongClick={controlMessage=message}),verticalArrangement=Arrangement.spacedBy(5.dp)){
+                                        if(voiceTurn!=null && ChatVoiceDiagnostics.known(voiceTurn))
+                                            ObserveVoiceRow(voiceTurn,VoiceStatus.TEXT_RENDERED,null){vm.isReadingChat(friend.id) && viewedImage==null && controlMessage==null && !bounds.isEmpty && bounds.overlaps(viewport)}
                                         message.image?.let{ref->MessagePicture(vm,ref,onControl={controlMessage=message}){data->openMedia(data,ref.mime)}}
                                         val segments=if(message.text.isBlank())emptyList()else ChatBubbleSegments.forMessage(message.text,message.mine)
                                         segments.forEachIndexed{index,segment->
