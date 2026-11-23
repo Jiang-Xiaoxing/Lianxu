@@ -109,4 +109,20 @@ class CompanionPromptTest {
         assertEquals(raw,m.single{it.role=="user"}.content);assertTrue(m.single{it.turnContext}.content.contains("程序时间参考"));assertTrue(m.last().thinkingContext)
         assertTrue(m.any{"拿不准的记忆，不得当作确定事实" in it.content&&"未确认建议" in it.content})
     }
+    @Test fun overhauledPromptsDropCustomerServiceToneAndBackendStateJargon(){
+        val ready=CompanionPrompt.build(f,RolePrompts(),emptyList(),"你好",persona=UserPersona(address="小星")) as PromptBuild.Ready
+        val header=ready.request.messages.first().content
+        val thinking=ready.request.messages.last().content
+        assertTrue(header.contains(RoleConsistency.REPLY_RULES))
+        for(banned in listOf("适度关心","温和表达不同意见","viewpoint","interest","habit","candidate","developing","paused")){
+            assertFalse("foreground chat header should not contain '$banned'",banned in header)
+        }
+        assertTrue(thinking.contains("不像助手那样分析任务"))
+        assertTrue(thinking.contains("脱口而出的真话"))
+        val polish=RolePolishProtocol.request(RoleCreationText("合成名","话少毒舌。","","短句","",""),ModelConfig("m","m","custom","https://example.invalid","m",64000,2048))
+        assertTrue(polish.messages.first().content.contains("保留原文的口语感、性格棱角和个人味道"))
+        assertTrue(polish.messages.first().content.contains("不补写空白字段"))
+        @Suppress("UNCHECKED_CAST") val voiceDesc=(OrderedChatReply.definition["function"] as Map<String,Any>)["description"] as String
+        assertTrue(voiceDesc.contains("自然口语化"))
+    }
 }

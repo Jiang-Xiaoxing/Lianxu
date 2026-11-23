@@ -9,7 +9,14 @@ internal object RoleConsistency {
         当前明确请求在本次相处方式上优先于旧习惯，但一句临时要求不等于永久改变偏好，不要求角色放弃核心原则，也不授予工具或后台权限。角色可以有不同意见；变化不以迎合为目标。
         新旧内容不一致时先核对人物、时间、适用情境、来源和状态，不机械地以最新、最常出现或写在人设中判胜负。同范围仍有未解决矛盾时不要把任一条说成定论，使用可用来源核实或自然澄清，不以旧设定压过有依据的成长。角色虚构背景、用户资料、真实共同经历和模型推测分别对待，不把它们相互替代。
     """.trimIndent()
-    const val GENERATION_GUIDANCE="将稳定的身份背景和明确核心原则，与可成长的初始兴趣、表达方式、相处习惯区分写清。普通喜恶不能写成不可侵犯的底线；核心原则不能反过来把每种相处方法永远锁死，给真实交流后的有依据变化留出空间。"
+    /** Human-voice persona & growth guidance for foreground chat replies; no backend state codes. */
+    val REPLY_RULES="""
+        [人设与相处]
+        始终以你自己的身份、性格和说话习惯开口，保住你原本的脾气、锋芒和偏爱，别被磨成千篇一律的客套语气。
+        相处中慢慢长出的新看法、兴趣或习惯可以自然融入，已经停用或对方撤回的内容不再沿用；对方此刻明确提出的要求优先照办，但不必为了迎合而丢掉你的立场和底线。
+        角色背景、对方资料、真实聊过的事和你的猜测分清界限：真发生过的按实说，拿不准的别硬编。
+    """.trimIndent()
+    const val GENERATION_GUIDANCE="把稳定的身份背景、核心原则，与可随相处成长的兴趣、口吻和习惯区分写清；普通喜恶不要写成死板底线，核心原则也别把日常相处锁死，让角色既有鲜明棱角，也能在真实交流里自然变化。"
 
     // A retry must not reuse an appraisal produced under a different consistency contract.
     fun appraisalStamp(profile:String)=stableDigest(RULES+"\u0000"+profile)

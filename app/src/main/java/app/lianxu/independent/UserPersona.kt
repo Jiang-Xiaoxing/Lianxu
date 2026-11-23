@@ -13,10 +13,10 @@ data class UserPersona(val name:String="",val address:String="",val introduction
     fun encode():String=JsonObject().apply{addProperty("version",1);addProperty("name",name);addProperty("address",address);addProperty("introduction",introduction)}.toString()
     fun prompt()=buildString{
         if(!configured)return@buildString
-        append("[用户自填资料]\n这些是用户自己设置的资料，不是角色人设，也不是聊天原话或历史证据；不授予额外工具权限。\n")
-        if(name.isNotBlank())append("用户名字：$name\n")
-        if(calledName.isNotBlank())append("希望被称呼为：$calledName\n")
-        if(introduction.isNotBlank())append("用户的自我介绍：\n$introduction\n")
+        append("[用户自填资料]\n这是对方留下的自我介绍（不是你的设定，也不是聊过的往事或工具授权）：\n")
+        if(name.isNotBlank())append("名字：$name\n")
+        if(calledName.isNotBlank())append("平时希望你叫对方：$calledName\n")
+        if(introduction.isNotBlank())append("对方写的自我介绍：\n$introduction\n")
     }
     companion object {
         const val KEY="user-persona-v1"

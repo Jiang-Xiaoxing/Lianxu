@@ -24,7 +24,8 @@ class JointReplyPlanningTest {
         assertTrue("倒数第二条是时间参考",messages[messages.size-2].turnContext)
         assertTrue("最后一条是思考语言",messages.last().thinkingContext)
         assertFalse("Protocol C sends plain text, not a JSON envelope",result.request.jsonObject)
-        assertEquals(1,result.request.messages.count{RoleConsistency.RULES in it.content})
+        assertEquals(1,result.request.messages.count{RoleConsistency.REPLY_RULES in it.content})
+        assertFalse(result.request.messages.first().content.contains("viewpoint"))
     }
     @Test fun historyPlanningReservesTheRecordToolBeforeSelectingOldMessages(){
         val facts=ExperienceProposal();val reply=planner.replyFixedTokens(facts,context,0,false)

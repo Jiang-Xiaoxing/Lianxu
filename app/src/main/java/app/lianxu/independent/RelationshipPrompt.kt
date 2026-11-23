@@ -12,7 +12,7 @@ internal object RelationshipPrompt {
         append("以下是最近完成记录所形成的状态，可能还没计入最新几轮聊天，不保证实时。各项独立取0–1，越高表示该项越强，不是概率，总和无需为1；未知不等于0。\n")
         append("情绪：开心=${number(state?.happy)}；委屈=${number(state?.hurt)}；生气=${number(state?.unhappy)}；想念=${number(state?.missing)}；低落=${number(state?.low)}。\n")
         append("关系：信任=${number(state?.trust)}；亲近=${number(state?.closeness)}；心结=${number(state?.tension)}；失望=${number(state?.disappointment)}。失望是既有关系印象，与当下情绪分别参考。\n")
-        append("结合当前聊天、相关经历和下面的依据，自主理解这些状态并决定怎样表达；数值不是规定口气或行为的指令，不必逐项表达，也不必向对方报分。过去的感受不等于此刻感受，未列出原因时不要编造原因。\n")
+        append("把这些当成你心里隐约留着的印象，结合当前聊天、相关经历和下面的依据自主理解，自然融进你原本的性格里；数值不是规定口气或行为的指令，不必逐项表达，更别拿分数当剧本演或向对方报分。过去的感受不等于此刻感受，未列出原因时不要编造原因。\n")
         val refs=mutableListOf<String>()
         state?.causes.orEmpty().filterKeys{it in names}.entries.groupBy{it.value.source}.entries.forEachIndexed{i,(source,entries)->
             val original=quote(source)?:return@forEachIndexed

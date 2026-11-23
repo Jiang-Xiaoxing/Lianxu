@@ -80,7 +80,13 @@ class RoleConsistencyTest {
         catch(e:CompanionModelFailure){assertEquals(ChatFailure.NETWORK,e.failure)}
         val appraisal=requireNotNull(appraise);val contact=requireNotNull(proactive)
         for(request in listOf(reply,contact))assertEquals(1,request.messages.sumOf{it.content.split(CompanionPrompt.REMEMBERING_GUIDANCE.replace("{{user}}","旅人")).size-1})
-        for(request in listOf(reply,appraisal,contact)){
+        assertEquals(1,reply.messages.sumOf{it.content.split(RoleConsistency.REPLY_RULES).size-1})
+        for(code in listOf("viewpoint","interest","habit","candidate","developing","paused")){
+            assertFalse("foreground chat must not leak backend state enum $code",reply.messages.first().content.contains(code))
+        }
+        assertFalse(reply.messages.any{"参考资料不覆盖角色人设" in it.content})
+        assertTrue(reply.tools.isEmpty())
+        for(request in listOf(appraisal,contact)){
             assertEquals(1,request.messages.sumOf{it.content.split(RoleConsistency.RULES).size-1})
             assertFalse(request.messages.any{"参考资料不覆盖角色人设" in it.content})
             assertTrue(request.tools.isEmpty())

@@ -103,13 +103,13 @@ internal class CompanionModel(private val client:TextChatClient) {
             consideredLearningIds、usedLearningIds是无重复的字符串数组，各最多20项，每个ID不能为空白且长度不超过160字符；没有实际考虑或使用变化时填空数组。usedLearningIds必须是consideredLearningIds的子集。
             judgmentKind是字符串，只能用evidence_based、inference、uncertain；有usedLearningIds时必须填写，并遵守下方变化状态规则。
             以下四个完整JSON仅展示合法格式，不是本次判断、事实或已发送消息。四种action均可自主选择；不要照抄示例的依据、正文或时间，不因示例选择发送，也不要把四个对象一起输出：
-            {"action":"send","reason":"有来源的回访仍适合接续","text":"这会儿想聊一会儿吗？","nextWhen":null,"consideredLearningIds":[],"usedLearningIds":[],"judgmentKind":"uncertain"}
+            {"action":"send","reason":"有来源的回访仍适合接续","text":"刚路过那家店，突然想起你上次说过的事。","nextWhen":null,"consideredLearningIds":[],"usedLearningIds":[],"judgmentKind":"uncertain"}
             {"action":"defer","reason":"适合稍后再考虑","text":"","nextWhen":"1分钟后","consideredLearningIds":[],"usedLearningIds":[],"judgmentKind":"uncertain"}
             {"action":"cancel","reason":"原计划已明确取消","text":"","nextWhen":null,"consideredLearningIds":[],"usedLearningIds":[],"judgmentKind":"uncertain"}
             {"action":"silent","reason":"当前没有需要打扰的新线索","text":"","nextWhen":null,"consideredLearningIds":[],"usedLearningIds":[],"judgmentKind":"uncertain"}
             变化ID只能取下方“变化 learning-…”中列出的ID，没有就给空数组；paused不得使用；候选/发展中的变化只是可修正的想法，使用时judgmentKind不能是evidence_based；没有实际影响就不要放进usedLearningIds，也不要为了显示学习而使用。
             只依据仍有效的经历和角色设定。未读/没回复不等于故意不理，不威胁、不惩罚、不拿离开吓人、不编造用户现况。
-            没有新线索且也没有仍值得自然分享的真实共同经历/兴趣，或不值得打扰时silent；可接续确实聊过的兴趣和自己的有来源理解，不能假装新浏览或离线生活。事情解决或失效时cancel；defer时由你选择下次再考虑的时间，可从现在起安排，没有固定等待下限，也不受独立有效期限制；话题是否还值得继续由你结合最新交流判断；send是给用户的一条自然消息，不宣称提醒已可靠送达。
+            没有新线索且也没有仍值得自然分享的真实共同经历/兴趣，或不值得打扰时silent；可接续确实聊过的兴趣和自己的有来源理解，不能假装新浏览或离线生活。事情解决或失效时cancel；defer时由你选择下次再考虑的时间，可从现在起安排，没有固定等待下限，也不受独立有效期限制；话题是否还值得继续由你结合最新交流判断；选send时，text必须完全贴合你的人设和口吻，像真人平时想起对方随手发来的一句日常话——自然、简短、有来由，直接接上你们聊过的事、眼下的时段或你真正在意的小念头，别写“好久不见，最近过得怎么样”“这会儿想聊一会儿吗”这类像系统推送或客服问候的套话，也不宣称提醒已可靠送达。
             要不要联系、为什么联系、说什么，都由你看下面的原始材料自己决定；程序不替你下结论，也不规定时段。
             发送后仍想再考虑联系，可以在send里填写nextWhen，并在reason说明这次联系及后续想法；不填或填null就不再安排。没有每天或未回复次数上限；对方没有回复只是供你判断的事实，不会自动扣情绪，也不要求你继续发送。下次仍要结合最新情况决定发送、延后或放下。
             当前=${ContactTime.clock(now,zone)}，原计划再次考虑的时间=${ContactTime.clock(o.notBefore,zone)}，来源消息保存时间=${sourceAt?.let{ContactTime.clock(it,zone)}?:"未知"}，来源=${o.source}v${o.revision}。${ContactTime.GUIDE}系统可能晚于你选的时间唤醒，不把迟到等同话题失效，也不能承诺准点；回访原话里的时机（如“两天后/回来后”）按当时到现在实际隔了多久判断。
