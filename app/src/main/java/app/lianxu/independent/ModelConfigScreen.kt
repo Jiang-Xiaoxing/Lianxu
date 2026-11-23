@@ -1,6 +1,9 @@
 package app.lianxu.independent
 
 import android.view.WindowManager
+import androidx.compose.animation.core.*
+import androidx.compose.ui.MotionDurationScale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.*
@@ -52,6 +55,9 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
 @Composable fun ModelConfigScreen(onBack:()->Unit,state:ModelConfigState=viewModel(),saveForPurpose:ModelPurpose?=null) {
     LaunchedEffect(state.vaultVersion){state.refresh()}
     var screen by remember {mutableStateOf("overview")}
+    SideEffect { ProcessDiagnostics.view(when(screen) {
+        "edit" -> "model-editor"; "providers" -> "model-providers"; "voice-studio" -> "voice-studio"; else -> "models"
+    }) }
     val tabs=rememberPageTabs(4)
     val overviewTab=tabs.selected
     val servicesScroll=rememberLazyListState()
@@ -73,6 +79,7 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
     var prefilledKey by remember {mutableStateOf("")}
     var budgets by remember {mutableStateOf(ModelBudgetDraft())}
     var thinkingMode by remember {mutableStateOf(ThinkingMode.DEFAULT)}
+    var streamReplies by remember { mutableStateOf(true) }
     var thinkingMenu by remember {mutableStateOf(false)}
     var thinkingCustom by remember {mutableStateOf("")}
     fun enteredKey()=if(key==prefilledKey)"" else key
@@ -85,7 +92,7 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
     val activity=LocalActivity.current ?: return
     val lifecycle=LocalLifecycleOwner.current.lifecycle
     fun draft():ModelConfig{
-        val config=ModelConfig(draftId,name.trim(),provider,base.trim().trimEnd('/'),model.trim(),budgets.context.toIntOrNull()?:0,budgets.chat.toIntOrNull()?:0,budgets.memory.toIntOrNull()?:-1,thinkingMode.key,thinkingCustom.trim())
+        val config=ModelConfig(draftId,name.trim(),provider,base.trim().trimEnd('/'),model.trim(),budgets.context.toIntOrNull()?:0,budgets.chat.toIntOrNull()?:0,budgets.memory.toIntOrNull()?:-1,thinkingMode.key,thinkingCustom.trim(),streamReplies)
         // 界面只显示当前服务与模型允许的档位；保存值跟界面一致，不把旧档位带过去。
         return config.copy(thinkingMode=ThinkingFields.effectiveMode(config).key)
     }
@@ -97,9 +104,9 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
         key="";reveal=false
         if(screen=="edit")screen="overview" else onBack()
     }
-    fun add(embedding:Boolean=false){if(state.saving||saveForPurpose==ModelPurpose.CHAT&&embedding)return;prefilledKey="";keyDraft.invalidate();embeddingEditor=embedding;original=null;originalRevision=null;draftId=UUID.randomUUID().toString();name="";key="";reveal=false;model="";budgets=ModelBudgetDraft();resetThinking();thinkingCustom="";query="";allProviders=false;providerReturn="overview";state.clearResult();screen="providers"}
+    fun add(embedding:Boolean=false){if(state.saving||saveForPurpose==ModelPurpose.CHAT&&embedding)return;ProcessDiagnostics.action(ProcessAction.ADD_MODEL);prefilledKey="";keyDraft.invalidate();embeddingEditor=embedding;original=null;originalRevision=null;streamReplies=true;draftId=UUID.randomUUID().toString();name="";key="";reveal=false;model="";budgets=ModelBudgetDraft();resetThinking();thinkingCustom="";query="";allProviders=false;providerReturn="overview";state.clearResult();screen="providers"}
     fun sharedWithOtherPurposes(id:String)=saveForPurpose==ModelPurpose.CHAT&&state.purposes.any{(purpose,value)->purpose!=ModelPurpose.CHAT&&value==id}
-    fun edit(config:ModelConfig){if(sharedWithOtherPurposes(config.id))return;prefilledKey="";embeddingEditor=state.purposes[ModelPurpose.EMBEDDING]==config.id;original=config;originalRevision=state.configRevisions[config.id];draftId=config.id;name=config.name;provider=config.providerId;base=config.baseUrl;model=config.modelId;budgets=ModelBudgetDraft.existing(config);key="";reveal=false;advanced=false;thinkingMode=ThinkingFields.effectiveMode(config);thinkingMenu=false;thinkingCustom=config.thinkingCustom;state.clearResult();screen="edit"
+    fun edit(config:ModelConfig,embedding:Boolean){if(sharedWithOtherPurposes(config.id))return;ProcessDiagnostics.action(ProcessAction.EDIT_MODEL);prefilledKey="";embeddingEditor=embedding;original=config;streamReplies=config.streamReplies;originalRevision=state.configRevisions[config.id];draftId=config.id;name=config.name;provider=config.providerId;base=config.baseUrl;model=config.modelId;budgets=ModelBudgetDraft.existing(config);key="";reveal=false;advanced=false;thinkingMode=ThinkingFields.effectiveMode(config);thinkingMenu=false;thinkingCustom=config.thinkingCustom;state.clearResult();screen="edit"
         keyDraft.invalidate()
         val ticket=keyDraft.ticket()
         editorScope.launch {
@@ -126,7 +133,7 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
             title=when(screen){"providers"->if(embeddingEditor)"选择向量服务商" else "选择聊天服务商";"edit"->if(embeddingEditor)"向量模型配置" else if(original==null)"添加 ${providerName(preset)}" else "编辑配置";else->"大模型配置"},
             onBack={back()},backTag="config-back",enabled=!state.saving,
             extra={when(screen){
-                "edit"->SaveAction(!state.busy&&!sharedWithOtherPurposes(draftId)&&ThinkingFields.customError(thinkingCustom)==null){reveal=false;if(saveForPurpose==ModelPurpose.CHAT)state.saveChatFromCreation(draft(),enteredKey(),original,originalRevision){key="";screen="overview"}else state.save(draft(),enteredKey(),if(embeddingEditor)ModelPurpose.EMBEDDING else null,original,originalRevision){key="";screen="overview"}}
+                "edit"->SaveAction(!state.busy&&!sharedWithOtherPurposes(draftId)&&ThinkingFields.customError(thinkingCustom)==null){ProcessDiagnostics.action(ProcessAction.SAVE_MODEL);reveal=false;if(saveForPurpose==ModelPurpose.CHAT)state.saveChatFromCreation(draft(),enteredKey(),original,originalRevision){key="";screen="overview"}else state.save(draft(),enteredKey(),if(embeddingEditor)ModelPurpose.EMBEDDING else null,original,originalRevision){key="";screen="overview"}}
                 else->Spacer(Modifier.width(48.dp))
             }}
         )
@@ -160,7 +167,7 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
                         rows.forEachIndexed{index,config->
                             ChatModelServiceRow(config, state.tests[config.id]?.ok == true,
                                 selected = config.id == state.defaultId, canSelect = !state.busy,
-                                onOpen = { edit(config) }, onSelect = { state.makeDefault(config) })
+                                onOpen = { edit(config,embedding=false) }, onSelect = { state.makeDefault(config) })
                             if(index<rows.lastIndex)HorizontalDivider(Modifier.padding(horizontal=16.dp),color=ConfigLine)
                         }
                         if(rows.isNotEmpty())HorizontalDivider(Modifier.padding(horizontal=16.dp),color=ConfigLine)
@@ -173,7 +180,7 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
                     item("emb-label"){SectionLabel("向量模型")}
                     item("emb-list"){Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
                         rows.forEachIndexed{index,config->
-                            ModelServiceRow(config,state.tests[config.id]?.ok==true,state.purposes[ModelPurpose.EMBEDDING]==config.id){edit(config)}
+                            ModelServiceRow(config,state.tests[config.id]?.ok==true,state.purposes[ModelPurpose.EMBEDDING]==config.id){edit(config,embedding=true)}
                             if(index<rows.lastIndex)HorizontalDivider(Modifier.padding(horizontal=16.dp),color=ConfigLine)
                         }
                         if(rows.isNotEmpty())HorizontalDivider(Modifier.padding(horizontal=16.dp),color=ConfigLine)
@@ -212,7 +219,7 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
             regionGroup?.let{group->AlertDialog(onDismissRequest={regionGroup=null},title={Text("${group.name} · 选择地域")},text={Column{group.regions.forEach{p->TextButton({regionGroup=null;choose(p)},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).testTag("provider-region-${p.id}")){Text(regionName(p))}}}},confirmButton={TextButton({regionGroup=null}){Text("取消")}})}
             Text(if(embeddingEditor)"默认显示已核对文本向量接口；其他服务可手填。" else "预设不代表已连接；请选择对应地域的密钥。",Modifier.padding(20.dp),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
         }else{
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("config-editor").padding(horizontal=UiSpace.page,vertical=12.dp),verticalArrangement=Arrangement.spacedBy(16.dp)){
+            ModelEditorForm {
                 if(embeddingEditor)Text("用于记忆语义检索，保存后指定为记忆向量；不会用于聊天或总结记忆。",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
                 Row(Modifier.fillMaxWidth().clickable(enabled=!state.saving){keyDraft.invalidate();reveal=false;state.clearResult();modelQuery="";query="";providerReturn="edit";screen="providers"}.testTag("provider-picker").padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically){ProviderMark(preset);Spacer(Modifier.width(12.dp));Column(Modifier.weight(1f)){Text(providerName(preset),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Medium);Text(providerDetail(preset),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)};Text("更换",color=ConfigGreen,style=MaterialTheme.typography.bodySmall)}
                 if(preset.id=="opencode-go")Notice(preset.hint,false) else if(preset.hint.isNotBlank())Text(preset.hint,style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
@@ -227,7 +234,7 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
                     if(preset.modelsPath!=null||preset.modelsUrl!=null){
                         Row(Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically){
                             if(state.fetching)TextButton(onClick={state.cancelFetch()},modifier=Modifier.testTag("config-fetch-cancel")){Text("取消",style=MaterialTheme.typography.bodySmall)}
-                            TextButton(onClick={reveal=false;modelQuery="";state.request(draft(),enteredKey(),true)},enabled=!state.busy,modifier=Modifier.testTag("config-fetch")){
+                            TextButton(onClick={ProcessDiagnostics.action(ProcessAction.FETCH_MODELS);reveal=false;modelQuery="";state.request(draft(),enteredKey(),true)},enabled=!state.busy,modifier=Modifier.testTag("config-fetch")){
                                 if(state.fetching){CircularProgressIndicator(Modifier.size(16.dp),strokeWidth=2.dp);Spacer(Modifier.width(8.dp))}
                                 Text(if(state.fetching)"正在获取模型…" else if(state.statusError)"重新获取" else "获取模型",color=if(state.fetching)ConfigMuted else Color.Unspecified,style=MaterialTheme.typography.bodySmall)
                             }
@@ -254,18 +261,27 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
                 }
                 if(embeddingEditor&&ProviderCatalog.modelKind(draft())!=ProviderModelKind.TEXT_EMBEDDING)Text("此 ID 的文本向量兼容性未核实；可手填保存，多模态专用接口尚未适配。",style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
                 ProviderRequestMetadata.compatibilityNotice(draft())?.let{Notice(it,true)}
+                if (!embeddingEditor) {
+                    Column {
+                        SectionLabel("回复方式")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(selected = streamReplies, onClick = { streamReplies = true }, label = { Text("流式") },
+                                modifier = Modifier.testTag("reply-mode-stream"))
+                            FilterChip(selected = !streamReplies, onClick = { streamReplies = false }, label = { Text("非流式") },
+                                modifier = Modifier.testTag("reply-mode-complete"))
+                        }
+                    }
+                }
                 if(embeddingEditor)Text("向量维度：自动，以模型实际返回为准。无需填写 4096，不向服务强发 dimensions 参数；不同维度不会混合计算。",Modifier.testTag("embedding-dimensions"),style=MaterialTheme.typography.bodyMedium,color=ConfigMuted)
                 Column(Modifier.fillMaxWidth()){
                     if(embeddingEditor){
                         TextButton(onClick={reveal=false;state.testEmbedding(draft(),enteredKey())},enabled=!state.busy,modifier=Modifier.heightIn(min=48.dp).testTag("config-test")){Text(if(state.testing)"正在测试向量…" else "测试向量连接（返回维度）")}
-                    }else Row(Modifier.heightIn(min=48.dp).clickable(enabled=!state.busy,role=Role.Button){reveal=false;state.request(draft(),enteredKey(),false)}.testTag("config-test").padding(horizontal=4.dp),verticalAlignment=Alignment.CenterVertically){ControlIcon("plug");Spacer(Modifier.width(8.dp));Text(if(state.probe.phase==ProbePhase.TESTING)"正在等模型回话…" else if(state.probe.phase==ProbePhase.FAILED)"重新测试" else "测试连接",color=ConfigGreen,style=MaterialTheme.typography.bodyMedium);if(state.probe.phase==ProbePhase.TESTING)CircularProgressIndicator(Modifier.padding(start=12.dp).size(18.dp),strokeWidth=2.dp)}
+                    }else Row(Modifier.heightIn(min=48.dp).clickable(enabled=!state.busy,role=Role.Button){ProcessDiagnostics.action(ProcessAction.TEST_MODEL);reveal=false;state.request(draft(),enteredKey(),false)}.testTag("config-test").padding(horizontal=4.dp),verticalAlignment=Alignment.CenterVertically){ControlIcon("plug");Spacer(Modifier.width(8.dp));Text(if(state.probe.phase==ProbePhase.TESTING)"正在等模型回话…" else if(state.probe.phase==ProbePhase.FAILED)"重新测试" else "测试连接",color=ConfigGreen,style=MaterialTheme.typography.bodyMedium);if(state.probe.phase==ProbePhase.TESTING)CircularProgressIndicator(Modifier.padding(start=12.dp).size(18.dp),strokeWidth=2.dp)}
                     val result=state.probe
                     Text(when(result.phase){ProbePhase.UNTESTED->"未测试";ProbePhase.TESTING->"正在等模型回话…";else->result.text},Modifier.padding(start=4.dp,top=2.dp).testTag("config-probe-inline"),style=MaterialTheme.typography.bodySmall,color=when(result.phase){ProbePhase.REACHABLE->ConfigGreen;ProbePhase.FAILED->ConfigErrorColor;else->ConfigMuted})
                     Text(if(embeddingEditor)"点击测试才向 /embeddings 发送一句合成文本，可能按服务商规则计费；不会发送聊天或记忆。" else "点击测试会真发一句话让模型回，可能按服务商规则计费；不会发送聊天记录或记忆。",Modifier.padding(start=4.dp,top=8.dp).testTag("config-test-note"),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
                 }
-                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)){
-                    Row(Modifier.fillMaxWidth().heightIn(min=64.dp).clickable{advanced=!advanced}.testTag("config-advanced").padding(horizontal=18.dp,vertical=14.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("高级设置",style=MaterialTheme.typography.labelLarge);Text("服务地址与兼容方式",style=MaterialTheme.typography.bodySmall,color=ConfigMuted,modifier=Modifier.padding(top=4.dp))};ControlIcon(if(advanced)"up" else "chevron")}
-                    if(advanced)Column(Modifier.padding(horizontal=16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+                ModelAdvancedSettings(advanced, onToggle = { advanced = !advanced }) {
                         ConfigField(base,{prefilledKey="";keyDraft.invalidate();base=it.take(500);budgets=budgets.forModel(provider,base,model);key="";reveal=false;resetThinking();changed()},"服务地址（HTTPS）","config-url",keyboard=KeyboardType.Uri)
                         if(!embeddingEditor){
                         ConfigField(budgets.context,{budgets=budgets.manual(context=it.filter(Char::isDigit).take(7));changed()},"上下文容量（按模型文档）","config-context",keyboard=KeyboardType.Number)
@@ -304,7 +320,6 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
                             Text(customProblem?:"填一段花括号设置，原样带进请求，例如 {\"reasoning_effort\":\"high\"}。model、messages 这些关键字段不能写。",Modifier.testTag("config-thinking-custom-note"),style=MaterialTheme.typography.bodySmall,color=if(customProblem!=null)ConfigErrorColor else ConfigMuted)
                         }
                         }
-                    }
                 }
                 if(saveForPurpose==null)original?.let{saved->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){TextButton(onClick={state.makeDefault(saved)},enabled=!state.busy&&state.defaultId!=saved.id,modifier=Modifier.testTag("config-default-${saved.id}")){Text(if(state.defaultId==saved.id)"已为默认" else "设为默认",style=MaterialTheme.typography.bodySmall)};TextButton(onClick={deleting=saved},enabled=!state.busy,modifier=Modifier.testTag("config-delete-${saved.id}")){Text("删除配置",style=MaterialTheme.typography.bodySmall,color=ConfigErrorColor)}}}
                 Spacer(Modifier.height(12.dp))
@@ -315,6 +330,35 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
         text={Text("现在还不能添加画图服务商。等画图接上以后，这里会列出可以选的服务。")},
         confirmButton={TextButton({imageNotice=false}){Text("知道了")}})
     deleting?.let{config->AlertDialog(onDismissRequest={deleting=null},title={Text("删除这份配置？")},text={Text("同时清除保存的密钥。聊天记录不受影响。")},confirmButton={TextButton(onClick={state.delete(config);deleting=null;key="";reveal=false;screen="overview"}){Text("确认删除")}},dismissButton={TextButton(onClick={deleting=null}){Text("取消")}})}
+}
+
+// Keep the editor and advanced fields in separate DEX methods from the navigation branches.
+@Composable
+private fun ModelEditorForm(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("config-editor")
+            .padding(horizontal = UiSpace.page, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        content = content
+    )
+}
+
+@Composable
+private fun ModelAdvancedSettings(expanded: Boolean, onToggle: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable(onClick = onToggle)
+            .testTag("config-advanced").padding(horizontal = 18.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("高级设置", style = MaterialTheme.typography.labelLarge)
+                Text("服务地址与兼容方式", style = MaterialTheme.typography.bodySmall,
+                    color = ConfigMuted, modifier = Modifier.padding(top = 4.dp))
+            }
+            ControlIcon(if (expanded) "up" else "chevron")
+        }
+        if (expanded) Column(Modifier.padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+    }
 }
 
 @Composable private fun ChatModelServiceRow(
@@ -336,8 +380,11 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
                 FlowRow(Modifier.clickable(role = Role.Button, onClick = onOpen)
                     .testTag("config-manage-${config.id}").sizeIn(minWidth = 48.dp, minHeight = 48.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.Center) {
-                    Text(if (testOk) "已连接" else "未连接", style = MaterialTheme.typography.labelSmall,
-                        color = if (testOk) ConfigSuccess else ConfigMuted)
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        Text(if (testOk) "已连接" else "未连接", style = MaterialTheme.typography.labelSmall,
+                            color = if (testOk) ConfigSuccess else ConfigMuted)
+                        if (testOk) ConnectedLight(Modifier.offset(x = (-10).dp))
+                    }
                     Text(if (testOk) "管理" else "连接", style = MaterialTheme.typography.labelSmall, color = ConfigInk)
                 }
             }
@@ -358,6 +405,16 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
             }
         }
     }
+}
+
+@Composable private fun ConnectedLight(modifier: Modifier) {
+    val reduced = rememberCoroutineScope().coroutineContext[MotionDurationScale]?.scaleFactor == 0f
+    val brightness = if (reduced) null else rememberInfiniteTransition(label = "连接状态").animateFloat(
+        initialValue = .55f, targetValue = .9f,
+        animationSpec = infiniteRepeatable(tween(2200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "亮度")
+    Box(modifier.size(6.dp).graphicsLayer { alpha = brightness?.value ?: .85f }
+        .background(ConfigSuccess, CircleShape).testTag("chat-connection-light"))
 }
 
 /** 一个用途下的一行：名字 + 状态 + 小胶囊，行高 44dp，和语音服务那一行一致。 */

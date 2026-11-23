@@ -44,12 +44,13 @@ class ModelConfigUiTest {
         }
     }
     private class ScriptedChat:TextChatClient {
+        var expectedKey="synthetic-key-only"
         val calls=AtomicInteger(0)
         val replies=ConcurrentLinkedQueue<CompletableDeferred<TextChatResult>>()
         fun reply(result:TextChatResult)=CompletableDeferred(result).also {replies.add(it)}
         fun pending()=CompletableDeferred<TextChatResult>().also {replies.add(it)}
         override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {
-            assertEquals("synthetic-key-only",key);calls.incrementAndGet()
+            assertEquals(expectedKey,key);calls.incrementAndGet()
             // 连接测试须跟随配置的输出额度。
             assertEquals(config.outputTokens,request.outputLimit);assertTrue(request.messages.any{it.role=="user"&&it.content.contains("OK-")})
             val response=checkNotNull(replies.poll()){"No synthetic chat response queued"}
@@ -243,24 +244,46 @@ class ModelConfigUiTest {
     }
 
     @Test fun overviewShowsLastTestAndResetsToUntestedWhenModelOrKeyChanges(){
-        edit("ui-b");chat.reply(TextChatResult.Failure(ChatFailure.UNAUTHORIZED,401))
+        fun light()=ui.onNodeWithTag("chat-connection-light",useUnmergedTree=true)
+        light().assertDoesNotExist()
+        edit("ui-b")
+        ui.onNodeWithTag("reply-mode-stream").performScrollTo().assertIsSelected()
+        ui.onNodeWithTag("reply-mode-complete").performClick()
+        ui.onNodeWithTag("config-save").performClick()
+        ui.waitUntil(10000){!vault.list().single{it.id=="ui-b"}.streamReplies && !state.saving}
+        edit("ui-b");ui.onNodeWithTag("reply-mode-complete").performScrollTo().assertIsSelected()
+        shot("reply-mode-editor")
+        chat.reply(TextChatResult.Failure(ChatFailure.UNAUTHORIZED,401))
         ui.onNodeWithTag("config-test").performScrollTo().performClick();ui.waitUntil(10000){state.probe.phase==ProbePhase.FAILED}
         back();ui.waitUntil(10000){state.tests.containsKey("ui-b")}
+        light().assertDoesNotExist()
         assertTrue(shownTest("ui-b").contains("synthetic-model-b · 失败："));assertTrue(shownTest("ui-b").contains("401"))
         edit("ui-b");chat.reply(TextChatResult.Success("OK-11a0"))
         ui.onNodeWithTag("config-test").performScrollTo().performClick();ui.waitUntil(10000){state.probe.phase==ProbePhase.REACHABLE}
         back();assertTrue(shownTest("ui-b").contains("上次测试："));assertTrue(shownTest("ui-b").contains("synthetic-model-b · 成功"));shot("05-overview-last-test")
+        light().assertExists()
         assertEquals("未测试",shownTest("ui-a"))
         edit("ui-b");ui.onNodeWithTag("config-model").performScrollTo().performTextReplacement("synthetic-model-c");hideKeyboard()
         ui.onNodeWithTag("config-save").performClick();ui.waitUntil(10000){vault.list().single{it.id=="ui-b"}.modelId=="synthetic-model-c"&&!state.saving}
-        overview();assertEquals("未测试",shownTest("ui-b"));shot("06-overview-reset-after-model-change")
+        overview();light().assertDoesNotExist();assertEquals("未测试",shownTest("ui-b"));shot("06-overview-reset-after-model-change")
         edit("ui-b");chat.reply(TextChatResult.Success("OK-22c1"))
         ui.onNodeWithTag("config-test").performScrollTo().performClick();ui.waitUntil(10000){state.probe.phase==ProbePhase.REACHABLE}
         back();assertTrue(shownTest("ui-b").contains("synthetic-model-c · 成功"))
         edit("ui-b");ui.onNodeWithTag("config-key").performScrollTo().performTextReplacement("synthetic-key-rotated");hideKeyboard()
         ui.onNodeWithTag("config-save").performClick();ui.waitUntil(10000){vault.secret("ui-b")=="synthetic-key-rotated"&&!state.saving}
-        overview();assertEquals("未测试",shownTest("ui-b"))
-        assertEquals(3,chat.calls.get())
+        overview();light().assertDoesNotExist();assertEquals("未测试",shownTest("ui-b"))
+        chat.expectedKey="synthetic-key-rotated"
+        edit("ui-b");chat.reply(TextChatResult.Success("OK-33d2"))
+        ui.onNodeWithTag("config-test").performScrollTo().performClick()
+        ui.waitUntil(10000){state.probe.phase==ProbePhase.REACHABLE}
+        back();light().assertExists();edit("ui-b")
+        ui.onNodeWithTag("config-advanced").performScrollTo().performClick()
+        ui.onNodeWithTag("config-url").performScrollTo().performTextReplacement("https://other.example.invalid/v1")
+        ui.onNodeWithTag("config-key").performScrollTo().performTextReplacement("synthetic-key-rotated")
+        hideKeyboard();ui.onNodeWithTag("config-save").performClick()
+        ui.waitUntil(10000){vault.list().single{it.id=="ui-b"}.baseUrl.contains("other.example") && !state.saving}
+        overview();light().assertDoesNotExist()
+        assertEquals(4,chat.calls.get())
     }
     @Test fun overviewShowsTheLatestRealCallResult(){
         kotlinx.coroutines.runBlocking{
