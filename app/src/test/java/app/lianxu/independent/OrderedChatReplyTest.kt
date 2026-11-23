@@ -6,6 +6,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class OrderedChatReplyTest {
+    @Test fun receiptFromPublicReleaseRequiresUnchangedEffectiveSettings() {
+        val config = ModelConfig("c","配置","custom","https://example.invalid/v1","m",16000,2048)
+        val old = stableDigest("ModelConfig(id=c, name=配置, providerId=custom, baseUrl=https://example.invalid/v1, modelId=m, contextTokens=16000, outputTokens=2048, memoryOutputTokens=0)")
+        assertTrue(config.matchesReceivedStamp(old))
+        assertFalse(config.copy(thinkingMode="off").matchesReceivedStamp(old))
+        assertFalse(config.copy(thinkingCustom="{}").matchesReceivedStamp(old))
+        assertFalse(config.copy(streamReplies=false).matchesReceivedStamp(old))
+        assertFalse(config.copy(modelId="other").matchesReceivedStamp(old))
+    }
     private fun text(s:String)=ReplyPart(s,false)
     private fun voice(s:String)=ReplyPart(s,true)
     private fun arguments(parts:List<ReplyPart>)=JSONObject().put("segments",JSONArray().apply {

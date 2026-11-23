@@ -42,9 +42,11 @@ data class ModelConfig(val id:String,val name:String,val providerId:String,val b
         if (stableDigest(toString()) == stamp) return true
         if (!streamReplies) return false
         val fields = "id=$id, name=$name, providerId=$providerId, baseUrl=$baseUrl, modelId=$modelId, " +
-            "contextTokens=$contextTokens, outputTokens=$outputTokens, memoryOutputTokens=$memoryOutputTokens, " +
-            "thinkingMode=$thinkingMode, thinkingCustom=$thinkingCustom"
-        return stableDigest("ModelConfig($fields)") == stamp
+            "contextTokens=$contextTokens, outputTokens=$outputTokens, memoryOutputTokens=$memoryOutputTokens"
+        if (stableDigest("ModelConfig($fields, thinkingMode=$thinkingMode, thinkingCustom=$thinkingCustom)") == stamp) return true
+        // Public 1.0.4 receipts predate both thinking and streaming preferences.
+        return thinkingMode == ThinkingMode.DEFAULT.key && thinkingCustom.isEmpty() &&
+            stableDigest("ModelConfig($fields)") == stamp
     }
     /** Missing/zero is the legacy contract: keep that saved configuration's original output. */
     fun memoryOutputLimit()=if(memoryOutputTokens==0)outputTokens else memoryOutputTokens
