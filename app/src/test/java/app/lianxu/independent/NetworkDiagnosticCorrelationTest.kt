@@ -22,17 +22,46 @@ class NetworkDiagnosticCorrelationTest {
     private val privateError="diagnostic-payload-secret https://never-log.invalid/?private=raw"
     private class Fake(url:URL,val input:InputStream,val type:String="application/json",val badDisconnect:Boolean=false,val onDisconnect:(()->Unit)?=null):HttpsURLConnection(url){
         val workerClosed=CountDownLatch(1)
+        val sent=ByteArrayOutputStream()
         override fun getCipherSuite()=""
         override fun getLocalCertificates():Array<Certificate>?=null
         override fun getServerCertificates():Array<Certificate> = emptyArray()
         override fun connect(){}
         override fun disconnect(){onDisconnect?.invoke();if(Thread.currentThread().name=="lianxu-text-http")workerClosed.countDown();if(badDisconnect)throw IOException("private disconnect payload")}
         override fun usingProxy()=false
-        override fun getOutputStream():OutputStream=ByteArrayOutputStream()
+        override fun getOutputStream():OutputStream=sent
         override fun getResponseCode()=200
         override fun getContentType()=type
         override fun getInputStream()=input
     }
+    @Test fun deepSeekStreamingToolReplyContinuesWithOriginalReasoning()=verifyDeepSeekContinuation(true)
+    @Test fun deepSeekNonStreamingToolReplyContinuesWithOriginalReasoning()=verifyDeepSeekContinuation(false)
+
+    private fun verifyDeepSeekContinuation(stream:Boolean)=runBlocking {
+        val deepSeek=config.copy(providerId="deepseek",baseUrl="https://api.deepseek.com/v1",modelId="deepseek-v4-pro")
+        val tool="""{"index":0,"id":"lookup-1","type":"function","function":{"name":"lookup","arguments":"{}"}}"""
+        val response=if(stream) listOf(
+            """data: {"choices":[{"delta":{"reasoning_content":"first "}}]}""",
+            """data: {"choices":[{"delta":{"reasoning_content":"second","tool_calls":[$tool]},"finish_reason":"tool_calls"}]}""",
+            "data: [DONE]"
+        ).joinToString("\n\n") else
+            """{"choices":[{"message":{"reasoning_content":"first second","tool_calls":[$tool]},"finish_reason":"tool_calls"}]}"""
+        val first=Fake(URL(deepSeek.baseUrl),response.byteInputStream(),if(stream)"text/event-stream" else "application/json")
+        val second=Fake(URL(deepSeek.baseUrl),reply.byteInputStream())
+        val connections=ArrayDeque(listOf(first,second))
+        val client=HttpsTextChatClient(HttpsConnectionFactory{connections.removeFirst()})
+        val lookup=request.copy(tools=listOf(mapOf("type" to "function","function" to mapOf("name" to "lookup"))))
+        val result=(if(stream)client.streamEvents(deepSeek,key,lookup){} else client.complete(deepSeek,key,lookup)) as TextChatResult.Success
+        val call=result.toolCalls.single()
+        val next=request.copy(jsonObject=true,messages=request.messages+listOf(
+            WireMessage("assistant",result.text,result.toolCalls,continuation=result.continuation),
+            WireMessage("tool","found",toolCallId=call.id,name=call.name)))
+        assertTrue(client.complete(deepSeek,key,next) is TextChatResult.Success)
+        val wire=JsonParser.parseString(second.sent.toString("UTF-8")).asJsonObject
+        assertEquals("first second",wire["messages"].asJsonArray[1].asJsonObject["reasoning_content"].asString)
+        assertFalse(wire.has("response_format"))
+    }
+
     private inner class Blocked:InputStream(){
         val entered=CountDownLatch(1);val release=CountDownLatch(1)
         override fun read():Int {

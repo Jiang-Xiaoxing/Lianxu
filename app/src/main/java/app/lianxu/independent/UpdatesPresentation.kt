@@ -11,9 +11,9 @@ internal object UpdatesPresentation {
     /** Startup highlights only; the updates page keeps the complete facts and limitations. */
     fun noticeSummary(note:LocalReleaseNote):List<String> = when(note.code){
         65L->listOf(
-            "提示词整体翻新，去掉客服腔与后台英文术语泄露。",
-            "聊天与思考更贴合自写人设，正式或直率都按人设来。",
-            "同步优化建角色、润色、主动发消息、看图与语音提示词。"
+            "聊天与思考提示词翻新，回复更贴合自写人设。",
+            "全屏暖纸扉页新增「先进入主页」，个人资料提示更简洁。",
+            "修复 DeepSeek 思考模型调用工具后回复中断的问题。"
         )
         64L->listOf(
             "新增角色语音与文语混排，大模型配置按用途分页。",
@@ -40,6 +40,8 @@ internal object UpdatesPresentation {
     fun summary(note:LocalReleaseNote):List<String> = when(note.code){
         65L->listOf(
             "整体翻新前台聊天、默认思考与回话提示词，去除客服腔与后台英文状态词泄露。",
+            "初次相遇的暖纸背景延伸至系统栏，可先进入主页；个人资料页去掉名字与称呼的重复提示。",
+            "DeepSeek 思考模型调用工具后可接着回复，兼容流式和非流式。",
             "前台改用纯中文相处规则，按自写人设节奏说话并保留成长优先级与安全边界。",
             "同步优化角色生成、创建润色、主动发消息、语音口语分段与图片视频反注入提示。"
         )

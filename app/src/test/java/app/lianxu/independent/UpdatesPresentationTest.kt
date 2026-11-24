@@ -10,6 +10,8 @@ class UpdatesPresentationTest {
         assertEquals(3,UpdatesPresentation.noticeSummary(note).size)
         assertTrue(UpdatesPresentation.noticeSummary(note).all{it.length<=32})
         assertTrue(note.changes.any{"整体翻新前台聊天" in it})
+        assertTrue(UpdatesPresentation.noticeSummary(note).any{"先进入主页" in it})
+        assertTrue(UpdatesPresentation.noticeSummary(note).any{"DeepSeek" in it})
         assertTrue(note.changes.any{"不诱导排他依赖" in it})
         assertEquals("1.0.5",LocalReleaseNotes.forVersion(64)?.version)
     }
