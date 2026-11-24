@@ -39,6 +39,35 @@ class MemoryJsonDocumentAndroidTest {
         return MemoryEngine(scope,repo,ModelAccess(vault),client,{}).ensureRoom("a",forceOne=true)
     }
     private suspend fun assertUncommitted(){assertTrue(repo.memories("a").isEmpty());assertEquals(1,repo.recentSources("a").size);assertEquals(0L,repo.cursor("a"));val work=MemoryBatchRepository(repo).pending("a")!!;assertTrue(MemoryBatchRepository(repo).applied(work).isEmpty())}
+    @Test fun nonStreamingDocumentCommitsToDatabase()=verifyNonStreamingCommit(true)
+    @Test fun nonStreamingNdjsonCommitsToDatabase()=verifyNonStreamingCommit(false)
+
+    private fun verifyNonStreamingCommit(jsonDocument:Boolean)=runBlocking {
+        val selected=if(jsonDocument) config.copy(streamReplies=false) else
+            config.copy(baseUrl="https://example.invalid/v1",modelId="custom-summary",streamReplies=false)
+        vault.save(selected,"synthetic-key-only")
+        var calls=0
+        val client=object:TextChatClient {
+            override suspend fun stream(config:ModelConfig,key:String,request:TextChatRequest,onChunk:suspend(String)->Unit):TextChatResult=
+                error("Unexpected streaming summary")
+            override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {
+                calls++
+                assertEquals(jsonDocument,request.jsonObject)
+                val root=document(JSONObject(request.messages.last().content))
+                if(jsonDocument) return TextChatResult.Success(root.toString(2))
+                root.remove("operations")
+                val row=JSONObject().put("type","operation").put("batch_id",root.getString("batch_id"))
+                    .put("character_id","a").put("operation",operation())
+                return TextChatResult.Success(row.toString()+"\r\n"+root.put("type","complete"))
+            }
+        }
+        val result=MemoryEngine(scope,repo,ModelAccess(vault),client,{}).ensureRoom("a",forceOne=true)
+        assertTrue(result.code,result.success)
+        assertEquals(1,calls)
+        assertEquals(1,repo.memories("a").size)
+        assertTrue(repo.recentSources("a").isEmpty())
+        assertEquals(2,store.messages().size)
+    }
     @Test fun prettyPrintedDocumentAcrossTransportChunksCommitsOnce()=runBlocking{
         assertTrue(executeSummary({document(it).toString(2)}).success)
         assertEquals(1,repo.memories("a").size);assertEquals(0,repo.recentSources("a").size);assertEquals(2,store.messages().size)

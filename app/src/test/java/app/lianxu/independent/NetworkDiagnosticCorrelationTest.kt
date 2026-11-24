@@ -37,6 +37,32 @@ class NetworkDiagnosticCorrelationTest {
     @Test fun deepSeekStreamingToolReplyContinuesWithOriginalReasoning()=verifyDeepSeekContinuation(true)
     @Test fun deepSeekNonStreamingToolReplyContinuesWithOriginalReasoning()=verifyDeepSeekContinuation(false)
 
+    @Test fun memoryNonStreamingReadsNdjsonLines()=verifySummaryWire(false,false)
+    @Test fun memoryNonStreamingReadsWholeDocument()=verifySummaryWire(false,true)
+    @Test fun memoryStreamingReadsNdjsonLines()=verifySummaryWire(true,false)
+
+    private fun verifySummaryWire(stream:Boolean,document:Boolean)=runBlocking {
+        val lines=listOf("""{"id":1}""","""{"id":2}""")
+        val text=if(document) "{\n  \"id\": 1\n}" else lines.joinToString("\r\n")
+        val field=if(stream)"delta" else "message"
+        val choice=org.json.JSONObject().put(field,org.json.JSONObject().put("content",text)).put("finish_reason","stop")
+        val json=org.json.JSONObject().put("choices",org.json.JSONArray().put(choice)).toString()
+        val response=if(stream)"data: $json\n\ndata: [DONE]\n\n" else json
+        val fake=Fake(URL(config.baseUrl),response.byteInputStream(),if(stream)"text/event-stream" else "application/json")
+        val client=HttpsTextChatClient(HttpsConnectionFactory{fake})
+        val credential=ModelCredential(config.copy(streamReplies=stream),key,"stamp")
+        val records=mutableListOf<String>()
+        val whole=readMemorySummary(client,credential,request,document,{}){records.add(it)}
+        assertEquals(stream,org.json.JSONObject(fake.sent.toString("UTF-8")).getBoolean("stream"))
+        if(document){
+            assertTrue(records.isEmpty())
+            assertEquals(1,org.json.JSONObject(whole).getInt("id"))
+        }else{
+            assertEquals(lines,records)
+            assertEquals(listOf(1,2),records.map{org.json.JSONObject(it).getInt("id")})
+        }
+    }
+
     private fun verifyDeepSeekContinuation(stream:Boolean)=runBlocking {
         val deepSeek=config.copy(providerId="deepseek",baseUrl="https://api.deepseek.com/v1",modelId="deepseek-v4-pro")
         val tool="""{"index":0,"id":"lookup-1","type":"function","function":{"name":"lookup","arguments":"{}"}}"""
