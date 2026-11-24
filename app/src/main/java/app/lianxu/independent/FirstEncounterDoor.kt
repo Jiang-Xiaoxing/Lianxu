@@ -12,7 +12,11 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -31,17 +35,20 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextAlign
 
 internal val FirstEncounterPaper=Color(0xFFFFEED6)
 internal val FirstEncounterSaver=listSaver<FirstEncounterState,String>(
-    save={listOf(it.phase.name,it.destination?.name.orEmpty())},
-    restore={values->runCatching{FirstEncounterState(FirstEncounterPhase.valueOf(values[0]),values[1].takeIf{it.isNotEmpty()}?.let(FirstEncounterDestination::valueOf)).restored()}.getOrNull()}
+    save={listOf(it.phase.name,it.destination?.name.orEmpty(),it.dismissed.toString())},
+    restore={values->runCatching{FirstEncounterState(FirstEncounterPhase.valueOf(values[0]),values[1].takeIf{it.isNotEmpty()}?.let(FirstEncounterDestination::valueOf),values.getOrNull(2)=="true").restored()}.getOrNull()}
 )
 
 /** Uses the two approved paintings unchanged; only their drawing transforms are animated. */
 @Composable internal fun FirstEncounterDoor(
     state:FirstEncounterState,
     onState:(FirstEncounterState)->Unit,
+    notice:@Composable ()->Unit={},
     onChoose:(FirstEncounterDestination)->Unit
 ){
     val resources=LocalContext.current.resources
@@ -74,19 +81,45 @@ internal val FirstEncounterSaver=listSaver<FirstEncounterState,String>(
         Canvas(Modifier.fillMaxSize()){
             drawIntoCanvas{renderer.draw(it.nativeCanvas,size.width,size.height,if(reduced)1f else open.value,if(reduced)1f else push.value)}
         }
-        if(state.phase==FirstEncounterPhase.READY){
-            val actionsEnabled=state.canChoose&&(reduced||revealComplete)
-            Column(Modifier.align(Alignment.Center).widthIn(max=360.dp).fillMaxWidth(.70f).graphicsLayer{alpha=if(reduced)1f else reveal.value}.testTag("first-encounter-actions"),horizontalAlignment=Alignment.CenterHorizontally){
-                Button({onChoose(FirstEncounterDestination.CREATE)},enabled=actionsEnabled,
-                    shape=RoundedCornerShape(28.dp),colors=ButtonDefaults.buttonColors(containerColor=Color(0xFFF0CD99),contentColor=Color(0xFF835323),disabledContainerColor=Color(0xFFF0CD99),disabledContentColor=Color(0xFF835323)),
-                    modifier=Modifier.fillMaxWidth().heightIn(min=56.dp).testTag("first-encounter-create")){
-                    Text("创建角色",style=MaterialTheme.typography.titleMedium)
+        Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding(),horizontalAlignment=Alignment.CenterHorizontally){
+            notice()
+            if(state.phase==FirstEncounterPhase.READY){
+                val actionsEnabled=state.canChoose&&(reduced||revealComplete)
+                val secondaryInk=Color(0xFF786654)
+                val pill=RoundedCornerShape(28.dp)
+                // Balance the footer so the title and choices remain centred on the page.
+                Spacer(Modifier.height(48.dp))
+                Column(Modifier.weight(1f).widthIn(max=420.dp).fillMaxWidth(.84f)
+                    .verticalScroll(rememberScrollState()).graphicsLayer{alpha=if(reduced)1f else reveal.value},
+                    verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
+                    Column(Modifier.fillMaxWidth().testTag("first-encounter-actions"),horizontalAlignment=Alignment.CenterHorizontally){
+                        Spacer(Modifier.size(46.dp,1.dp).background(Color(0xFFB79B79)))
+                        Spacer(Modifier.height(20.dp))
+                        Text("初次相遇",style=BrandStyle.copy(fontSize=36.sp,letterSpacing=3.sp),color=Color(0xFF584535))
+                        Spacer(Modifier.height(16.dp))
+                        Text("写下她的性格与你们的关系，\n之后的每一次相处都会慢慢留下来。",color=secondaryInk,
+                            fontSize=14.sp,lineHeight=25.sp,textAlign=TextAlign.Center)
+                        Spacer(Modifier.height(34.dp))
+                        Button({onChoose(FirstEncounterDestination.CREATE)},enabled=actionsEnabled,shape=pill,
+                            colors=ButtonDefaults.buttonColors(containerColor=Color(0xFF6B5847),contentColor=Color(0xFFFFFDF9),
+                                disabledContainerColor=Color(0xFF6B5847),disabledContentColor=Color(0xFFFFFDF9)),
+                            modifier=Modifier.fillMaxWidth(.90f).height(56.dp).testTag("first-encounter-create")){
+                            Text("创建角色",style=MaterialTheme.typography.titleMedium)
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedButton({onChoose(FirstEncounterDestination.RESTORE)},enabled=actionsEnabled,shape=pill,
+                            colors=ButtonDefaults.outlinedButtonColors(containerColor=Color(0xFFFFFDF9).copy(alpha=.62f),contentColor=Color(0xFF514235),
+                                disabledContainerColor=Color(0xFFFFFDF9).copy(alpha=.62f),disabledContentColor=Color(0xFF514235)),
+                            border=BorderStroke(1.dp,Color(0xFFD4C4B2)),
+                            modifier=Modifier.fillMaxWidth(.90f).height(52.dp).testTag("first-encounter-restore")){
+                            Text("恢复已有数据",style=MaterialTheme.typography.bodyLarge)
+                        }
+                    }
                 }
-                Spacer(Modifier.height(20.dp))
-                TextButton({onChoose(FirstEncounterDestination.RESTORE)},enabled=actionsEnabled,
-                    colors=ButtonDefaults.textButtonColors(contentColor=Color(0xFF956B3C),disabledContentColor=Color(0xFF956B3C)),
-                    modifier=Modifier.fillMaxWidth().heightIn(min=UiSpace.action).testTag("first-encounter-restore")){
-                    Text("恢复已有数据",style=MaterialTheme.typography.bodyLarge)
+                TextButton({onState(state.dismiss())},enabled=actionsEnabled,
+                    colors=ButtonDefaults.textButtonColors(contentColor=secondaryInk,disabledContentColor=secondaryInk),
+                    modifier=Modifier.graphicsLayer{alpha=if(reduced)1f else reveal.value}.testTag("first-encounter-enter-home")){
+                    Text("先进入主页")
                 }
             }
         }

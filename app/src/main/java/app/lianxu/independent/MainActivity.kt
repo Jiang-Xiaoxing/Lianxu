@@ -2,6 +2,8 @@ package app.lianxu.independent
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -66,6 +68,16 @@ class MainActivity:ComponentActivity(){
     }
     val encounterHome=encounter.shouldShow(vm.ready,vm.friends.isNotEmpty(),vm.page)
     val guidedCreate=vm.page=="create"&&encounter.destination==FirstEncounterDestination.CREATE
+    val warmPage=encounterHome||guidedCreate
+    val activity=LocalActivity.current as? ComponentActivity
+    if(warmPage && activity!=null){
+        DisposableEffect(activity.window){
+            val clear=android.graphics.Color.TRANSPARENT
+            val light=SystemBarStyle.light(clear,clear)
+            activity.enableEdgeToEdge(statusBarStyle=light,navigationBarStyle=light)
+            onDispose { activity.enableEdgeToEdge() }
+        }
+    }
     LaunchedEffect(vm.page){if(vm.page=="home"){encounter=encounter.returned();creationConfigOpen=false}}
     LaunchedEffect(vm.page,vm.friends.isNotEmpty()){
         if(vm.page=="chat"&&vm.friends.isNotEmpty()&&encounter.destination==FirstEncounterDestination.CREATE){creationDraft=RoleCreationDraft();encounter=encounter.returned()}
@@ -91,10 +103,13 @@ class MainActivity:ComponentActivity(){
         }
     }
     BackHandler(vm.page!="home"&&!guidedCreate){vm.back()}
-    CompositionLocalProvider(LocalRoleAvatars provides vm.roleAvatars){Surface(Modifier.fillMaxSize(),color=if(encounterHome||guidedCreate)FirstEncounterPaper else Chrome){Column(Modifier.safeDrawingPadding().imePadding()){
+    val notice:@Composable ()->Unit={
         if(vm.error.isNotEmpty())Text(vm.error,Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer).padding(12.dp),style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onErrorContainer)
+    }
+    CompositionLocalProvider(LocalRoleAvatars provides vm.roleAvatars){Surface(Modifier.fillMaxSize(),color=if(warmPage)FirstEncounterPaper else Chrome){Column(if(warmPage) Modifier else Modifier.safeDrawingPadding().imePadding()){
+        if(!warmPage)notice()
         if(!vm.ready)Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()}
-        else if(encounterHome)FirstEncounterDoor(encounter,{encounter=it},onChoose={target->
+        else if(encounterHome)FirstEncounterDoor(encounter,{encounter=it},notice=notice,onChoose={target->
             val choice=encounter.choose(target);encounter=choice.state
             choice.navigateTo?.let{vm.open(it.page)}
         })
@@ -113,7 +128,7 @@ class MainActivity:ComponentActivity(){
             "toolbox-memory"->ToolboxMemoryScreen(vm)
             "toolbox-contact"->ToolboxContactScreen(vm)
             "create"->if(guidedCreate)RoleCreationGuide(creationDraft,{updateCreation(it)},vm.busy,saved=vm.savedCreationId==creationDraft.creationId,
-                polisher=vm.creationPolisher,onConfigure={vm.creationPolisher.cancel();creationConfigOpen=true;vm.open("models")},
+                notice=notice,polisher=vm.creationPolisher,onConfigure={vm.creationPolisher.cancel();creationConfigOpen=true;vm.open("models")},
                 onExit={vm.back()},onCreate={draft->vm.createCompanion(draft.name,draft.definition,draft.expression,draft.opening,draft.extra,draft.relationship,draft.creationId)})else Create(vm)
             "role-archive"->RoleArchiveScreen(vm)
             "search"->RoleSearch(vm)
