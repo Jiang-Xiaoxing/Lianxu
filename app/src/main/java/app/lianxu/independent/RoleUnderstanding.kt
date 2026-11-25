@@ -12,7 +12,7 @@ internal data class RoleGoal(val description:String,val origin:String,val state:
 internal data class RoleChoice(val id:String,val action:String,val reason:String,val evidence:List<RoleEvidence>)
 internal data class RoleJudgment(val position:String,val kind:String,val evidence:List<RoleEvidence>)
 internal data class RoleFeedback(val actionMessage:Long,val verdict:String,val quote:String)
-internal data class RoleLearning(val id:String,val kind:String,val scope:String,val content:String,val phase:String,val evidence:List<RoleEvidence>)
+internal data class RoleLearning(val id:String,val kind:String,val scope:String,val content:String,val phase:String,val evidence:List<RoleEvidence>,val resultQuote:String?=null)
 internal data class RoleFuture(val kind:String,val timing:Reconsideration,val evidence:List<RoleEvidence>)
 internal data class RoleUnderstanding(val schemaVersion:Int=1,val appraisal:RoleAppraisal?,val feelings:List<RoleFeeling>,val goal:RoleGoal?,val choices:List<RoleChoice>,val selected:String,val judgment:RoleJudgment?,val feedback:List<RoleFeedback>,val learning:RoleLearning?,val usedLearningIds:List<String>,val consideredLearningIds:List<String>,val future:RoleFuture?,val dependencies:List<RoleEvidence>,val revision:Int=1) {
     fun hasRecords()=appraisal!=null||feelings.isNotEmpty()||goal!=null||choices.isNotEmpty()||judgment!=null||feedback.isNotEmpty()||learning!=null||future!=null
@@ -49,7 +49,10 @@ internal object RoleLearningProjector {
                     "revise"->if(previous!=null){
                         val priorResults=change.evidence.filter{it.layer=="action"&&it.source.turnId!=entry.source.turnId&&actions.containsKey(it.messageId)}.mapNotNull{it.messageId}.toSet()
                         val freshEvidence=change.evidence.any{it.layer=="fact"&&it.source==entry.source}
-                        val supported=priorResults.isNotEmpty()&&freshEvidence&&entry.source!=previous.source&&entry.claimKind in setOf("reported_event","interaction")&&flow.appraisal?.certainty in setOf("reported","inference")&&flow.appraisal?.eventRelation !in setOf("repetition","uncertain")
+                        val newResult=if(flow.appraisal==null) !change.resultQuote.isNullOrBlank() else
+                            flow.appraisal.certainty in setOf("reported","inference") && flow.appraisal.eventRelation !in setOf("repetition","uncertain")
+                        val supported=newResult && priorResults.isNotEmpty() && freshEvidence && entry.source!=previous.source &&
+                            entry.claimKind in setOf("reported_event","interaction")
                         states[change.id]=previous.copy(content=change.content,state=if(supported)"active"else"developing",source=entry.source,version=previous.version+1,supportingResults=previous.supportingResults+priorResults,
                             reason=if(supported)"先前候选、真实行动及新的有来源经历/结果共同支持本次有范围修订"else"依据不足以确定，保留可修正的变化候选")
                     }
@@ -79,7 +82,7 @@ internal object RoleUnderstandingContract {
     private fun JsonObject.obj(key:String):JsonObject=get(key)?.takeIf{it.isJsonObject}?.asJsonObject?:fail("OBJECT_$key")
     private fun JsonObject.number(key:String):Long=try{get(key)?.takeIf{it.isJsonPrimitive&&it.asJsonPrimitive.isNumber}?.asBigDecimal?.longValueExact()?:fail("NUMBER_$key")}catch(_:ArithmeticException){fail("INTEGER_$key")}
     private fun JsonObject.strings(key:String)=array(key).map{if(!it.isJsonPrimitive||!it.asJsonPrimitive.isString)fail("STRING_ARRAY_$key");it.asString}.distinct()
-    fun parse(raw:String,input:String,p:ExperienceProposal,context:RoleContext,now:Long,readPerformed:Boolean,readAllowed:Boolean=true,lenient:Boolean=false,ignored:(String,String)->Unit={field,code->Diagnostics.event("role.input.ignored",mapOf("field" to field,"code" to code))}):RoleUnderstanding {
+    fun parse(raw:String,input:String,p:ExperienceProposal,context:RoleContext,now:Long,readPerformed:Boolean,readAllowed:Boolean=true,lenient:Boolean=false,learningOnly:Boolean=false,ignored:(String,String)->Unit={field,code->Diagnostics.event("role.input.ignored",mapOf("field" to field,"code" to code))}):RoleUnderstanding {
         val context=context.beforeCurrent()
         val root=JsonParser.parseString(raw).asJsonObject
         // Known wire-only deviation: appraise is a stage name, appraisal is the field.
@@ -97,6 +100,7 @@ internal object RoleUnderstandingContract {
         }
         val dependencies=linkedSetOf<RoleEvidence>()
         fun <T> part(field:String,block:()->T):T? {
+            if(learningOnly && (field!="learning" || !root.has("learning")))return null
             val before=dependencies.toSet()
             try { return block() } catch(e:RuntimeException) {
                 if(!lenient)throw e
@@ -108,6 +112,7 @@ internal object RoleUnderstandingContract {
         fun evidence(j:JsonObject):List<RoleEvidence> =j.array("evidence").map{element->
             val e=element.asJsonObject;val id=e.number("source");val layer=e.text("layer")
             val ref=context.knownSources[id]?:fail("UNKNOWN_SOURCE")
+            if(learningOnly && (ref.characterId!=context.role || ref.turnId>context.current.turnId))fail("UNKNOWN_SOURCE")
             if(layer !in setOf("fact","interpretation","action"))fail("EVIDENCE_LAYER")
             if(id==context.current.turnId&&layer!="fact")fail("SELF_SUPPORT")
             if(layer=="interpretation"&&context.entries.none{it.source==ref})fail("NO_INTERPRETATION")
@@ -165,7 +170,10 @@ internal object RoleUnderstandingContract {
             val id=if(phase=="propose")"learning-"+stableDigest("${context.role}:${context.current.turnId}:${context.current.version}:$kind:$scope").take(32)else requestedId
             val previous=if(phase=="propose")null else (context.learning.singleOrNull{it.id==id}?:fail("LEARNING_TARGET"))
             if(previous!=null){if(kind!=previous.kind||scope!=previous.scope)fail("LEARNING_SCOPE_CHANGED");dependencies+=RoleEvidence(previous.source,"interpretation",interpretationRevision=context.entries.single{it.source==previous.source}.flow.revision)}
-            RoleLearning(id,kind,scope,content,phase,evidence(l))
+            val result=if(learningOnly && phase=="revise" && l.has("resultQuote")) l.text("resultQuote").also{
+                if(it !in input)fail("LEARNING_RESULT_QUOTE")
+            } else null
+            RoleLearning(id,kind,scope,content,phase,evidence(l),result)
         }}
         val use=part("learningUse"){
         val used=root.strings("usedLearningIds");val considered=root.strings("consideredLearningIds")
@@ -194,6 +202,7 @@ internal object RoleUnderstandingContract {
         required+=flow.appraisal?.evidence.orEmpty();required+=flow.goal?.evidence.orEmpty();required+=flow.judgment?.evidence.orEmpty()
         flow.feelings.forEach{required+=it.evidence};flow.choices.forEach{required+=it.evidence}
         flow.learning?.let{l->required+=l.evidence
+            if(l.resultQuote!=null && (l.phase!="revise" || l.resultQuote.isBlank() || l.resultQuote !in input))fail("LEARNING_RESULT_QUOTE")
             if(l.kind !in setOf("viewpoint","interest","habit")||l.phase !in setOf("propose","revise","pause")||l.scope.isBlank()||l.content.isBlank())fail("INVALID_LEARNING")
             if(l.phase!="propose"){val previous=context.learning.singleOrNull{it.id==l.id}?:fail("LEARNING_TARGET");if(l.kind!=previous.kind||l.scope!=previous.scope)fail("LEARNING_SCOPE_CHANGED");required+=RoleEvidence(previous.source,"interpretation",interpretationRevision=context.entries.single{it.source==previous.source}.flow.revision)}
         }

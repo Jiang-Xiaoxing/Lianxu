@@ -68,7 +68,7 @@ internal fun CompanionRepository.relationship(db:SQLiteDatabase,role:String,at:L
     fun quote(ref:SourceRef):String?=if(!refCurrent(db,ref)&&program.none{it.source==ref})null else db.rawQuery("SELECT body FROM messages WHERE friend_id=? AND id=?",arrayOf(role,ref.turnId.toString())).use{if(it.moveToFirst())it.getString(0)else null}
     val attributionIncomplete=RelationFeeling.read(db,role)?.attributionIncomplete==true
     val summary=(if(attributionIncomplete)RelationshipPrompt.UNVERIFIED+"\n" else "")+RelationshipSummary.render(state,at,store.persona(db).addressee(),::quote)
-    val modelMaterial=if(attributionIncomplete)RelationshipPrompt.UNVERIFIED else RelationshipPrompt.render(state,at,::quote)
+    val modelMaterial=RelationshipPrompt.render(state,at,attributionIncomplete,{currentInnerNote(db,role,at)},::quote)
     val label=changes.lastOrNull()?.label?:template.label
     val activeTemplate=RelationTemplate.named(label)?:RelationTemplate.entries.firstOrNull{label=="自定义（基于${it.label}）"}?:template
     return RelationshipView(activeTemplate,start,rows,state,summary,parameters,label,modelMaterial,attributionIncomplete)
@@ -96,3 +96,27 @@ internal suspend fun CompanionRepository.correctRelationshipRecord(source:Source
 internal suspend fun CompanionRepository.restoreRelationshipRecord(source:SourceRef)=correctRelationshipRecord(source,false)
 internal suspend fun CompanionRepository.undoRelationshipCorrection(source:SourceRef)=correctRelationshipRecord(source,false)
 internal suspend fun CompanionRepository.changeRelationshipTemplate(role:String,template:RelationTemplate)=changeRelationshipParameters(role,template.parameters,template.label)
+
+/** The committed proposal row already owns the role, user message and source revision, including on restore. */
+internal data class ReviewInnerNote(val text:String,val at:Long) {
+    companion object {
+        fun validText(text:String?)=!text.isNullOrBlank() && text.codePointCount(0,text.length)<=30 && text.none{it.isISOControl()}
+    }
+    fun visible(now:Long,source:SourceRef,allowed:(SourceRef)->Boolean):Boolean =
+        at>0 && at<=now && now-at<RelationshipProjector.DAY && validText(text) && allowed(source)
+}
+
+private fun CompanionRepository.currentInnerNote(db:SQLiteDatabase,role:String,at:Long):String? =
+    db.rawQuery("""SELECT source_id,revision,proposal FROM companion_sources
+        WHERE role=? AND committed=1 AND instr(proposal,'"innerNote":')>0 ORDER BY source_id DESC,revision DESC""",arrayOf(role)).use{cursor->
+        val gson=Gson()
+        while(cursor.moveToNext()){
+            val source=SourceRef(role,cursor.getLong(0),cursor.getLong(1))
+            val proposal=runCatching{gson.fromJson(cursor.getString(2),ExperienceProposal::class.java)}.getOrNull()?:continue
+            val note=proposal.innerNote?:continue
+            if(proposal.relationInput?.status!="disputed" && note.visible(at,source){ref->
+                refCurrent(db,ref) && CompanionRepository.aiAllowed(db,role,ref.turnId)
+            })return@use note.text
+        }
+        null
+    }

@@ -144,9 +144,10 @@ internal class RolePlanner(client:TextChatClient) {
                 append("- [回复 ${a.replyId}；来源${ExperiencePresentation.reference(a.source)}] 你${actions[a.action]?.let{"选择$it，"}.orEmpty()}回了「${clip(a.reply,80)}」\n")
             }
         }
-        if(view.learning.isNotEmpty()){
+        val currentLearning=view.learning.filter{it.state!="paused"}
+        if(currentLearning.isNotEmpty()){
             append("你心里正在形成的看法和习惯：\n")
-            view.learning.forEach{l->
+            currentLearning.forEach{l->
                 append("- [变化 ${l.id}，版本 ${l.version}；来源${ExperiencePresentation.reference(l.source)}] ${learningKinds[l.kind]?:"想法"}：${clip(l.content,120)}${l.scope.takeIf{it.isNotBlank()}?.let{"（适用：${clip(it,40)}）"}.orEmpty()}，${learningStates[l.state]?:"进展还不明确"}\n")
             }
         }

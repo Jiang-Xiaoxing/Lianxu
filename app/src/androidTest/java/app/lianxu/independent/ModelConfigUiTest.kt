@@ -91,6 +91,25 @@ class ModelConfigUiTest {
         File(dir,"$name.png").outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}
     }
     private fun edit(id:String="ui-a"){ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-$id"));ui.onNodeWithTag("config-edit-$id").performClick()}
+    @Test fun overviewOpensReviewSelectionAndReturnsToTheSameTab(){
+        val opener=ui.onNodeWithTag("config-open-purposes")
+        opener.performClick()
+        opener.assertDoesNotExist()
+        ui.onNodeWithTag("purpose-select-aux-vision").assertDoesNotExist()
+        ui.onNodeWithTag("purpose-select-memory").performScrollTo().assertTextContains("沿用聊天模型")
+        val review=ui.onNodeWithTag("purpose-select-review")
+        review.performScrollTo().assertTextContains("沿用聊天模型").performClick()
+        ui.onNodeWithTag("purpose-option-review-${b.id}").performClick()
+        ui.waitUntil(10000){!state.busy && state.purposes[ModelPurpose.REVIEW]==b.id}
+        back()
+        ui.onNodeWithTag("config-tab-chat").assertIsSelected()
+        opener.performClick()
+        review.performScrollTo().assertTextContains(b.modelId,substring=true)
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        opener.assertIsDisplayed()
+        assertEquals(b.id,vault.purposeId(ModelPurpose.REVIEW))
+        assertEquals(0,client.calls.get())
+    }
     @Test fun inlineChatSelectionPersistsWithoutProbing() {
         fun assertSelected(current: ModelConfig, other: ModelConfig) {
             ui.onNodeWithTag("config-current-chat-${current.id}").assertHasNoClickAction()

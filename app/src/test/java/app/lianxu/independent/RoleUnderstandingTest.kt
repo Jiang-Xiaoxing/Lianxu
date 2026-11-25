@@ -4,6 +4,11 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RoleUnderstandingTest {
+    @Test fun chatProjectionOmitsOldAppraisals(){
+        val entry=RoleEntry(ref(1),flow(1),null)
+        val text=RoleContext("a",ref(2),emptyMap(),listOf(entry),emptyList(),emptyList(),emptyList()).prompt()
+        assertFalse(text.contains("理解1"));assertFalse(text.contains(entry.flow.appraisal!!.meaning))
+    }
     private fun ref(n:Long)=SourceRef("a",n,1)
     private fun flow(n:Long,learning:RoleLearning?=null,eventRelation:String="new_event",certainty:String="reported",used:List<String> = emptyList(),feedback:List<RoleFeedback> = emptyList()):RoleUnderstanding {
         val e=listOf(RoleEvidence(ref(n)))
@@ -20,6 +25,21 @@ class RoleUnderstandingTest {
     @Test fun groundedInterestCanEvolveWithoutAnyApprovalOrPositiveFeedback(){
         val result=RoleLearningProjector.project(entries()).single()
         assertEquals("active",result.state);assertEquals(2,result.version);assertTrue(result.content.contains("更有兴趣"));assertEquals(setOf(2L),result.supportingResults)
+    }
+    @Test fun lightLearningRevisionNeedsTheActualActionAndANewResultFromThisTurn(){
+        val prior=entries().first()
+        val source=ref(3)
+        val view=RoleContext("a",source,mapOf(1L to ref(1),3L to source),listOf(prior),listOf(prior.action!!),
+            RoleLearningProjector.project(listOf(prior)),emptyList())
+        val input="这次按你说的试了，真的解开了"
+        fun revision(quote:String):RoleUnderstanding {
+            val raw="""{"learning":{"id":"candidate","kind":"interest","scope":"共同解题","content":"想继续一起解题","phase":"revise","resultQuote":"$quote","evidence":[{"source":3,"layer":"fact"},{"source":1,"layer":"action","message":2}]}}"""
+            return RoleUnderstandingContract.parse(raw,input,ExperienceProposal(),view,200000,false,lenient=true,learningOnly=true){_,_->}
+        }
+        val revised=revision("真的解开了")
+        RoleUnderstandingContract.validateAccepted(revised,view,input)
+        assertNull(revised.appraisal);assertEquals("active",RoleLearningProjector.project(listOf(prior,RoleEntry(source,revised,null))).single().state)
+        assertNull(revision("原话里没有的结果").learning)
     }
     @Test fun oneNewOpinionIsStillACandidate(){assertEquals("candidate",RoleLearningProjector.project(entries().take(1)).single().state)}
     @Test fun repeatedMentionDoesNotManufactureIndependentResults(){assertEquals("developing",RoleLearningProjector.project(entries(relation="repetition")).single().state)}

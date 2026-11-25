@@ -65,9 +65,11 @@ class ExperiencePresentationTest {
         val before=Gson().toJson(context);val text=context.prompt(now,zone)
         val body=text.substringBefore(ExperiencePresentation.REFS);val refs=text.substringAfter(ExperiencePresentation.REFS)
         for(code in listOf("来源12v7","habit-abc","程序状态=","paused","reported",(now-1000).toString()))assertFalse("body contains $code",code in body)
-        assertTrue(body.contains("先陪对方说说"));assertTrue(body.contains("有点关心"));assertTrue(body.contains("已经放下，不能再用"))
-        assertFalse(body.contains("已读"));assertFalse(body.contains("未读"));assertTrue(refs.contains("消息 12，版本 7"));assertTrue(refs.contains("回复 56"))
-        assertTrue(refs.contains("变化 habit-abc，版本 3"));assertEquals(before,Gson().toJson(context))
+        assertFalse(body.contains("先陪对方说说"));assertFalse(body.contains("有点关心"));assertFalse(body.contains("先听完再建议"))
+        assertFalse(body.contains("已读"));assertFalse(body.contains("未读"));assertFalse(text.contains("回复 56"))
+        assertFalse(refs.contains("变化 habit-abc，版本 3"))
+        val active=context.copy(learning=context.learning.map{it.copy(state="active")}).prompt(now,zone)
+        assertTrue(active.contains("先听完再建议"));assertTrue(active.substringAfter(ExperiencePresentation.REFS).contains("变化 habit-abc，版本 3；消息 12，版本 7"));assertEquals(before,Gson().toJson(context))
     }
     @Test fun replyNotesKeepActionsAndExactToolReferencesWithoutRepeatingReadState(){
         val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult=error("No model calls")}
@@ -79,7 +81,7 @@ class ExperiencePresentationTest {
         assertTrue(notes.contains("谈到今天的加班"));assertFalse(notes.contains("已经看到"))
         assertFalse(notes.contains("已读"));assertFalse(notes.contains("未读"));assertTrue(notes.contains("编号是 99，版本 2"))
         assertTrue(notes.lines().single{it.startsWith("- [回复 56；")}.contains("来源消息 12，版本 7] 你选择倾听，回了「你慢慢说」"))
-        assertTrue(notes.lines().single{it.startsWith("- [变化 habit-abc，版本 3；")}.contains("来源消息 12，版本 7] 习惯：先听完再建议"))
+        assertFalse(notes.contains("先听完再建议"))
     }
     @Test fun differentMessageStatesKeepTheirOwnSourceAndReplyNumbers(){
         val unread=action.copy(source=SourceRef("a",31,4),replyId=78,reply="另一条回应",readAt=null)
@@ -100,7 +102,7 @@ class ExperiencePresentationTest {
         val view=context.copy(
             knownSources=context.knownSources+(81L to orphan),
             actions=listOf(action.copy(replyId=12)),
-            learning=listOf(context.learning.single().copy(id="12",version=4)),
+            learning=listOf(context.learning.single().copy(id="12",version=4,state="active")),
             relationRecent=listOf(mapOf("消息" to 12L,"内容" to "说好下次继续聊","未兑现约定" to true)))
         val before=Gson().toJson(view)
         val text=RolePlanner(client).replyNotes(ExperienceProposal(),view,UserPersona(),now)

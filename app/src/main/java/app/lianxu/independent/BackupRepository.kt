@@ -113,7 +113,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
         require(root["preferences"].asJsonObject.keySet().all{it in globalKeys})
         root["preferences"].asJsonObject.entrySet().forEach{(k,v)->require(v.isJsonPrimitive&&v.asJsonPrimitive.isString);when(k){ToolboxPreferences.ORDER_KEY->ToolboxPreferences.order(v.asString);ToolboxPreferences.VIDEO_KEY->ToolboxPreferences.VideoMode.valueOf(v.asString);"compact"->require(v.asString in setOf("true","false"));ChatImages.SWITCH->require(v.asString in setOf("0","1"));ChatImages.SWITCH_REVISION,ToolboxPreferences.VIDEO_REVISION->require(v.asString.length<=80);"diagnostic-detailed",EXPORT_DETAIL_PREF->require(v.asString in setOf("0","1"));"nickname"->require(v.asString.length in 1..80);MemoryRules.KEY->require(MemoryRules.from(JSONObject(v.asString)).valid());UserPersona.KEY->UserPersona.decode(v.asString);LocalUpdateReceipt.KEY->LocalUpdateReceipt.decode(v.asString);MemoryForgetting.RECALL_DEFAULT_MIGRATED->require(v.asString=="true");UserAvatarData.KEY->require(v.asString.length<=UserAvatarData.MAX_ENCODED){"本人头像资料过大"}}}
         val configs=models(root);require(configs.map{it.config.id}.distinct().size==configs.size)
-        root["selections"].asJsonObject.entrySet().forEach{(k,v)->require(ModelPurpose.entries.any{it.key==k}&&(v.asString.isEmpty()||configs.any{it.config.id==v.asString}))}
+        backupPurposeSelections(root["selections"].asJsonObject).values.forEach{id->require(id.isEmpty() || configs.any{it.config.id==id})}
         val ids=hashSetOf<String>();val used=hashSetOf<String>();var total=0
         root["roles"].asJsonArray.forEach{v->val role=v.asJsonObject;require(role.keySet()==setOf("character","tables","preferences","assets"));val id=role["character"].asJsonObject["id"].asString;require(ids.add(id))
             val tables=role["tables"].asJsonObject
@@ -144,7 +144,9 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
                         if(table=="companion_state")require(j["policy"].asString in setOf("disabled","paused_by_user","awaiting_user_resume")&&j["owner"].asString.isEmpty())
                         if(table=="companion_opportunities")require(j["state"].asString !in setOf("queued","running")&&j["owner"].asString.isEmpty())
                         if(table=="companion_action_learning"){val use=ProactiveLearningUse.decode(j["considered"].asString,j["used"].asString);require(JsonParser.parseString(j["considered"].asString).asJsonArray.size()==use.first.size&&JsonParser.parseString(j["used"].asString).asJsonArray.size()==use.second.size){"主动交流学习引用无效"}}
-                        if(table=="companion_sources"){val proposal=Gson().fromJson(j["proposal"].asString,ExperienceProposal::class.java);require(proposal.targets.all{it in messageIds});proposal.relationInput?.let{input->
+                        if(table=="companion_sources"){val proposal=Gson().fromJson(j["proposal"].asString,ExperienceProposal::class.java);require(proposal.targets.all{it in messageIds})
+                            proposal.innerNote?.let{require(it.at>0 && ReviewInnerNote.validText(it.text)){"小心事内容或时间无效"}}
+                            proposal.relationInput?.let{input->
                             require(RelationInputContract.validStored(input)&&input.source==SourceRef(id,j["source_id"].asLong,j["revision"].asLong)&&listOfNotNull(input.previous,input.fulfills,input.explains,input.repairs,input.repairBasis).all{it.turnId in messageIds}){"关系输入来源或选项无效"}
                         }}
                     }
@@ -267,7 +269,7 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
             val needed=Math.addExact(Math.multiplyExact(resources,2),Math.addExact(metadata*4,if(plan.mode=="REPLACE")Math.multiplyExact(pages,pageSize)else 0))
             LocalStep.CHECK_SPACE.observe { ImageDisk.space(store.applicationContext.filesDir,needed,availableSpace(store.applicationContext.filesDir)) };valid()
             val restoredAvatar=if(plan.mode=="REPLACE"&&pack.all)pack.root["preferences"].asJsonObject[UserAvatarData.KEY]?.asString?.let(UserAvatarData::forRestore)else null
-            if(plan.mode=="REPLACE"&&pack.all){staged=LocalStep.STAGE_MODELS.observe { vault.prepareRestore(models(keysRoot),pack.root["selections"].asJsonObject.entrySet().associate{(k,v)->ModelPurpose.entries.first{it.key==k} to v.asString},pack.includesKeys) };clearAll(db);checkpoint()}
+            if(plan.mode=="REPLACE"&&pack.all){staged=LocalStep.STAGE_MODELS.observe { vault.prepareRestore(models(keysRoot),backupPurposeSelections(pack.root["selections"].asJsonObject),pack.includesKeys) };clearAll(db);checkpoint()}
             val imported=LocalStep.RESTORE_ROWS.observe { pack.roles.map{v->val old=v.asJsonObject;val target=if(plan.mode=="REPLACE"&&!pack.all)plan.target!! else UUID.randomUUID().toString();if(plan.mode=="REPLACE"&&!pack.all)clearRole(db,target);restore(db,old,target,pack.files,valid,plan.assetDigests);target} }
             if(plan.mode=="REPLACE"&&pack.all){pack.root["preferences"].asJsonObject.entrySet().forEach{(k,v)->if(k==UserAvatarData.KEY){restoredAvatar?.let{pref(db,k,it)}}else pref(db,k,v.asString)};pref(db,vault.generationKey,staged!!.generation)
                 // This database already has the current schema; an older backup without the marker must not reopen proactive recall later.
@@ -340,6 +342,11 @@ internal class BackupRepository(private val store:Store,private val vault:ModelV
     }
     private fun pref(db:SQLiteDatabase,key:String,value:String){db.insertWithOnConflict("preferences",null,ContentValues().apply{put("key",key);put("value",value)},SQLiteDatabase.CONFLICT_REPLACE)}
     private suspend fun <T> read(block:(SQLiteDatabase)->T):T=withContext(Dispatchers.IO){AppMutationGate.read{val db=store.readableDatabase;db.beginTransaction();try{block(db)}finally{db.endTransaction()}}}
+}
+
+internal fun backupPurposeSelections(json:JsonObject):Map<ModelPurpose,String> = json.entrySet().associate{(key,value)->
+    val purpose=ModelPurpose.entries.firstOrNull{it.key==key}?:throw IllegalArgumentException("未知模型用途：$key")
+    purpose to value.asString
 }
 
 internal class BackupRemapper(private val old:String,private val id:String,private val strings:Map<String,String>,private val messages:Map<Long,Long>){
