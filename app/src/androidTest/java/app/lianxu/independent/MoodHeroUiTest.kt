@@ -37,6 +37,10 @@ class MoodHeroUiTest {
                 val rendered=ui.onNodeWithTag("mood-hero").assertIsDisplayed().captureToImage().toPixelMap()
                 val wash=rendered[rendered.width/2,rendered.height/4]
                 val paper=rendered[rendered.width-1,rendered.height-1]
+                val top=rendered[rendered.width/2,0]
+                assertEquals(paper.red,top.red,2f/255)
+                assertEquals(paper.green,top.green,2f/255)
+                assertEquals(paper.blue,top.blue,2f/255)
                 samples+=(wash.value shr 32).toInt()
                 assertTrue(if(night)paper.luminance()<.15f && wash.luminance()<.4f else paper.luminance()>.75f && wash.luminance()>.55f)
             }

@@ -17,7 +17,7 @@ internal class ReviewBatchModel(private val client:TextChatClient) {
             道歉和好填“指向之前”:{消息:旧编号,方式:道歉和好}。解释填“解释”:{事件:旧编号,判断:真误会/有原因,类别:工作忙/身体不舒服/忘了/家里有事/其他}。
             已经弥补才填“修复心结”:旧编号、“弥补已完成”:true。旧编号只能选材料中有效且适用的原话，没有就省略。假设、转述、回忆不算新的互动。
             ${if(allowInnerNote) "整批最多在一行 record 内附 innerNote，一句自己心里的话，30字以内。该行用户原话就是依据，没有就省略。" else "本批还有后续内容，本段省略 innerNote。"}
-            确有新看法或习惯时可附 learning:{id,kind:viewpoint/interest/habit,scope,content,phase:propose/revise/pause,evidence:[{source:编号,layer:"fact"}]}。新提议 id 填空，修订/暂停沿用已有 id 和范围。本轮让你修正或印证已有学习时，用 revise，依据填本轮用户消息编号和 fact 即可。
+            确有新看法或习惯时可附 learning:{id,kind:viewpoint/interest/habit,scope,content,phase:propose/revise/pause,evidence:[{source:编号,layer:"fact"}]}。新提议 id 填空，修订/暂停沿用已有 id 和范围。本轮让你修正或印证已有学习时，用 revise，依据填本轮用户消息编号和 fact 即可。content 用“你”称呼对方，写得自然简短，不用“用户”这种第三人称汇报口吻。
             不继续聊天，不重复写经历。即时控制与联系安排不得执行或重新安排。
         """.trimIndent()
         val data=Gson().toJson(items.map{mapOf("source" to it.source.turnId,"version" to it.source.version,"发生时间" to ExperiencePresentation.at(it.at,now),"用户原话" to it.input,"已发回复编号" to it.turn.assistantMessageId,"已实际说过的正文" to it.spoken)})

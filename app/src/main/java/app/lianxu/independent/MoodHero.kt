@@ -46,11 +46,13 @@ internal fun moodSky(s:RelationState):MoodSky {
     val outline=remember(sky){PathParser().parsePathString(sky.outline).toPath()}
     BoxWithConstraints(Modifier.fillMaxWidth().fillMaxHeight(.42f).heightIn(min=130.dp).testTag("mood-hero")) {
         Canvas(Modifier.matchParentSize()) {
-            listOf(sky.a to Offset(sky.x,.24f),sky.b to Offset(.87f,.12f),sky.c to Offset(.5f,.57f)).forEach { (color,point) ->
+            listOf(sky.a to Offset(sky.x,.36f),sky.b to Offset(.85f,.30f),sky.c to Offset(.50f,.58f)).forEach { (color,point) ->
                 val center=Offset(size.width*point.x,size.height*point.y)
                 drawRect(Brush.radialGradient(listOf(color.copy(alpha=if(dark).20f else .86f),color.copy(alpha=0f)), center, size.width*.76f))
             }
             drawRect(Brush.verticalGradient(listOf(base.copy(alpha=0f),base),startY=size.height*.48f))
+            drawRect(Brush.verticalGradient(0f to base, .28f to base.copy(alpha=.72f),
+                .62f to base.copy(alpha=.24f), 1f to base.copy(alpha=0f), endY=size.height*.36f))
         }
         Canvas(Modifier.align(Alignment.TopEnd).padding(14.dp).size(46.dp)) {
             val factor=size.width/48f
