@@ -1,5 +1,8 @@
 package app.lianxu.independent
 
+import androidx.activity.compose.setContent
+import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.graphics.luminance
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
@@ -61,25 +64,50 @@ class SettingsHierarchyTest {
     private fun shot(name:String){hideKeyboard();android.os.SystemClock.sleep(350)
         val dir=File(context.getExternalFilesDir(null),"evidence-unified-ui/settings").apply{mkdirs()}
         val image=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
-        File(dir,"$name.png").outputStream().use{image.compress(Bitmap.CompressFormat.PNG,100,it)}
+        val file=File(dir,"$name.png")
+        try{
+            file.outputStream().use{assertTrue(image.compress(Bitmap.CompressFormat.PNG,100,it))}
+            if(name in setOf("01-settings-home","02-settings-purposes","03-models-chat-list","04-role-detail")){
+                InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")?.let{file.copyTo(File(it,file.name),overwrite=true)}
+            }
+        }finally{image.recycle()}
     }
     @Test fun navigationRowsStillOpenFromTheirRightEdgeAndReturn(){
         fun right(tag:String){ui.onNodeWithTag(tag).performScrollTo().assertHasClickAction().performTouchInput{click(androidx.compose.ui.geometry.Offset(width-4f,height*.5f))}}
         fun back(){InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);ui.waitForIdle()}
-        shot("arrows-settings-home")
-        right("settings-models");ui.onNodeWithTag("config-overview").assertIsDisplayed();shot("arrows-model-services")
+        shot("01-settings-home")
+        right("settings-models");ui.onNodeWithTag("config-overview").assertIsDisplayed();shot("03-models-chat-list")
         right("config-edit-${b.id}");ui.onNodeWithTag("config-editor").assertIsDisplayed();back()
-        ui.onNodeWithTag("config-tab-purposes").performClick();right("purpose-select-chat")
+        back();right("settings-purposes");shot("02-settings-purposes");right("purpose-select-chat")
         ui.onNodeWithTag("purpose-clear-chat").assertIsDisplayed();back();shot("arrows-model-purposes");back()
-        right("settings-processing");right("settings-memory-rules");ui.onNodeWithTag("memory-rules-page").assertIsDisplayed()
+        right("settings-memory-rules");ui.onNodeWithTag("memory-rules-page").assertIsDisplayed()
         right("rules-review-open");ui.onNodeWithTag("rules-review-sheet").assertIsDisplayed();back();shot("arrows-memory-rules");back()
-        right("processing-friend-seed-lin");ui.onNodeWithTag("memory-browser").assertIsDisplayed();back();back()
+        ui.onNodeWithTag("settings-home").assertIsDisplayed()
+        ui.onNodeWithTag("tab-1").performClick();ui.onNodeWithTag("friend-row-seed-lin").performClick()
+        right("role-processing-open");ui.onNodeWithTag("memory-browser").assertIsDisplayed();back()
+        shot("04-role-detail");back();ui.onNodeWithTag("tab-2").performClick()
         right("settings-role-archive");shot("arrows-backup");right("backup-role-entry")
-        ui.onNodeWithTag("archive-export").assertIsDisplayed();back();back()
+        ui.onNodeWithTag("archive-export").assertIsDisplayed();back()
+        ui.waitUntil(5000){ui.activity.hasWindowFocus() && ui.onAllNodesWithTag("archive-export").fetchSemanticsNodes().isEmpty()}
+        back()
+        ui.waitUntil(5000){ui.onAllNodesWithTag("settings-home").fetchSemanticsNodes().isNotEmpty()}
         right("settings-updates");ui.onNodeWithTag("updates-current-toggle").assertIsDisplayed();back()
         right("settings-info");ui.onNodeWithTag("settings-info-page").assertIsDisplayed();back()
         ui.onNodeWithTag("settings-home").assertIsDisplayed()
         assertEquals(a.id,vault.defaultId())
+    }
+    @Test fun darkDirectoryBadgesContrastWithTheirGlaze(){
+        ui.activityRule.scenario.onActivity { activity->
+            activity.setContent{LianxuTheme(dark=true){SettingsDirectory(app,models)}}
+        }
+        for(icon in listOf("model","purposes","memory","tools","archive","updates","about")){
+            val node=ui.onNodeWithTag("badge-$icon",useUnmergedTree=true)
+            node.performScrollTo()
+            val pixels=node.captureToImage().toPixelMap()
+            val ground=pixels[pixels.width/2,3].luminance()
+            val brightest=(0 until pixels.width).maxOf{x->(0 until pixels.height).maxOf{y->pixels[x,y].luminance()}}
+            assertTrue(icon,ground<.15f && (brightest+.05f)/(ground+.05f)>3f)
+        }
     }
     @Test fun directoryHomeAndSecondaryRowsWithRealRotation(){
         ui.onNodeWithTag("settings-model-summary",useUnmergedTree=true).assertTextContains(a.modelId,substring=true)
@@ -149,8 +177,8 @@ class SettingsHierarchyTest {
     }
     @Test fun removingEmptyDisplayPageKeepsOtherSettingsDestinations(){
         ui.onNodeWithTag("settings-display").assertDoesNotExist()
-        ui.onNodeWithTag("settings-processing").performClick()
-        ui.onNodeWithTag("settings-memory-rules").assertIsDisplayed()
+        ui.onNodeWithTag("settings-memory-rules").performClick()
+        ui.onNodeWithTag("memory-rules-page").assertIsDisplayed()
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
         ui.onNodeWithTag("settings-home").assertIsDisplayed()
         ui.onNodeWithTag("settings-role-archive").performScrollTo().performClick()

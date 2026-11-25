@@ -1,5 +1,6 @@
 package app.lianxu.independent
 
+import androidx.compose.ui.unit.dp
 import android.app.Application
 import android.content.Context
 import android.graphics.Bitmap
@@ -115,8 +116,8 @@ class ModelConfigUiTest {
             ui.onNodeWithTag("config-current-chat-${current.id}").assertHasNoClickAction()
             ui.onNodeWithTag("config-use-chat-${current.id}").assertDoesNotExist()
             ui.onNodeWithTag("config-current-chat-${other.id}").assertDoesNotExist()
-            ui.onNodeWithTag("config-use-chat-${other.id}").assertHasClickAction()
-            ui.onAllNodesWithText("当前聊天模型").assertCountEquals(1)
+            ui.onNodeWithTag("config-use-chat-${other.id}").assertHasClickAction().assertTextContains("使用").assertHeightIsAtLeast(48.dp).assertWidthIsAtLeast(48.dp)
+            ui.onAllNodesWithText("• 使用中").assertCountEquals(1)
             assertEquals(current.id, vault.purposeId(ModelPurpose.CHAT))
         }
         fun select(config: ModelConfig) {
@@ -128,7 +129,7 @@ class ModelConfigUiTest {
         val otherPurposes = ModelPurpose.entries.filter { it != ModelPurpose.CHAT }
         val previous = otherPurposes.associateWith(vault::purposeId)
         assertTrue(vault.defaultId().isEmpty())
-        ui.onAllNodesWithText("当前聊天模型").assertCountEquals(0)
+        ui.onAllNodesWithText("• 使用中").assertCountEquals(0)
         select(a)
         assertSelected(a, b)
         select(b)

@@ -113,7 +113,7 @@ internal class ProcessEvidence(private val dir: File, private val pid: Int, priv
             "SQLiteException","SQLiteFullException","VerifyError","NoClassDefFoundError","NoSuchMethodError","ClassNotFoundException",
             "OutOfMemoryError","StackOverflowError","ExceptionInInitializerError","NotFoundException","CrashedByAdbException","RemoteServiceException","InvocationTargetException")
         private val pages=setOf("startup","home","settings","contacts","profile","chat","models","model-editor","model-providers","voice-studio",
-            "create","detail","search","role-archive","search-detail","toolbox","processing","processing-role","settings-memory","settings-info",
+            "create","detail","search","role-archive","search-detail","toolbox","models-purposes","processing-role","settings-memory","settings-info",
             "settings-updates","role-prompts","role-learning","role-relationship","role-companion","role-voice","toolbox-image","toolbox-video",
             "toolbox-memory","toolbox-contact","other")
         internal fun prune(dir:File,now:Long) {

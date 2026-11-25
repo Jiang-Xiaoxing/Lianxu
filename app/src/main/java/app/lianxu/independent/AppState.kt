@@ -170,8 +170,8 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
     var page by mutableStateOf("home"); private set
     var activeId by mutableStateOf(""); private set
     private var detailReturn = "home"
-    private var processingReturn = "processing"
-    private var memorySettingsReturn = "processing"
+    private var processingReturn = "home"
+    private var memorySettingsReturn = "home"
     var searching by mutableStateOf(false); private set
     var candidates by mutableStateOf(emptyList<Friend>()); private set
     var generatedRoles by mutableStateOf(emptyList<GeneratedRole>()); private set
@@ -264,8 +264,8 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
         goingBack=false
         ProcessDiagnostics.action(if(page=="models") ProcessAction.OPEN_MODELS else ProcessAction.OPEN)
         if (page == "detail") detailReturn = this.page
-        if (page == "settings-memory") memorySettingsReturn = this.page
-        if (page in setOf("role-learning","role-relationship","processing-role")) processingReturn = if (this.page == "detail") "detail" else "processing"
+        if (page == "settings-memory") memorySettingsReturn = if(this.page in setOf("processing-role","role-learning","role-relationship")) this.page else "home"
+        if (page in setOf("role-learning","role-relationship","processing-role")) processingReturn = if (this.page == "detail") "detail" else "home"
         modelsReturnChatId = null
         modelsTargetConfigId = null
         modelsTargetPurpose = null

@@ -32,8 +32,7 @@ class LiveChatUiTest {
     @After fun closeServer(){server.close()}
     @Test fun purposesCustomPromptNewRoleAndActualHttpReply(){
         ui.waitUntil(15000){ui.onAllNodesWithTag("tab-2").fetchSemanticsNodes().isNotEmpty()}
-        ui.onNodeWithTag("tab-2").performClick();ui.onNodeWithTag("settings-models").performClick()
-        ui.onNodeWithTag("config-open-purposes").performClick()
+        ui.onNodeWithTag("tab-2").performClick();ui.onNodeWithTag("settings-purposes").performClick()
         for(p in ModelPurpose.entries.filter { it != ModelPurpose.AUX_VISION }){
             ui.waitUntil(30000){ui.onAllNodes(hasTestTag("purpose-select-${p.key}") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
             ui.onNodeWithTag("purpose-select-${p.key}").performScrollTo().performClick()
@@ -49,7 +48,7 @@ class LiveChatUiTest {
         ui.onNodeWithTag("purpose-select-embedding").performScrollTo().performClick();ui.onNodeWithTag("purpose-clear-embedding").performClick()
         ui.waitUntil(10000){vault.purposeId(ModelPurpose.EMBEDDING).isEmpty()}
         ui.onNodeWithTag("purpose-select-chat").performScrollTo();shot("01-global-purposes-mock-only")
-        ui.onNodeWithTag("config-back").performClick();ui.onNodeWithTag("config-back").performClick();ui.onNodeWithTag("tab-0").performClick()
+        ui.onNodeWithTag("config-back").performClick();ui.onNodeWithTag("settings-home").assertIsDisplayed();ui.onNodeWithTag("tab-0").performClick()
         ui.onNodeWithTag("add-menu").performClick();ui.onNodeWithText("创建角色").performClick()
         ui.onNodeWithTag("friend-name").performTextInput("合成·新角色");ui.onNodeWithTag("friend-bio").performTextInput("喜欢安静的小事，仅供本机测试。")
         ui.onNodeWithTag("create-friend").performScrollTo().performClick();ui.waitUntil(10000){ui.onAllNodesWithTag("message-input").fetchSemanticsNodes().isNotEmpty()}

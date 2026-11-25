@@ -102,8 +102,8 @@ class ToolboxUiTest {
         ui.waitUntil(10000){runCatching{ui.onNodeWithTag("video-mode-original").assertIsSelected();true}.getOrDefault(false)}
         back()
         ui.onNodeWithTag("tool-card-contact").performClick();ui.onNodeWithTag("toolbox-contact-page").assertIsDisplayed();ui.onNodeWithTag("companion-notification").assertExists();shot("05-contact-roles");back();back()
-        ui.onNodeWithTag("settings-models").performScrollTo().performClick();ui.onNodeWithTag("config-open-purposes").performClick();ui.onNodeWithTag("auxiliary-vision-switch").assertDoesNotExist();ui.onNodeWithTag("purpose-select-aux-vision").assertDoesNotExist();back();back()
-        ui.onNodeWithTag("settings-processing").performScrollTo().performClick();ui.onNodeWithTag("settings-memory-rules").performClick();ui.onNodeWithTag("rules-recall-enabled").assertDoesNotExist();ui.onNodeWithTag("rules-write-enabled").assertDoesNotExist();back();back()
+        ui.onNodeWithTag("settings-purposes").performScrollTo().performClick();ui.onNodeWithTag("auxiliary-vision-switch").assertDoesNotExist();ui.onNodeWithTag("purpose-select-aux-vision").assertDoesNotExist();back()
+        ui.onNodeWithTag("settings-memory-rules").performClick();ui.onNodeWithTag("rules-recall-enabled").assertDoesNotExist();ui.onNodeWithTag("rules-write-enabled").assertDoesNotExist();back()
         ui.runOnIdle{vm.open("detail","seed-lin")};ui.onNodeWithTag("role-companion-open").assertDoesNotExist()
         assertEquals(old.copy(proactiveRecall=true,immediateWrite=false),runBlocking{vm.processing.memoryRules().first})
     }

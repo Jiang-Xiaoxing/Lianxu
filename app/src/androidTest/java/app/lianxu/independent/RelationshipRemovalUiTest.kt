@@ -31,7 +31,7 @@ class RelationshipRemovalUiTest {
         ui.onNodeWithText("我写的").performClick();ui.onNodeWithTag("memory-add").assertIsDisplayed();ui.onNodeWithTag("processing-relationship").assertDoesNotExist();shot("memory")
         ui.onNodeWithTag("back").performClick()
         ui.runOnIdle{vm.home();vm.tab=2}
-        ui.onNodeWithTag("settings-processing").assertIsDisplayed();ui.onNodeWithText("关系").assertDoesNotExist();shot("settings")
+        ui.onNodeWithTag("settings-memory-rules").assertIsDisplayed();ui.onNodeWithText("关系").assertDoesNotExist();shot("settings")
         ui.onNodeWithTag("settings-models").performClick()
         ui.onNodeWithText("关系评估").assertDoesNotExist();ui.onNodeWithText("六维",substring=true).assertDoesNotExist();shot("models")
     }

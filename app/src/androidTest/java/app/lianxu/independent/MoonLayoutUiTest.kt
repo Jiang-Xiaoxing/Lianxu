@@ -64,10 +64,10 @@ class MoonLayoutUiTest {
         ui.runOnIdle{vm.createCompanion("合成记忆角色","合成角色设定","","","")}
         ui.waitUntil(10000){!vm.busy&&vm.friends.size==1}
         val id=vm.friends.single().id
-        ui.runOnIdle{vm.open("processing");vm.open("processing-role",id)}
+        ui.runOnIdle{vm.open("home");vm.open("processing-role",id)}
         ui.onNodeWithText("我写的").performClick();ui.onNodeWithTag("memory-add").assertIsDisplayed()
         ui.onNodeWithTag("back").performClick()
-        ui.runOnIdle{assertEquals("processing",vm.page);vm.open("detail",id);vm.open("processing-role",id)}
+        ui.runOnIdle{assertEquals("home",vm.page);vm.open("detail",id);vm.open("processing-role",id)}
         ui.onNodeWithTag("back").performClick()
         ui.runOnIdle{assertEquals("detail",vm.page)}
     }

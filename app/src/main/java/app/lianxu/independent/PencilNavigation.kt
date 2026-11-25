@@ -1,6 +1,12 @@
 package app.lianxu.independent
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -14,6 +20,39 @@ import androidx.compose.material3.MaterialTheme
 import kotlin.math.*
 
 private val IconStroke=Stroke(1.65f,cap=StrokeCap.Round,join=StrokeJoin.Round)
+
+private class BadgeArt(val paper:Color,val ink:Color,body:String,detail:String){
+    val shape=PathParser().parsePathString(body).toPath()
+    val lines=detail.takeIf{it.isNotEmpty()}?.let{PathParser().parsePathString(it).toPath()}
+}
+private val badgeArt=mapOf(
+    "model" to BadgeArt(Color(0xFFF5E9DA),Color(0xFFA66E38),"M11 3 Q12 9 18 12 Q12 14 10 21 Q9 15 3 12 Q9 10 11 3Z","M18 3v5 M15.5 5.5h5"),
+    "purposes" to BadgeArt(Color(0xFFEFE6F2),Color(0xFF7C588C),"M8 5a3 3 0 1 0 .1 0Z M16 13a3 3 0 1 0 .1 0Z","M3 8h2 M11 8h10 M3 16h10 M19 16h2"),
+    "memory" to BadgeArt(Color(0xFFF4E5DC),Color(0xFFB4634A),"M6 4 Q6 3 8 3 H16 Q18 3 18 5 V21 L12 17 L6 21Z","M12 6l1 3 3 1-3 1-1 3-1-3-3-1 3-1Z"),
+    "tools" to BadgeArt(Color(0xFFE3ECE5),Color(0xFF4C7759),"M4 4h6v6H4Q3 10 3 9V5Q3 4 4 4Z M15 4h4q1 0 1 1v4q0 1-1 1h-4q-1 0-1-1V5q0-1 1-1Z M4 14h5q1 0 1 1v4q0 1-1 1H4q-1 0-1-1v-4q0-1 1-1Z M17 14a3.2 3.2 0 1 0 .1 0Z",""),
+    "archive" to BadgeArt(Color(0xFFE2EAF0),Color(0xFF4B6B88),"M3 5Q3 4 5 4H19Q21 4 21 6V9H3Z M5 9H19V18Q19 20 17 20H7Q5 20 5 18Z","M10 12v2h4v-2"),
+    "updates" to BadgeArt(Color(0xFFEAE8E2),Color(0xFF6E655A),"M5 4Q5 3 7 3H14L19 8V19Q19 21 17 21H7Q5 21 5 19Z","M14 3v5h5 M8 12h8 M8 16h6"),
+    "about" to BadgeArt(Color(0xFFF2EAE4),Color(0xFF8A6756),"M12 20C8 17 2 13 3 8C4 3 9 3 12 7C16 2 21 4 21 9C21 13 16 18 12 20Z","M6 9q0-2 2-2"),
+    "edit" to BadgeArt(Color(0xFFF5E9DA),Color(0xFFA66E38),"M4 19l1-5L16 3q1-1 2 0l3 3L9 18Z","M14 5l4 4 M4 21h16"),
+    "chat" to BadgeArt(Color(0xFFE3ECE5),Color(0xFF4C7759),"M4 4h15q2 0 2 2v9q0 2-2 2h-8l-5 4v-4H4q-2 0-2-2V6q0-2 2-2Z","M7 9h10 M7 12h7"),
+    "list" to BadgeArt(Color(0xFFEFE6F2),Color(0xFF7C588C),"M3 5q5-2 9 1q5-3 9-1v14q-5-1-9 2q-4-3-9-2Z","M12 6v15 M5.5 9q2-.5 4 .5 M15 10l3-1")
+)
+
+@Composable internal fun DirectoryBadge(icon:String){
+    val art=badgeArt.getValue(if(icon=="heart")"about" else icon)
+    val dark=Paper.luminance()<.3f
+    val ground=if(dark)lerp(Paper,art.ink,.24f) else art.paper
+    val ink=if(dark)lerp(art.ink,art.paper,.62f) else art.ink
+    Box(Modifier.size(36.dp).testTag("badge-$icon").background(ground,RoundedCornerShape(11.dp)),contentAlignment=Alignment.Center){
+        Canvas(Modifier.size(20.dp)){
+            withTransform({scale(size.width/24f,size.height/24f,pivot=Offset.Zero)}){
+                drawPath(art.shape,ink.copy(alpha=.14f))
+                drawPath(art.shape,ink,style=IconStroke)
+                art.lines?.let{drawPath(it,ink,style=IconStroke)}
+            }
+        }
+    }
+}
 
 /** Original regular 24-unit paths: one stroke, no texture or filled silhouettes. */
 @Composable internal fun NavigationIcon(index:Int,selected:Boolean) {

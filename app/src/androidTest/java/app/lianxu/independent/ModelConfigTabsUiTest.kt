@@ -71,8 +71,15 @@ class ModelConfigTabsUiTest {
         ui.runOnIdle{state.refresh()};ui.waitUntil(15000){state.configs.size==2&&state.purposes.size==ModelPurpose.entries.size&&!state.busy}
     }
     private fun back(){InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);ui.waitForIdle()}
-    private fun services(){if(ui.onAllNodesWithTag("config-tab-chat").fetchSemanticsNodes().isEmpty())back();ui.onNodeWithTag("config-tab-chat").performClick().assertIsSelected()}
-    private fun purposes(){ui.onNodeWithTag("config-open-purposes").performClick()}
+    private fun services(){
+        if(ui.onAllNodesWithTag("config-tab-chat").fetchSemanticsNodes().isEmpty()){
+            ui.waitUntil(5000){ui.activity.hasWindowFocus()}
+            ui.onNodeWithTag("config-back").performClick()
+            ui.waitUntil(5000){ui.onAllNodesWithTag("config-tab-chat").fetchSemanticsNodes().isNotEmpty()}
+        }
+        ui.onNodeWithTag("config-tab-chat").performClick().assertIsSelected()
+    }
+    private fun purposes(){ui.onNodeWithTag("config-open-purposes").assertTextContains("用途分工").assertHeightIsAtLeast(48.dp).performClick()}
     private fun swipeTab(left:Boolean){ui.onNodeWithTag("config-overview").performTouchInput{swipe(Offset(width*(if(left).8f else .2f),height*.55f),Offset(width*(if(left).2f else .8f),height*.55f),400)}}
     @Test fun swipesClicksEdgesAndVerticalListsKeepPurposeAndScrollState(){
         seed()
@@ -100,9 +107,14 @@ class ModelConfigTabsUiTest {
         ui.onRoot().performTouchInput{swipeLeft()}
         ui.onNodeWithTag("config-name").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText,androidx.compose.ui.text.AnnotatedString("切页不应丢失的编辑草稿")))
         ui.onNodeWithTag("config-open-purposes").assertDoesNotExist()
-        ui.activityRule.scenario.onActivity{it.getSystemService(android.view.inputmethod.InputMethodManager::class.java).hideSoftInputFromWindow(it.window.decorView.windowToken,0)}
-        ui.waitForIdle();android.os.SystemClock.sleep(300)
-        back();ui.onNodeWithTag("config-tab-chat").assertIsSelected();assertEquals(chat,vault.list().single{it.id==chat.id})
+        ui.onNodeWithTag("config-back").performClick()
+        ui.waitUntil(5000){ui.onAllNodesWithTag("config-tab-chat").fetchSemanticsNodes().isNotEmpty()}
+        ui.onNodeWithTag("config-tab-chat").assertIsSelected();assertEquals(chat,vault.list().single{it.id==chat.id})
+        ui.onNodeWithTag("config-edit-${chat.id}").performClick()
+        ui.onNodeWithTag("config-editor").assertIsDisplayed()
+        back()
+        ui.waitUntil(5000){ui.onAllNodesWithTag("config-tab-chat").fetchSemanticsNodes().isNotEmpty()}
+        ui.onNodeWithTag("config-tab-chat").assertIsSelected()
     }
     @Test fun emptyTabsKeepBothTextAddEntrancesAndNativeTabSemantics(){
         ui.onNodeWithTag("config-services-empty").assertIsDisplayed()
@@ -136,10 +148,24 @@ class ModelConfigTabsUiTest {
         ui.onNodeWithText("主动总结记忆使用所选总结记忆模型；未选择时沿用聊天模型。").assertIsDisplayed()
         ui.onNodeWithTag("purpose-help-close").performClick()
         ui.onNodeWithTag("auxiliary-vision-switch",useUnmergedTree=true).assertDoesNotExist()
-        back();back();ui.onNodeWithTag("settings-toolbox").performScrollTo().performClick();ui.onNodeWithTag("tool-card-image").performClick()
+        ui.waitUntil(5000){ui.activity.hasWindowFocus()}
+        back()
+        ui.waitUntil(5000){ui.onAllNodesWithTag("config-overview").fetchSemanticsNodes().isNotEmpty()}
+        ui.onNodeWithTag("config-tab-chat").assertExists()
+        back()
+        ui.waitUntil(5000){ui.onAllNodesWithTag("settings-toolbox").fetchSemanticsNodes().isNotEmpty()}
+        ui.onNodeWithTag("settings-toolbox").performScrollTo().performClick();ui.onNodeWithTag("tool-card-image").performClick()
         ui.onNodeWithTag("purpose-help-aux-vision").performScrollTo().performClick()
         ui.onNodeWithText("辅助看图开启时，所选辅助模型接收图片并提供观察，聊天模型接收观察与文字；关闭时图片直接发给所选聊天模型。不检测模型能力，不自动换模型或回退。图片只在发送时上传。").assertIsDisplayed()
-        back();back();back();ui.onNodeWithTag("settings-home").assertIsDisplayed()
+        back()
+        ui.waitUntil(5000){ui.activity.hasWindowFocus() && ui.onAllNodesWithTag("purpose-help-close").fetchSemanticsNodes().isEmpty()}
+        ui.onNodeWithTag("toolbox-image-page").assertIsDisplayed()
+        back()
+        ui.waitUntil(5000){ui.onAllNodesWithTag("toolbox-image-page").fetchSemanticsNodes().isEmpty()}
+        ui.onNodeWithTag("toolbox-page").assertIsDisplayed()
+        back()
+        ui.waitUntil(5000){ui.onAllNodesWithTag("toolbox-page").fetchSemanticsNodes().isEmpty()}
+        ui.onNodeWithTag("settings-home").assertIsDisplayed()
     }
     @Test fun savedModelsPurposesAndTabSurviveRotationAndNavigation(){
         seed()
