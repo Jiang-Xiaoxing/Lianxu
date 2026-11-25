@@ -91,7 +91,7 @@ import kotlin.coroutines.coroutineContext
             if(detailId==null)IconButton({searching=!searching;if(!searching)query=""},modifier=Modifier.testTag("learning-open-search").semantics{contentDescription="搜索学习"}){ControlIcon("search",Muted)}
         })
         if(detailId==null)worldTabs()
-        when{
+        SoftPage(detailId,{_,to->if(to==null)-1 else 1}){shownId->when{
             loadFailed->Column(Modifier.fillMaxWidth().padding(UiSpace.page).testTag("learning-error"),verticalArrangement=Arrangement.spacedBy(12.dp)){
                 Text("学习记录暂时无法读取。",style=MaterialTheme.typography.bodyLarge)
                 Text("可以重试，已保存的内容不会因此修改。",style=MaterialTheme.typography.bodyMedium,color=Muted)
@@ -103,8 +103,8 @@ import kotlin.coroutines.coroutineContext
                     Text("正在读取学习记录…",style=MaterialTheme.typography.bodyMedium,color=Muted)
                 }
             }
-            detailId!=null->{
-                val detail=records.firstOrNull{it.state.id==detailId}
+            shownId!=null->{
+                val detail=records.firstOrNull{it.state.id==shownId}
                 if(detail!=null)LearningRecordDetail(friend,detail){action->onControl(detail.state.id,action);if(action=="delete")detailId=null}
                 else Column(Modifier.fillMaxWidth().padding(UiSpace.page).testTag("learning-detail-missing"),verticalArrangement=Arrangement.spacedBy(12.dp)){
                     Text("这条学习已不在当前记录中。",style=MaterialTheme.typography.bodyLarge)
@@ -113,29 +113,30 @@ import kotlin.coroutines.coroutineContext
                 }
             }
             else->{
-                key(page){
-                    val kind=kinds[page]
+                SoftPage(page to archived){(shownPage,showArchived)->
+                    val kind=kinds[shownPage]
                     val search=query.trim()
                     val shown=records.filter{record->
-                        (record.state.state in setOf("paused","faded"))==archived && (kind.isEmpty()||record.state.kind==kind)&&
+                        (record.state.state in setOf("paused","faded"))==showArchived && (kind.isEmpty()||record.state.kind==kind)&&
                             (search.isEmpty()||record.state.content.contains(search,true)||record.state.scope.contains(search,true))
                     }
-                    LazyColumn(Modifier.fillMaxSize().background(Paper).testTag("learning-list"),state=lists[page],contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(12.dp)){
+                    LazyColumn(Modifier.fillMaxSize().background(Paper).testTag("learning-list"),state=lists[shownPage],contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(12.dp)){
                         item("intro"){Column {
                             Text("${friend.name}的学习手记",style=MaterialTheme.typography.labelMedium,color=Muted)
                             Text("私藏手账贴页",fontFamily=FontFamily.Serif,style=MaterialTheme.typography.headlineSmall,color=Ink)
                         }}
-                        if(searching)item("search"){AppField(query,{query=it},"搜索内容或适用情况","learning-search",singleLine=true)}
+                        item("search"){SoftVisibility(searching){AppField(query,{query=it},"搜索内容或适用情况","learning-search",singleLine=true)}}
                         item("filters"){
                             Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)){
                                 listOf("" to "全部","viewpoint" to "看法","interest" to "兴趣","habit" to "相处习惯").forEach{(value,label)->
-                                    FilterChip(selected=kind==value,onClick={page=kinds.indexOf(value)},label={Text(label)},
-                                        modifier=Modifier.heightIn(min=UiSpace.action).testTag("learning-filter-${value.ifEmpty{"all"}}"),
-                                        colors=FilterChipDefaults.filterChipColors(selectedContainerColor=SelectedBackground,selectedLabelColor=GreenText))
+                                    val press=remember{androidx.compose.foundation.interaction.MutableInteractionSource()}
+                                    FilterChip(selected=kind==value,onClick={page=kinds.indexOf(value)},label={Text(label)},interactionSource=press,
+                                        modifier=Modifier.pressScale(press).heightIn(min=UiSpace.action).testTag("learning-filter-${value.ifEmpty{"all"}}"),
+                                        colors=learningChipColors(kind==value))
                                 }
                             }
                         }
-                        item("archived"){FilterChip(archived,{archived=!archived},{Text("已暂停与淡出")},modifier=Modifier.testTag("learning-archived"))}
+                        item("archived"){FilterChip(showArchived,{archived=!archived},{Text("已暂停与淡出")},colors=learningChipColors(showArchived),modifier=Modifier.testTag("learning-archived"))}
                         if(shown.isEmpty())item("empty"){
                             Column(Modifier.fillMaxWidth().padding(vertical=24.dp).testTag("learning-empty"),verticalArrangement=Arrangement.spacedBy(8.dp)){
                                 Text(if(records.isEmpty())"还没有学习记录"else"没有找到匹配的记录",style=MaterialTheme.typography.titleSmall)
@@ -152,8 +153,14 @@ import kotlin.coroutines.coroutineContext
                         }
                 }}
             }
-        }
+        }}
     }
+}
+
+@Composable private fun learningChipColors(selected:Boolean):SelectableChipColors {
+    val fill=softColor(if(selected)SelectedBackground else Color.Transparent)
+    val ink=softColor(if(selected)GreenText else Muted)
+    return FilterChipDefaults.filterChipColors(containerColor=fill,selectedContainerColor=fill,labelColor=ink,selectedLabelColor=ink)
 }
 
 @Composable private fun LearningRecordDetail(friend:Friend,record:LearningRecord,onControl:(String)->Unit){
@@ -222,11 +229,12 @@ import kotlin.coroutines.coroutineContext
 }
 
 @Composable private fun LearningPatch(record:LearningRecord,slot:Int,modifier:Modifier,open:()->Unit){
+    val press=remember{androidx.compose.foundation.interaction.MutableInteractionSource()}
     val dark=Paper.luminance()<.3f
     val paper=when(slot){0->if(dark)Color(0xFF443B31) else Color(0xFFEFE5D4);1->if(dark)Color(0xFF383C33) else Color(0xFFE5E8DC);else->if(dark)Color(0xFF403933) else Color(0xFFF3EBDD)}
     val learning=record.state
     Column(modifier.rotate(when(slot){1->-1.4f;2->1.2f;else->0f}).background(paper,androidx.compose.foundation.shape.RoundedCornerShape(5.dp))
-        .clickable(onClick=open).testTag("learning-item-${learning.id}").padding(if(slot==0)20.dp else 12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+        .pressScale(press).clickable(interactionSource=press,indication=androidx.compose.foundation.LocalIndication.current,onClick=open).testTag("learning-item-${learning.id}").padding(if(slot==0)20.dp else 12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
         Row(verticalAlignment=Alignment.CenterVertically){
             Text(learningKindLabel(learning.kind),Modifier.weight(1f),style=MaterialTheme.typography.labelSmall,color=Muted)
             Text("● ".repeat(learning.dots).trim(),style=MaterialTheme.typography.labelSmall,color=GreenText)

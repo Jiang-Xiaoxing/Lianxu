@@ -52,6 +52,7 @@ class CompanionPipelineAndroidTest {
             val day=relationshipDayStart(now);var calls=0
             val before=RelationStorage.read(store.readableDatabase,"a").programInputs
             AppServices.createTextClient={object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
+                if(request.messages.first().content.contains("points"))return TextChatResult.Success("""{"points":[]}""")
                 calls++;assertEquals(listOf("system","user"),request.messages.map{it.role})
                 val prompt=request.messages.single{it.role=="system"}.content
                 assertTrue(prompt.contains("没有每天或未回复次数上限"))
@@ -102,7 +103,7 @@ class CompanionPipelineAndroidTest {
         assertNull(core.conclude(running,CompanionRuntime.owner,OpportunityDecision("send","旧返回","不应发",now+1000),snapshot){true})
         core.setPolicy("a",true,CompanionRuntime.owner);assertTrue(core.queued().isEmpty())
         val another=continuation();ledger.begin("a","我来了",config.id)
-        now=another.notBefore;assertNull(core.claim(another.id,CompanionRuntime.owner));assertTrue(core.queued().isEmpty())
+        now=another.notBefore;assertNull(core.claim(another.id,CompanionRuntime.owner));assertTrue(core.queued().any{it.id==another.id})
         assertFalse(store.messages().any{it.text=="不应发"})
     }
     @Test fun packageDoesNotRequestOrRegisterForegroundServiceCapability(){
@@ -125,7 +126,7 @@ class CompanionPipelineAndroidTest {
         val input=ledger.begin("a","新消息到了",config.id,id="new-input")
         assertNull(core.conclude(old,CompanionRuntime.owner,OpportunityDecision("send","旧模型晚返回","不应发出"),snapshot){true})
         core.checkContinuity("another-process")
-        assertFalse(core.queued().any{it.role=="a"});assertTrue(core.queued().any{it.id==other.id})
+        assertTrue(core.queued().any{it.id==old.id});assertTrue(core.queued().any{it.id==other.id})
         assertFalse(store.messages().any{it.text=="不应发出"})
         assertEquals(input,ledger.begin("a","新消息到了",config.id,id="new-input"))
         assertTrue(core.receipts("a").none{it.delivery=="ready"})
@@ -325,25 +326,25 @@ class CompanionPipelineAndroidTest {
         assertFalse(core.claimNotification(message));assertEquals("unknown",core.receipts("a").single{it.messageId==message}.delivery)
         assertNull(core.claim(old.id,"third-synthetic-process"));assertEquals(1,store.messages().count{it.text=="唯一正式消息"})
     }
-    @Test fun laterChatCancelsOldReasonAndOnlyItsNewDecisionCanContact():Unit=runBlocking{
+    @Test fun laterChatKeepsTheOldAppointmentAndFencesItsDecision():Unit=runBlocking{
         event("明天合成面试",reconsider=true);val future=core.queued().single()
         event("合成新消息：面试地点改到北门",reconsider=true)
         assertNull(core.claim(future.id,CompanionRuntime.owner))
-        val replacement=core.queued().single();assertNotEquals(future.id,replacement.id)
+        val replacement=core.queued().single{it.id!=future.id};assertTrue(core.queued().any{it.id==future.id})
         now=replacement.notBefore
         val claimed=core.claim(replacement.id,CompanionRuntime.owner)!!;val latest=core.snapshot("a")
         assertEquals(latest.epoch,claimed.epoch);assertTrue(latest.prompt.contains("北门"))
         assertNotEquals(future.epoch,claimed.epoch)
         assertNotNull(core.conclude(claimed,CompanionRuntime.owner,OpportunityDecision("send","按最新地点判断","北门的面试怎么样"),latest){true})
     }
-    @Test fun cancelledOrFailedNewChatDoesNotResurrectTheOldPlan():Unit=runBlocking{
+    @Test fun cancelledNewChatPreservesTheReminderButCannotPublishStaleOutput():Unit=runBlocking{
         event("合成正在判断的未来关心",reconsider=true);now+=900_000
         val old=core.claim(core.queued().single().id,CompanionRuntime.owner)!!;val stale=core.snapshot("a")
         core.beginInput("a");val pending=ledger.begin("a","合成普通新聊天",config.id)
         assertNull(core.conclude(old,CompanionRuntime.owner,OpportunityDecision("send","旧快照","旧结果"),stale){true})
-        assertNull(core.claim(old.id,CompanionRuntime.owner));assertTrue(core.queued().isEmpty())
+        assertNull(core.claim(old.id,CompanionRuntime.owner));assertTrue(core.queued().any{it.id==old.id})
         ledger.cancel(pending.id,pending.attempt)
-        core.checkContinuity("restarted");assertNull(core.claim(old.id,"restarted"))
+        core.checkContinuity("restarted");assertNotNull(core.claim(old.id,"restarted"))
         assertFalse(store.messages().any{it.text=="旧结果"})
     }
     @Test fun closeReopenWithdrawalRevisionAndExpiryDoNotReviveReasons():Unit=runBlocking{
@@ -379,9 +380,9 @@ class CompanionPipelineAndroidTest {
             AppServices.createTextClient={object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{assertEquals("synthetic-only",key);calls++;return TextChatResult.Failure(ChatFailure.NETWORK)}}}
             val worker=TestListenableWorkerBuilder<CompanionWorker>(context).setInputData(Data.Builder().putString("opportunity",opportunity.id).build()).build()
             worker.doWork()
-            assertEquals(1,calls);assertEquals(2,store.messages().size);assertTrue(core.snapshot("a").prompt.contains("合成断网事件"));assertTrue(core.queued().none{it.id==opportunity.id})
-            assertEquals("failed",store.readableDatabase.rawQuery("SELECT state FROM companion_opportunities WHERE id=?",arrayOf(opportunity.id)).use{it.moveToFirst();it.getString(0)})
-            assertEquals(1,core.retryable("a"));core.retryFailed("a")
+            assertEquals(1,calls);assertEquals(2,store.messages().size);assertTrue(core.snapshot("a").prompt.contains("合成断网事件"));assertEquals(now+300000,core.queued().single{it.id==opportunity.id}.notBefore)
+            assertEquals("queued",store.readableDatabase.rawQuery("SELECT state FROM companion_opportunities WHERE id=?",arrayOf(opportunity.id)).use{it.moveToFirst();it.getString(0)})
+            assertEquals(0,core.retryable("a"))
             assertEquals(opportunity.expiresAt,core.queued().single{it.id==opportunity.id}.expiresAt)
         }finally{AppServices.databaseName=oldDb;AppServices.vaultNamespace=oldNamespace;AppServices.createTextClient=oldClient;AppServices.companionClock=oldClock;vault.delete(config.id)}
     }
@@ -560,6 +561,7 @@ class CompanionPipelineAndroidTest {
     @Test fun duplicateWorkersCreateOneFormalMessageAndOneReceipt():Unit=runBlocking{workerScenario{o,_->
         val calls=java.util.concurrent.atomic.AtomicInteger()
         AppServices.createTextClient={object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
+            if(request.messages.first().content.contains("points"))return TextChatResult.Success("""{"points":[]}""")
             calls.incrementAndGet();assertEquals("synthetic-only",key)
             return TextChatResult.Success("""{"action":"send","reason":"合成重新评估","text":"合成唯一Worker正文"}""")
         }}}
@@ -582,10 +584,10 @@ class CompanionPipelineAndroidTest {
         assertEquals("queued",opportunityState(o.id));assertFalse(store.messages().any{it.text=="合成不应提交"})
         assertEquals(o.notBefore,core.queued().single{it.id==o.id}.notBefore);assertEquals(o.expiresAt,core.queued().single{it.id==o.id}.expiresAt)
     }}
-    @Test fun workerForPlanCancelledByPendingInputFinishesWithoutRetry():Unit=runBlocking{workerScenario{o,_->
+    @Test fun workerDefersSavedAppointmentDuringPendingInput():Unit=runBlocking{workerScenario{o,_->
         val pending=ledger.begin("a","合成忙碌中的新输入",config.id)
-        assertEquals(androidx.work.ListenableWorker.Result.success(),worker(o.id).doWork())
-        assertEquals("cancelled",opportunityState(o.id));assertTrue(core.queued().isEmpty())
+        assertEquals(androidx.work.ListenableWorker.Result.retry(),worker(o.id).doWork())
+        assertEquals("queued",opportunityState(o.id))
         ledger.cancel(pending.id,pending.attempt)
     }}
     @Test fun workerRecoversOrphanForegroundWithoutAppActivity():Unit=runBlocking{workerScenario{o,_->
@@ -593,7 +595,7 @@ class CompanionPipelineAndroidTest {
         AppServices.createTextClient={object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest)=TextChatResult.Success("""{"action":"silent","reason":"按最新有效经历保持安静"}""")}}
         worker(o.id).doWork()
         assertEquals(TurnState.INTERRUPTED,ledger.all().single{it.id==orphan.id}.state)
-        assertEquals("cancelled",opportunityState(o.id));assertEquals(3,store.messages().size)
+        assertEquals("silent",opportunityState(o.id));assertEquals(3,store.messages().size)
     }}
     @Test fun newUserInputDuringWorkerModelCallFencesItsLateReturn():Unit=runBlocking{workerScenario{o,_->
         val entered=CompletableDeferred<Unit>();val release=CompletableDeferred<Unit>()
@@ -606,8 +608,8 @@ class CompanionPipelineAndroidTest {
             try{withTimeout(5000){entered.await()};ledger.begin("a","我现在来聊天了",config.id);release.complete(Unit);withTimeout(5000){job.await()}}
             finally{release.complete(Unit);job.cancelAndJoin()}
         }
-        assertEquals("cancelled",opportunityState(o.id));assertFalse(store.messages().any{it.text=="不该发出的旧联系"})
-        core.checkContinuity("next-process");assertFalse(core.queued().any{it.id==o.id})
+        assertEquals("queued",opportunityState(o.id));assertFalse(store.messages().any{it.text=="不该发出的旧联系"})
+        core.checkContinuity("next-process");assertTrue(core.queued().any{it.id==o.id})
     }}
     @Test fun missingWorkerConfigTerminatesInsteadOfLeavingRunning():Unit=runBlocking{workerScenario{o,vault->
         vault.setPurpose(ModelPurpose.CHAT,"")
@@ -627,6 +629,7 @@ class CompanionPipelineAndroidTest {
         core.checkContinuity(CompanionRuntime.owner)
         val recovered=core.queued().single();val calls=java.util.concurrent.atomic.AtomicInteger()
         AppServices.createTextClient={object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{
+            if(request.messages.firstOrNull()?.content?.contains("只返回 JSON 如")==true)return TextChatResult.Success("""{"points":[]}""")
             calls.incrementAndGet();assertEquals("synthetic-only",key)
             return TextChatResult.Success("""{"action":"send","reason":"真实调度恢复后重新评估","text":"合成调度后的唯一正文"}""")
         }}}

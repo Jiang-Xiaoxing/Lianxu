@@ -18,7 +18,7 @@ class ReplyPacingTest {
     @Test fun targetIsClosedBubblesWhileStreamingAndAllOnceStored(){
         assertEquals(1,ReplyPacing.target("在呢\n\n刚下",null))
         assertEquals(2,ReplyPacing.target("在呢\n\n刚下",storedText="在呢\n\n刚下班"))
-        assertEquals(4,ReplyPacing.target(null,"一\n\n二\n\n三\n\n四\n\n五"))
+        assertEquals(5,ReplyPacing.target(null,"一\n\n二\n\n三\n\n四\n\n五"))
         assertEquals(0,ReplyPacing.target(null,null))
     }
 }

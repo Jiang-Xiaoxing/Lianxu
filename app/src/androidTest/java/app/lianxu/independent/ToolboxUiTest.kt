@@ -2,6 +2,10 @@ package app.lianxu.independent
 
 import android.graphics.Bitmap
 import android.view.KeyEvent
+import android.view.View
+import android.view.inspector.WindowInspector
+import android.widget.TimePicker
+import androidx.test.filters.SdkSuppress
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
@@ -15,7 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class ToolboxUiTest {
     private val calls=AtomicInteger()
     @get:Rule(order=0) val fixture=MockChatFixture({object:TextChatClient{
-        override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {calls.incrementAndGet();error("No network in toolbox tests")}
+        override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {if(request.messages.firstOrNull()?.content?.contains("只返回 JSON 如") == true)return TextChatResult.Success("""{"points":[]}""");calls.incrementAndGet();error("No network in toolbox tests")}
     }})
     @get:Rule(order=1) val ui=createAndroidComposeRule<MainActivity>()
     private lateinit var vm:AppState
@@ -25,13 +29,59 @@ class ToolboxUiTest {
         listOf("seed-lin","seed-an").forEach{androidx.work.WorkManager.getInstance(context).cancelAllWorkByTag("companion:$it").result.get(5,java.util.concurrent.TimeUnit.SECONDS)}
         assertEquals(0,calls.get())
     }
+    @SdkSuppress(minSdkVersion = 29)
+    @Test fun quietHoursSwitchPersistsAndBatteryGuideOpens(){
+        home();ui.onNodeWithTag("tool-card-contact").performClick()
+        ui.waitUntil(10000){ui.onAllNodesWithTag("quiet-enabled").fetchSemanticsNodes().isNotEmpty()}
+        ui.onNodeWithTag("quiet-enabled").performScrollTo().assertIsOn().performClick()
+        ui.waitUntil(5000){!runBlocking{vm.quietHours()}.enabled}
+        ui.onNodeWithTag("quiet-start").assertDoesNotExist()
+        ui.onNodeWithTag("toolbox-contact-seed-lin").performScrollTo().performClick()
+        ui.waitUntil(10000){ui.onAllNodesWithTag("contact-battery-settings").fetchSemanticsNodes().isNotEmpty()}
+        ui.onNodeWithText("已关闭",substring=false).assertExists();shot("phase3-role")
+        ui.onNodeWithTag("contact-battery-settings").performScrollTo().performClick()
+        ui.onNodeWithText("去开电池不受限制").assertIsDisplayed();shot("phase3-battery-guide")
+        ui.onNodeWithTag("companion-background-close").performClick()
+        ui.waitUntil(10000){ui.onAllNodesWithTag("companion-background-hint").fetchSemanticsNodes().isEmpty()}
+        ui.onNodeWithTag("back").performClick()
+        ui.waitUntil(10000){ui.onAllNodesWithTag("quiet-enabled").fetchSemanticsNodes().isNotEmpty()}
+        ui.onNodeWithTag("quiet-enabled").performScrollTo().assertIsOff().performClick()
+        ui.waitUntil(10000){ui.onAllNodesWithTag("quiet-start").fetchSemanticsNodes().isNotEmpty()}
+        ui.onNodeWithTag("quiet-start").performScrollTo().assertExists();shot("phase3-quiet-hours")
+        ui.onNodeWithTag("quiet-start").performClick()
+        ui.runOnIdle {
+            val dialog = WindowInspector.getGlobalWindowViews().single { it.findViewById<View>(android.R.id.button1) != null }
+            val pickerId = ui.activity.resources.getIdentifier("timePicker", "id", "android")
+            val picker = requireNotNull(dialog.findViewById<TimePicker>(pickerId))
+            picker.hour = 22
+            picker.minute = 35
+            dialog.findViewById<View>(android.R.id.button1).performClick()
+        }
+        ui.waitUntil(5000) { runBlocking { vm.quietHours() }.start == 22 * 60 + 35 }
+        ui.waitUntil(10000) {
+            ui.onAllNodes(hasTestTag("quiet-start") and hasText("22:35", substring = true))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+    }
     private fun back(){InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);ui.waitForIdle()}
     private fun home(){ui.runOnIdle{vm.tab=2;vm.open("home")};ui.onNodeWithTag("settings-toolbox").performScrollTo().performClick();ui.waitUntil(10000){runCatching{ui.onNodeWithTag("tool-card-image").assertIsEnabled();true}.getOrDefault(false)};ui.waitForIdle()}
     private fun shot(name:String,wait:Boolean=true){
         if(wait)ui.waitForIdle()
         Thread.sleep(180)
         val i=InstrumentationRegistry.getInstrumentation();val dir=File(i.targetContext.getExternalFilesDir(null),"toolbox-shots").apply{mkdirs()}
-        i.uiAutomation.takeScreenshot().let{b->File(dir,"$name.png").outputStream().use{b.compress(Bitmap.CompressFormat.PNG,100,it)};b.recycle()}
+        val screenshot = i.uiAutomation.takeScreenshot()
+        try {
+            val file = File(dir, "$name.png")
+            file.outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            if (name.startsWith("phase3-")) {
+                InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")?.let { output ->
+                    File(output).mkdirs()
+                    file.copyTo(File(output, file.name), overwrite = true)
+                }
+            }
+        } finally {
+            screenshot.recycle()
+        }
     }
     @Test fun allFourCardsNavigateAndOldControlsAreReallyMoved(){
         val old=MemoryRules(52,19,17,proactiveRecall=false,immediateWrite=true,recallRounds=8,recallTokens=6000,recallPerCall=2000,adaptiveContext=true,reviewRounds=7)
@@ -52,7 +102,7 @@ class ToolboxUiTest {
         ui.waitUntil(10000){runCatching{ui.onNodeWithTag("video-mode-original").assertIsSelected();true}.getOrDefault(false)}
         back()
         ui.onNodeWithTag("tool-card-contact").performClick();ui.onNodeWithTag("toolbox-contact-page").assertIsDisplayed();ui.onNodeWithTag("companion-notification").assertExists();shot("05-contact-roles");back();back()
-        ui.onNodeWithTag("settings-models").performScrollTo().performClick();ui.onNodeWithTag("config-tab-purposes").performClick();ui.onNodeWithTag("auxiliary-vision-switch").assertDoesNotExist();ui.onNodeWithTag("purpose-select-aux-vision").assertDoesNotExist();back()
+        ui.onNodeWithTag("settings-models").performScrollTo().performClick();ui.onNodeWithTag("config-open-purposes").performClick();ui.onNodeWithTag("auxiliary-vision-switch").assertDoesNotExist();ui.onNodeWithTag("purpose-select-aux-vision").assertDoesNotExist();back();back()
         ui.onNodeWithTag("settings-processing").performScrollTo().performClick();ui.onNodeWithTag("settings-memory-rules").performClick();ui.onNodeWithTag("rules-recall-enabled").assertDoesNotExist();ui.onNodeWithTag("rules-write-enabled").assertDoesNotExist();back();back()
         ui.runOnIdle{vm.open("detail","seed-lin")};ui.onNodeWithTag("role-companion-open").assertDoesNotExist()
         assertEquals(old.copy(proactiveRecall=true,immediateWrite=false),runBlocking{vm.processing.memoryRules().first})

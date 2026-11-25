@@ -98,7 +98,7 @@ private val Warm=Color(0xFFFA9D3B)
                 val moments=current.state.moments
                 val promises=current.state.promises.sortedByDescending{it.at}
                 RelationTabs(listOf("点滴","心结 · ${knots.size}","约定 · ${promises.size}"),tab){all=false;tab=it}
-                key(tab){val panel=tab
+                SoftPage(tab){panel->
                     Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(12.dp)){
                     val count=when(panel){0->moments.size;1->knots.size;else->promises.size}
                     RelationCard(Modifier.padding(horizontal=16.dp).weight(1f,fill=false).testTag("relationship-tab-$panel")){Column(Modifier.verticalScroll(panelScrolls[panel])){
@@ -153,14 +153,19 @@ private val Warm=Color(0xFFFA9D3B)
 }
 @Composable private fun RelationDivider(){HorizontalDivider(Modifier.padding(horizontal=20.dp),thickness=.5.dp,color=Line)}
 @Composable private fun RelationTabs(labels:List<String>,selected:Int,onSelect:(Int)->Unit){
-    Surface(Modifier.fillMaxWidth().padding(horizontal=16.dp),color=MaterialTheme.colorScheme.surfaceContainerHigh,shape=RoundedCornerShape(12.dp)){Row(Modifier.padding(3.dp).selectableGroup()){
+    Surface(Modifier.fillMaxWidth().padding(horizontal=16.dp),color=MaterialTheme.colorScheme.surfaceContainerHigh,shape=RoundedCornerShape(12.dp)){BoxWithConstraints(Modifier.fillMaxWidth().padding(3.dp)){
+        val cell=maxWidth/labels.size
+        val left=androidx.compose.animation.core.animateDpAsState(cell*selected,androidx.compose.animation.core.tween(200),label="点滴标签").value
+        Spacer(Modifier.matchParentSize().offset(x=left).wrapContentWidth(Alignment.Start).width(cell).background(Paper,RoundedCornerShape(10.dp)))
+        Row(Modifier.selectableGroup()){
         labels.forEachIndexed{i,label->
             val on=i==selected
-            Surface(Modifier.weight(1f).selectable(on,role=Role.Tab){onSelect(i)}.testTag("relationship-tab-button-$i"),color=if(on)Paper else Color.Transparent,shape=RoundedCornerShape(10.dp)){
+            val press=remember{androidx.compose.foundation.interaction.MutableInteractionSource()}
+            Surface(Modifier.weight(1f).pressScale(press).selectable(on,interactionSource=press,indication=androidx.compose.foundation.LocalIndication.current,role=Role.Tab){onSelect(i)}.testTag("relationship-tab-button-$i"),color=Color.Transparent,shape=RoundedCornerShape(10.dp)){
                 Text(label,Modifier.padding(vertical=9.dp),color=Ink,style=MaterialTheme.typography.bodyMedium.copy(fontWeight=if(on)FontWeight.Bold else FontWeight.Normal),textAlign=androidx.compose.ui.text.style.TextAlign.Center)
             }
         }
-    }}
+    }}}
 }
 @Composable private fun Dot(color:Color){Box(Modifier.padding(top=8.dp).size(8.dp).background(color,CircleShape))}
 @Composable private fun MomentRow(m:RelationMoment,quote:String?,date:SimpleDateFormat,action:(@Composable ()->Unit)?=null){

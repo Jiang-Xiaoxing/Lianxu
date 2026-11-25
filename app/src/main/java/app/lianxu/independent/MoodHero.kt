@@ -71,7 +71,10 @@ internal fun moodSky(s:RelationState):MoodSky {
                     RelationshipSummary.closeness(view.state.closeness).takeUnless{view.attributionIncomplete},view.label).joinToString(" · "),Modifier.weight(1f,false),color=Muted,style=MaterialTheme.typography.bodySmall)
                 TextButton(template){Text("换",color=GreenText)}
             }
-            view.innerNote?.takeUnless{view.attributionIncomplete}?.let { note ->
+            val visibleNote=view.innerNote?.takeUnless{view.attributionIncomplete}
+            val savedNote=remember{mutableStateOf(visibleNote)}
+            if(visibleNote!=null)SideEffect{savedNote.value=visibleNote}
+            SoftVisibility(visibleNote!=null){ val note=visibleNote?:savedNote.value?:return@SoftVisibility
                 Row(Modifier.fillMaxWidth().background(Paper.copy(alpha=.8f)).height(IntrinsicSize.Min).testTag("mood-inner-note"),verticalAlignment=Alignment.CenterVertically) {
                     Spacer(Modifier.width(1.dp).fillMaxHeight().background(Color(0xFFC49352)))
                     Column(Modifier.weight(1f).padding(10.dp)) {
