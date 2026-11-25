@@ -106,9 +106,11 @@ class CompanionPipelineAndroidTest {
         now=another.notBefore;assertNull(core.claim(another.id,CompanionRuntime.owner));assertTrue(core.queued().any{it.id==another.id})
         assertFalse(store.messages().any{it.text=="不应发"})
     }
-    @Test fun packageDoesNotRequestOrRegisterForegroundServiceCapability(){
+    @Test fun onlyChatServiceDeclaresForegroundDataSync(){
         val info=context.packageManager.getPackageInfo(context.packageName,android.content.pm.PackageManager.GET_PERMISSIONS or android.content.pm.PackageManager.GET_SERVICES)
-        assertFalse(info.requestedPermissions.orEmpty().contains("android.permission.FOREGROUND_SERVICE"))
+        assertTrue(info.requestedPermissions.orEmpty().contains("android.permission.FOREGROUND_SERVICE"))
+        val chat = info.services.orEmpty().single { it.name == ChatRequestService::class.java.name }
+        if (android.os.Build.VERSION.SDK_INT >= 29) assertEquals(android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC, chat.foregroundServiceType)
         assertFalse(info.services.orEmpty().any{it.name=="androidx.work.impl.foreground.SystemForegroundService"})
     }
     @Test fun legacyExpiryDoesNotCancelAnOpportunityBeforeModelReview():Unit=runBlocking{
@@ -159,7 +161,7 @@ class CompanionPipelineAndroidTest {
     @Test fun firstPlanOnRetryUsesCurrentClockAfterParameterOnlyAttempt():Unit=runBlocking{
         val t=ledger.begin("a","过会儿再聊",config.id);val source=core.sourceFor(t)
         val parameters=RelationParameterProposal(source,mapOf("tone" to "温柔些"),"过会儿再聊",now)
-        core.contact(t,ImmediateContact.Request(null,parameters),core.snapshot("a"),now){true}
+        assertTrue(core.accept(t,ExperienceProposal(parameterProposal=parameters),core.snapshot("a")){true})
         assertTrue(core.queued().isEmpty());val oldClock=now
         ledger.fail(t.id,t.attempt,ChatFailure.TIMEOUT);now+=3600000
         val retry=ledger.retry(t.id,config.id)!!
@@ -183,12 +185,8 @@ class CompanionPipelineAndroidTest {
             assertEquals("contact_permission_disabled",e.message)
         }
         assertTrue(core.queued().isEmpty());assertNull(core.cached(t))
-        val beforeTone=core.relationship("a").parameters.tone
-        val parameters=ImmediateContact.parse("""{"改主动参数":{"消息":"${source.turnId}","参数":{"tone":"温柔些"},"她的话":"那我说得温柔些。"}}""","改主动参数",context,now,scheduling=false)
-        val result=core.contact(t,parameters,core.snapshot("a"),now){true}
-        assertEquals(true,result["success"]);assertTrue(core.queued().isEmpty())
-        assertEquals(mapOf("tone" to "温柔些"),core.cached(t)!!.parameterProposal!!.values)
-        assertEquals(beforeTone,core.relationship("a").parameters.tone)
+        assertTrue(runCatching { ImmediateContact.parse("""{"改主动参数":{"消息":"${source.turnId}","参数":{"tone":"温柔些"},"她的话":"那我说得温柔些。"}}""","改主动参数",context,now,scheduling=false) }.isFailure)
+        assertNull(core.cached(t))
     }
     @Test fun unresolvedControlCannotScheduleAContact():Unit=runBlocking{
         val input="更正那件事";core.beginInput("a");val t=ledger.begin("a",input,config.id)

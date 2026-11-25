@@ -176,27 +176,6 @@ class RelationshipV3Test {
         assertNotNull(parse("今天看了电影"));assertNull(parse("三天找我一次",source=2));assertNull(parse("改失望参数，三天找我一次","sensitivity"))
         assertNotNull(parse("改人设，三天找我一次"));assertFalse("ignoredDisappointment" in RelationParameterRules.modelAllowed)
     }
-    @Test fun proactiveOriginalTemplatesKeepTimingsAndCapsWithoutAutomaticFeelings(){
-        for(t in listOf(RelationTemplate.DIRECT,RelationTemplate.RESERVED,RelationTemplate.STEADY)){
-            val p=t.parameters;val exact=-ln(1-RelationDecay.thetaBase(p.silenceDays))/RelationDecay.missingRate(.2)*RelationshipProjector.HOUR;val first=RelationshipProactive.next(p,0,emptyList(),0,0)!!
-            assertTrue(first>=exact&&first-exact<=60_000)
-            val sent=RelationSent(row(1).source,first)
-            val state=RelationCursor(RelationStart.FRIENDS,p).also{it.contact(0);it.reachOut(sent.at);it.advance(first+3*day)}.state()
-            assertEquals(.5,state.trust,0.0);assertEquals(0.0,state.disappointment,0.0)
-            assertEquals(0.0,state.hurt,0.0);assertEquals(0.0,state.low,0.0)
-            val all=(0..p.resendCount).map{RelationSent(row(it+1L).source,first+it*day)}
-            assertNull(RelationshipProactive.next(p,0,all,all.last().at,all.last().at/day*day))
-        }
-    }
-    @Test fun proactiveHardCapsAndReplyStartANewSilenceWindow(){
-        val sent=(1L..4).map{RelationSent(row(it).source,it*day)}
-        assertNull(RelationshipProactive.next(p.copy(resendCount=99),0,sent,4*day,4*day))
-        val due=RelationshipProactive.next(p,5*day,sent,5*day,5*day)!!
-        val exact=5*day-ln(.6)/RelationDecay.missingRate(.2)*RelationshipProjector.HOUR
-        assertTrue(due>=exact&&due-exact<=60_000)
-        val five=(1L..5).map{RelationSent(row(it).source,day+it)}
-        assertEquals(2*day,RelationshipProactive.next(p.copy(dailyMax=99,silenceDays=.5),day+6,five,day+6,day))
-    }
     @Test fun historyRoundTripPreservesParametersAndCorrectionTimes(){
         val history=RelationHistory(changes=listOf(RelationChange(day,p,RelationTemplate.QUIET.parameters,"安静依赖")),corrections=listOf(RelationCorrection(row(1).source,day,true),RelationCorrection(row(1).source,day+1,false)))
         assertEquals(history,Gson().fromJson(Gson().toJson(history),RelationHistory::class.java))

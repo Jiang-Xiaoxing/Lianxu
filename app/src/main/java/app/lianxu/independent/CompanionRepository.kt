@@ -169,33 +169,24 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
         val source=SourceRef(turn.friendId,turn.userMessageId,revision)
         check(refCurrent(db,source)&&aiAllowed(db,turn.friendId,source.turnId))
         val prior=db.rawQuery("SELECT proposal FROM companion_sources WHERE role=? AND source_id=? AND revision=?",arrayOf(source.characterId,source.turnId.toString(),source.version.toString())).use{if(it.moveToFirst())gson.fromJson(it.getString(0),ExperienceProposal::class.java)else null}
-        val future=request.flow?.future?.let{candidate->prior?.understanding?.future?.takeIf{ImmediateContact.same(it,candidate)}?:candidate}
-        if(future!=null){
-            check(expected.policy=="enabled"){"contact_permission_disabled"}
-            require(prior?.understanding?.future==null||prior.understanding.future==future){"contact_already_applied"}
-        }
-        require(prior?.parameterProposal==null||request.parameters==null||prior.parameterProposal.values==request.parameters.values){"parameter_proposal_already_applied"}
-        val flow=prior?.understanding?.let{old->if(future==null)old else old.copy(future=future,dependencies=(old.dependencies+future.evidence).distinct())}?:request.flow
-        val p=(prior?:ExperienceProposal(claimKind="none")).copy(understanding=flow,reconsider=flow?.future?.timing,
-            timingReferenceAt=if(prior?.understanding?.future!=null)prior.timingReferenceAt?:at else at,parameterProposal=prior?.parameterProposal?:request.parameters)
+        val future=requireNotNull(request.flow.future).let{candidate->prior?.understanding?.future?.takeIf{ImmediateContact.same(it,candidate)}?:candidate}
+        check(expected.policy=="enabled"){"contact_permission_disabled"}
+        require(prior?.understanding?.future==null||prior.understanding.future==future){"contact_already_applied"}
+        val flow=prior?.understanding?.let{old->old.copy(future=future,dependencies=(old.dependencies+future.evidence).distinct())}?:request.flow
+        val p=(prior?:ExperienceProposal(claimKind="none")).copy(understanding=flow,reconsider=future.timing,
+            timingReferenceAt=if(prior?.understanding?.future!=null)prior.timingReferenceAt?:at else at)
         check(saveProposal(db,turn,revision,p,expected,true))
-        if(future!=null){
-            val stored=db.rawQuery("SELECT proposal FROM companion_sources WHERE role=? AND source_id=? AND revision=?",arrayOf(source.characterId,source.turnId.toString(),source.version.toString())).use{check(it.moveToFirst());gson.fromJson(it.getString(0),ExperienceProposal::class.java)}
-            check(stored.understanding?.future==future){"contact_evidence_changed"}
-        }
-        // Parameter suggestions stay pending user approval. No appraisal/score is generated here.
+        val stored=db.rawQuery("SELECT proposal FROM companion_sources WHERE role=? AND source_id=? AND revision=?",arrayOf(source.characterId,source.turnId.toString(),source.version.toString())).use{check(it.moveToFirst());gson.fromJson(it.getString(0),ExperienceProposal::class.java)}
+        check(stored.understanding?.future==future){"contact_evidence_changed"}
         db.execSQL("UPDATE companion_sources SET committed=1 WHERE role=? AND source_id=? AND revision=?",arrayOf<Any>(source.characterId,source.turnId,source.version))
-        if(future!=null){
-            val t=future.timing
-            db.insertWithOnConflict("companion_opportunities",null,ContentValues().apply{
-                put("id","${source.characterId}:${source.turnId}:${source.version}");put("role",source.characterId);put("source_id",source.turnId);put("revision",source.version);put("epoch",expected.epoch);put("policy_version",expected.policyVersion);put("not_before",t.notBefore);put("expires_at",t.expiresAt);put("reason",t.reason);put("state","queued")
-            },SQLiteDatabase.CONFLICT_IGNORE)
-        }
-        val state=if(future==null)null else db.rawQuery("SELECT state FROM companion_opportunities WHERE id=?",arrayOf("${source.characterId}:${source.turnId}:${source.version}")).use{check(it.moveToFirst());it.getString(0)}
+        val t=future.timing
+        db.insertWithOnConflict("companion_opportunities",null,ContentValues().apply{
+            put("id","${source.characterId}:${source.turnId}:${source.version}");put("role",source.characterId);put("source_id",source.turnId);put("revision",source.version);put("epoch",expected.epoch);put("policy_version",expected.policyVersion);put("not_before",t.notBefore);put("expires_at",t.expiresAt);put("reason",t.reason);put("state","queued")
+        },SQLiteDatabase.CONFLICT_IGNORE)
+        val state=db.rawQuery("SELECT state FROM companion_opportunities WHERE id=?",arrayOf("${source.characterId}:${source.turnId}:${source.version}")).use{check(it.moveToFirst());it.getString(0)}
         mapOf("success" to true,"status" to "applied","note" to when{
-            future==null->"已提出参数建议，等待用户确认；设置尚未改变。"
-            state !in setOf("queued","running")->"此前的联系机会已经处理或结束，这次没有重新安排；参数建议仍需用户确认。"
-            else->"已保存再次考虑联系的机会，不保证发送或送达；参数建议仍需用户确认。"
+            state !in setOf("queued","running")->"此前的联系机会已经处理或结束，这次没有重新安排。"
+            else->"已保存再次考虑联系的机会，不保证发送或送达。"
         })
     }
     /** Both paths use the same validation; post-reply accounting can never execute a control. */
@@ -329,13 +320,16 @@ internal class CompanionRepository(internal val store:Store,private val now:()->
     suspend fun sourceOfMessage(role:String,id:Long):Long?=repo.read{db->
         db.rawQuery("SELECT user_message_id FROM chat_turns WHERE friend_id=? AND (user_message_id=? OR assistant_message_id=?) UNION ALL SELECT o.source_id FROM companion_receipts r JOIN companion_opportunities o ON o.id=r.opportunity_id WHERE r.role=? AND r.message_id=? LIMIT 1",arrayOf(role,id.toString(),id.toString(),role,id.toString())).use{if(it.moveToFirst())it.getLong(0)else null}
     }
-    suspend fun recall(role:String,terms:List<String>,limit:Int)=repo.read{db->
-        db.rawQuery("SELECT source_id,revision,proposal FROM companion_sources WHERE role=? ORDER BY source_id DESC",arrayOf(role)).use{c->buildList{
-            while(c.moveToNext()){
-                val ref=SourceRef(role,c.getLong(0),c.getLong(1));val p=gson.fromJson(c.getString(2),ExperienceProposal::class.java)
-                if(refCurrent(db,ref)&&p.memory.isNotBlank()&&terms.any{it in p.memory.lowercase()})add(AgentRecallCandidate("experience-${ref.turnId}-${ref.version}","episode","有来源的经历",p.memory,sourceSessionId=role,startMessageId=ref.turnId.toString(),current=true))
+    suspend fun recall(role:String,terms:List<String>,limit:Int)=repo.read { db ->
+        experiences(db,role)
+            .map { entry -> entry to (terms.maxOfOrNull { MemoryRecall.relevance(it,entry.text) } ?: 0.0) }
+            .filter { it.second > 0 }
+            .sortedWith(compareByDescending<Pair<CompanionExperience,Double>> { it.second }.thenByDescending { it.first.source.turnId })
+            .take(limit).map { (entry,_) ->
+                val ref=entry.source
+                AgentRecallCandidate("experience-${ref.turnId}-${ref.version}","episode","有来源的经历",entry.text,
+                    sourceSessionId=role,startMessageId=ref.turnId.toString(),current=true)
             }
-        }.take(limit)}
     }
     /** Called in ChatLedger's reply transaction (C2). */
     fun finishReply(db:SQLiteDatabase,turn:ChatTurn,s:CompanionSnapshot){

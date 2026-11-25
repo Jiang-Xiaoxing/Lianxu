@@ -56,7 +56,6 @@ private val Warm=Color(0xFFFA9D3B)
     var quotes by remember(role){mutableStateOf<Map<Long,String>>(emptyMap())}
     var recording by remember(role){mutableStateOf<RelationRecordingReport?>(null)}
     var audit by remember(role){mutableStateOf<List<RelationAudit>>(emptyList())}
-    var templates by remember(role){mutableStateOf(false)}
     var ignored by remember(role){mutableStateOf(false)}
     var tab by androidx.compose.runtime.saveable.rememberSaveable(role){mutableIntStateOf(0)}
     val panelScrolls=key(role){listOf(rememberScrollState(),rememberScrollState(),rememberScrollState())}
@@ -86,7 +85,7 @@ private val Warm=Color(0xFFFA9D3B)
             if(error)Row(verticalAlignment=Alignment.CenterVertically){Text("暂时无法读取或保存，请重试。",Modifier.weight(1f),color=Muted);TextButton({refresh++}){Text("重试",color=GreenText)}}
             val current=view
             if(current==null){Box(Modifier.fillMaxWidth().padding(24.dp),contentAlignment=Alignment.Center){CircularProgressIndicator(color=GreenText)}}else{
-                MoodHero(current,{templates=true}) { source -> change { vm.companion.correctInnerNote(source) } }
+                MoodHero(current) { source -> change { vm.companion.correctInnerNote(source) } }
                 LaunchedEffect(current.innerNote) {
                     current.innerNote?.let {
                         val remaining = RelationshipProjector.DAY - (AppServices.companionClock() - it.at)
@@ -145,7 +144,6 @@ private val Warm=Color(0xFFFA9D3B)
             }
         }
     }
-    if(templates)AlertDialog(onDismissRequest={templates=false},title={Text("相处模板")},text={Column{RelationTemplate.entries.forEach{template->TextButton({templates=false;change{vm.companion.changeRelationshipTemplate(role,template)}}){Text(template.label,color=Ink)}}}},confirmButton={TextButton({templates=false}){Text("取消",color=GreenText)}})
 }
 
 @Composable private fun RelationCard(modifier:Modifier=Modifier,content:@Composable ()->Unit){

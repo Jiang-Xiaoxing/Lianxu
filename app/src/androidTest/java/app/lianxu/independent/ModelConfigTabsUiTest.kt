@@ -57,7 +57,7 @@ class ModelConfigTabsUiTest {
         }
         ui.waitUntil(15000){app.ready}
         ui.onNodeWithTag("tab-2").performClick();ui.onNodeWithTag("settings-models").performClick()
-        ui.onNodeWithTag("config-tab-services").assertIsSelected()
+        ui.onNodeWithTag("config-tab-chat").assertIsSelected()
     }
     @After fun close(){
         ui.runOnIdle{state.clearResult()}
@@ -68,65 +68,60 @@ class ModelConfigTabsUiTest {
     private fun seed(){
         vault.save(chat,"synthetic-only");vault.save(embedding,"synthetic-only")
         ModelPurpose.entries.forEach{vault.setPurpose(it,if(it==ModelPurpose.EMBEDDING)embedding.id else chat.id)}
-        ui.runOnIdle{state.refresh()};ui.waitUntil(15000){state.configs.size==2&&state.purposes.size==4&&!state.busy}
+        ui.runOnIdle{state.refresh()};ui.waitUntil(15000){state.configs.size==2&&state.purposes.size==ModelPurpose.entries.size&&!state.busy}
     }
     private fun back(){InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);ui.waitForIdle()}
-    private fun services(){ui.onNodeWithTag("config-tab-services").performClick().assertIsSelected()}
-    private fun purposes(){ui.onNodeWithTag("config-tab-purposes").performClick().assertIsSelected()}
+    private fun services(){if(ui.onAllNodesWithTag("config-tab-chat").fetchSemanticsNodes().isEmpty())back();ui.onNodeWithTag("config-tab-chat").performClick().assertIsSelected()}
+    private fun purposes(){ui.onNodeWithTag("config-open-purposes").performClick()}
     private fun swipeTab(left:Boolean){ui.onNodeWithTag("config-overview").performTouchInput{swipe(Offset(width*(if(left).8f else .2f),height*.55f),Offset(width*(if(left).2f else .8f),height*.55f),400)}}
     @Test fun swipesClicksEdgesAndVerticalListsKeepPurposeAndScrollState(){
         seed()
         repeat(10){vault.save(chat.copy(id="scroll-$it",name="滚动合成配置$it"),"synthetic-only")}
         ui.runOnIdle{state.refresh()};ui.waitUntil(15000){state.configs.size==12}
-        ui.capturePagerDrag("models")
-        ui.onNodeWithTag("config-tab-services").assertIsSelected();swipeTab(false);ui.onNodeWithTag("config-tab-services").assertIsSelected()
-        ui.onNodeWithTag("config-overview").performTouchInput{swipeUp()};ui.onNodeWithTag("config-tab-services").assertIsSelected()
-        ui.onNodeWithTag("config-add-embedding").performScrollTo()
-        fun scroll()=ui.onNodeWithTag("config-overview").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
-        val before=scroll();assertTrue(before>0)
-        val beforeBounds=ui.onNodeWithTag("config-add-embedding").fetchSemanticsNode().boundsInRoot
-        shot("swipe-services-before",true)
-        swipeTab(true);ui.onNodeWithTag("config-tab-purposes").assertIsSelected();swipeTab(true);ui.onNodeWithTag("config-tab-purposes").assertIsSelected()
-        ui.onNodeWithTag("purpose-select-memory").performScrollTo().performClick();ui.onNodeWithTag("purpose-clear-memory").performClick()
+        val list=ui.onNodeWithTag("config-overview")
+        list.performScrollToNode(hasTestTag("config-add-chat"))
+        val top=ui.onNodeWithTag("config-add-chat").fetchSemanticsNode().boundsInRoot.top
+        for(tag in listOf("embedding","voice","image")){
+            swipeTab(true)
+            ui.onNodeWithTag("config-tab-$tag").assertIsSelected()
+        }
+        swipeTab(true);ui.onNodeWithTag("config-tab-image").assertIsSelected()
+        services()
+        ui.onNodeWithTag("config-add-chat").assertIsDisplayed()
+        assertEquals(top,ui.onNodeWithTag("config-add-chat").fetchSemanticsNode().boundsInRoot.top,2f)
+        purposes();ui.onNodeWithTag("purpose-select-memory").performScrollTo().performClick()
+        ui.onNodeWithTag("purpose-clear-memory").performClick()
         ui.waitUntil(10000){!state.busy&&state.purposes[ModelPurpose.MEMORY].orEmpty().isEmpty()}
-        swipeTab(false);ui.onNodeWithTag("config-tab-services").assertIsSelected()
-        shot("swipe-services-return-diagnostic",true)
-        println("scroll_before=$before scroll_after=${scroll()}")
-        ui.onNodeWithTag("config-add-embedding").assertIsDisplayed();assertEquals(beforeBounds.top,ui.onNodeWithTag("config-add-embedding").fetchSemanticsNode().boundsInRoot.top,2f)
-        repeat(3){purposes();swipeTab(false);services();swipeTab(true)}
-        ui.onNodeWithTag("config-tab-purposes").assertIsSelected();assertEquals("",vault.purposeId(ModelPurpose.MEMORY))
-        ui.onNodeWithTag("config-overview").performTouchInput{swipe(Offset(1f,height*.5f),Offset(width*.7f,height*.5f),400)};ui.onNodeWithTag("config-tab-purposes").assertIsSelected()
-        services();ui.onNodeWithTag("config-overview").performTouchInput{swipe(Offset(width-1f,height*.5f),Offset(width*.3f,height*.5f),400)};ui.onNodeWithTag("config-tab-services").assertIsSelected()
-        shot("swipe-services-returned",true);purposes();shot("swipe-purposes",true)
+        services();swipeTab(false);ui.onNodeWithTag("config-tab-chat").assertIsSelected()
     }
     @Test fun swipeOutsideOverviewDoesNotDiscardEditorDraft(){
         seed();ui.onNodeWithTag("config-edit-${chat.id}").performClick()
         ui.onNodeWithTag("config-name").performTextReplacement("切页不应丢失的编辑草稿")
         ui.onRoot().performTouchInput{swipeLeft()}
         ui.onNodeWithTag("config-name").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText,androidx.compose.ui.text.AnnotatedString("切页不应丢失的编辑草稿")))
-        ui.onNodeWithTag("config-tab-purposes").assertDoesNotExist()
+        ui.onNodeWithTag("config-open-purposes").assertDoesNotExist()
         ui.activityRule.scenario.onActivity{it.getSystemService(android.view.inputmethod.InputMethodManager::class.java).hideSoftInputFromWindow(it.window.decorView.windowToken,0)}
         ui.waitForIdle();android.os.SystemClock.sleep(300)
-        back();ui.onNodeWithTag("config-tab-services").assertIsSelected();assertEquals(chat,vault.list().single{it.id==chat.id})
+        back();ui.onNodeWithTag("config-tab-chat").assertIsSelected();assertEquals(chat,vault.list().single{it.id==chat.id})
     }
     @Test fun emptyTabsKeepBothTextAddEntrancesAndNativeTabSemantics(){
         ui.onNodeWithTag("config-services-empty").assertIsDisplayed()
         ui.onNodeWithTag("config-add-top").assertDoesNotExist()
         ui.onNodeWithTag("purpose-select-chat").assertDoesNotExist()
-        for(tag in listOf("config-tab-services","config-tab-purposes")){
+        for(tag in listOf("config-tab-chat","config-tab-embedding","config-tab-voice","config-tab-image")){
             ui.onNodeWithTag(tag).assert(SemanticsMatcher.expectValue(SemanticsProperties.Role,Role.Tab)).assertHeightIsAtLeast(48.dp)
         }
-        ui.onNodeWithTag("config-add").performScrollTo().assertTextEquals("添加服务商").assertHeightIsAtLeast(48.dp).performClick()
+        ui.onNodeWithTag("config-add-chat").performScrollTo().assertTextEquals("+ 添加聊天服务商").assertHeightIsAtLeast(48.dp).performClick()
         ui.onNodeWithTag("provider-search").assertIsDisplayed();back()
-        ui.onNodeWithTag("config-tab-services").assertIsSelected()
-        ui.onNodeWithTag("config-add-embedding").performScrollTo().assertTextEquals("添加向量模型").performClick()
+        ui.onNodeWithTag("config-tab-chat").assertIsSelected()
+        ui.onNodeWithTag("config-tab-embedding").performClick();ui.onNodeWithTag("config-add-embedding").performScrollTo().assertTextEquals("+ 添加向量服务商").performClick()
         ui.onNodeWithText("选择向量服务商").assertIsDisplayed();back()
-        purposes();ui.onNodeWithTag("config-add").assertDoesNotExist();ui.onNodeWithTag("config-services-empty").assertDoesNotExist()
+        purposes();ui.onNodeWithTag("config-add-chat").assertDoesNotExist();ui.onNodeWithTag("config-services-empty").assertDoesNotExist()
         ui.onNodeWithTag("purpose-select-chat").assertExists()
         ui.onNodeWithTag("purpose-help-embedding").performClick()
         ui.activityRule.scenario.onActivity{it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE}
         ui.waitUntil(15000){ui.activity.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE}
-        ui.onNodeWithTag("config-tab-purposes").assertIsSelected()
+        ui.onNodeWithTag("purpose-select-review").assertExists()
         // Rotation recreates the transient dialog; its entry remains accessible on the same tab.
         ui.onNodeWithTag("purpose-help-embedding").performScrollTo().performClick()
         ui.onNodeWithText("所有角色共用用途选择，不设角色单独覆盖。先在“服务商”页添加并保存配置，再选择对应模型。保存配置和选择用途只保存设置，不发出请求。").performScrollTo().assertIsDisplayed()
@@ -134,14 +129,14 @@ class ModelConfigTabsUiTest {
         ui.activityRule.scenario.onActivity{it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}
         ui.waitUntil(15000){ui.activity.resources.configuration.orientation==Configuration.ORIENTATION_PORTRAIT}
         ui.onNodeWithTag("purpose-help-chat").performScrollTo().assertContentDescriptionEquals("聊天说明").assertWidthIsEqualTo(48.dp).assertHeightIsEqualTo(48.dp).performClick()
-        ui.onNodeWithText("发送文字和已开启的后台评估使用所选聊天模型。").assertIsDisplayed()
+        ui.onNodeWithText("聊天时使用这个模型；未单独选择回顾模型时，心情与学习回顾也用它。").assertIsDisplayed()
         ui.onNodeWithTag("purpose-clear-chat").assertDoesNotExist()
         ui.onNodeWithTag("purpose-help-close").performClick()
         ui.onNodeWithTag("purpose-help-memory").performScrollTo().performClick()
         ui.onNodeWithText("主动总结记忆使用所选总结记忆模型；未选择时沿用聊天模型。").assertIsDisplayed()
         ui.onNodeWithTag("purpose-help-close").performClick()
         ui.onNodeWithTag("auxiliary-vision-switch",useUnmergedTree=true).assertDoesNotExist()
-        back();ui.onNodeWithTag("settings-toolbox").performScrollTo().performClick();ui.onNodeWithTag("tool-card-image").performClick()
+        back();back();ui.onNodeWithTag("settings-toolbox").performScrollTo().performClick();ui.onNodeWithTag("tool-card-image").performClick()
         ui.onNodeWithTag("purpose-help-aux-vision").performScrollTo().performClick()
         ui.onNodeWithText("辅助看图开启时，所选辅助模型接收图片并提供观察，聊天模型接收观察与文字；关闭时图片直接发给所选聊天模型。不检测模型能力，不自动换模型或回退。图片只在发送时上传。").assertIsDisplayed()
         back();back();back();ui.onNodeWithTag("settings-home").assertIsDisplayed()
@@ -149,27 +144,27 @@ class ModelConfigTabsUiTest {
     @Test fun savedModelsPurposesAndTabSurviveRotationAndNavigation(){
         seed()
         ui.onNodeWithTag("config-edit-${chat.id}").assertIsDisplayed()
-        ui.onNodeWithTag("config-add").performScrollTo().performClick();ui.onNodeWithTag("provider-search").assertIsDisplayed();back()
+        ui.onNodeWithTag("config-add-chat").performScrollTo().performClick();ui.onNodeWithTag("provider-search").assertIsDisplayed();back()
         purposes()
         ui.onNodeWithTag("config-edit-${chat.id}").assertDoesNotExist()
         ui.onNodeWithTag("purpose-select-chat").assertTextContains(chat.modelId,substring=true)
         ui.activityRule.scenario.onActivity{it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE}
         ui.waitUntil(15000){ui.activity.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE}
-        ui.onNodeWithTag("config-tab-purposes").assertIsSelected()
+        ui.onNodeWithTag("purpose-select-review").assertExists()
         ui.onNodeWithTag("purpose-select-chat").assertExists()
         ui.activityRule.scenario.onActivity{it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}
         ui.waitUntil(15000){ui.activity.resources.configuration.orientation==Configuration.ORIENTATION_PORTRAIT}
-        ui.onNodeWithTag("config-tab-purposes").assertIsSelected()
+        ui.onNodeWithTag("purpose-select-review").assertExists()
         services();purposes()
         ModelPurpose.entries.filter{it!=ModelPurpose.AUX_VISION}.forEach{purpose->
             ui.onNodeWithTag("purpose-select-${purpose.key}").performScrollTo().assertTextContains(if(purpose==ModelPurpose.EMBEDDING)embedding.modelId else chat.modelId,substring=true)
         }
         assertEquals(listOf(chat,embedding).toSet(),vault.list().toSet())
         ui.onNodeWithTag("purpose-select-aux-vision").assertDoesNotExist()
-        back();ui.onNodeWithTag("settings-home").assertIsDisplayed()
+        back();back();ui.onNodeWithTag("settings-home").assertIsDisplayed()
         ui.onNodeWithTag("settings-toolbox").performScrollTo().performClick();ui.onNodeWithTag("tool-card-image").performClick()
         ui.onNodeWithTag("purpose-select-aux-vision").assertTextContains(chat.modelId,substring=true);back();back()
-        ui.onNodeWithTag("settings-models").performClick();ui.onNodeWithTag("config-tab-services").assertIsSelected()
+        ui.onNodeWithTag("settings-models").performClick();ui.onNodeWithTag("config-tab-chat").assertIsSelected()
         assertEquals(chat.id,vault.purposeId(ModelPurpose.CHAT));assertEquals(embedding.id,vault.purposeId(ModelPurpose.EMBEDDING))
     }
     @Test fun purposeSelectionStillPersistsAndClearsWithoutNetwork(){
@@ -204,9 +199,9 @@ class ModelConfigTabsUiTest {
                 services();ui.onNodeWithTag("model-tabs-viewport").assertWidthIsEqualTo(dp.dp)
                 if(saved)ui.onNodeWithTag("config-edit-${chat.id}").performScrollTo().assertIsDisplayed() else ui.onNodeWithTag("config-services-empty").assertIsDisplayed()
                 shot("services",saved)
-                ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-add"))
-                ui.onNodeWithTag("config-add").assertIsDisplayed()
-                ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-add-embedding"))
+                ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-add-chat"))
+                ui.onNodeWithTag("config-add-chat").assertIsDisplayed()
+                ui.onNodeWithTag("config-tab-embedding").performClick();ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-add-embedding"))
                 ui.onNodeWithTag("config-add-embedding").assertIsDisplayed()
                 purposes();ui.onNodeWithTag("purpose-select-embedding").performScrollTo().assertIsDisplayed();shot("purposes",saved)
                 ui.onNodeWithTag("auxiliary-vision-switch",useUnmergedTree=true).assertDoesNotExist()

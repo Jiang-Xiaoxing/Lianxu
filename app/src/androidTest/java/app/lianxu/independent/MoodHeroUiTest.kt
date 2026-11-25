@@ -21,10 +21,13 @@ class MoodHeroUiTest {
         ui.setContent {
             LianxuTheme(dark) {
                 Box(Modifier.fillMaxSize().background(Chrome)){
-                    MoodHero(RelationshipView(RelationTemplate.STEADY,RelationStart.NEW,emptyList(),current,""),{}){}
+                    MoodHero(RelationshipView(RelationTemplate.STEADY,RelationStart.NEW,emptyList(),current,"")){}
                 }
             }
         }
+        ui.onNodeWithText("换").assertDoesNotExist()
+        ui.onNodeWithText(RelationTemplate.STEADY.label, substring = true).assertDoesNotExist()
+        ui.onNodeWithText(RelationshipSummary.trust(base.trust) + " · " + RelationshipSummary.closeness(base.closeness)).assertExists()
         for(night in listOf(false,true)){
             ui.runOnIdle{dark=night}
             val samples=mutableSetOf<Int>()

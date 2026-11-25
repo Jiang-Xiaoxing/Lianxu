@@ -64,7 +64,10 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
     onInitialHandled:()->Unit={},
 ) {
     LaunchedEffect(state.vaultVersion){state.refresh()}
-    var screen by remember {mutableStateOf("overview")}
+    // The purposes page has no draft. Editor/provider routes need their transient configuration.
+    var screen by rememberSaveable(stateSaver = androidx.compose.runtime.saveable.Saver<String, String>(
+        save = { if (it == "purposes") it else "overview" }, restore = { it }
+    )) { mutableStateOf("overview") }
     var openedDirectlyToEdit by remember {mutableStateOf(false)}
     SideEffect { ProcessDiagnostics.view(when(screen) {
         "edit" -> "model-editor"; "providers" -> "model-providers"; "voice-studio" -> "voice-studio"; else -> "models"
@@ -493,7 +496,7 @@ private fun ModelAdvancedSettings(expanded: Boolean, onToggle: () -> Unit, conte
 
 /** 卡片最下面那一行「+ 添加…」。 */
 @Composable private fun AddServiceRow(label:String,tag:String,onClick:()->Unit){
-    Row(Modifier.fillMaxWidth().heightIn(min=44.dp).clickable(role=Role.Button,onClick=onClick)
+    Row(Modifier.fillMaxWidth().heightIn(min=UiSpace.action).clickable(role=Role.Button,onClick=onClick)
         .testTag(tag).padding(horizontal=16.dp,vertical=10.dp),verticalAlignment=Alignment.CenterVertically){
         Text(label,style=MaterialTheme.typography.bodyMedium,color=ConfigGreen)
     }

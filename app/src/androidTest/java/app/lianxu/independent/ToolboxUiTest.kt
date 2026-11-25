@@ -35,7 +35,7 @@ class ToolboxUiTest {
         ui.waitUntil(10000){ui.onAllNodesWithTag("quiet-enabled").fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithTag("quiet-enabled").performScrollTo().assertIsOn().performClick()
         ui.waitUntil(5000){!runBlocking{vm.quietHours()}.enabled}
-        ui.onNodeWithTag("quiet-start").assertDoesNotExist()
+        ui.waitUntil(10000){ui.onAllNodesWithTag("quiet-start").fetchSemanticsNodes().isEmpty()}
         ui.onNodeWithTag("toolbox-contact-seed-lin").performScrollTo().performClick()
         ui.waitUntil(10000){ui.onAllNodesWithTag("contact-battery-settings").fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithText("已关闭",substring=false).assertExists();shot("phase3-role")

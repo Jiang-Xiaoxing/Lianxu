@@ -82,8 +82,7 @@ class CompanionWorker(context:Context,params:WorkerParameters):CoroutineWorker(c
                     secret=credential.key
                     val history=repo.contactHistory(o.role);val recent=ProactiveMaterial.recent(history)
                     val query=ProactiveMaterial.ownReason(o).ifBlank{recent.takeLast(4).joinToString("\n"){it.text}}
-                    val semantic=CompanionVectorIndex(repo,access).scores(o.role,query)
-                    val snapshot=repo.snapshot(o.role,query,semantic,(credential.config.contextTokens-credential.config.outputTokens).coerceAtLeast(0))
+                    val snapshot=repo.snapshot(o.role,query,tokenBudget=(credential.config.contextTokens-credential.config.outputTokens).coerceAtLeast(0))
                     if(!access.current(ModelPurpose.CHAT,credential.stamp))return@withLock
                     if(!repo.current(o,CompanionRuntime.owner)){recover=true;return@withLock}
                     val factsNow=AppServices.companionClock()

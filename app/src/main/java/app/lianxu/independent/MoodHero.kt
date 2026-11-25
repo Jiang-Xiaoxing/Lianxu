@@ -36,7 +36,7 @@ internal fun moodSky(s:RelationState):MoodSky {
     }
 }
 
-@Composable internal fun MoodHero(view:RelationshipView, template:()->Unit, correct:(SourceRef)->Unit) {
+@Composable internal fun MoodHero(view:RelationshipView, correct:(SourceRef)->Unit) {
     val sky=if(view.attributionIncomplete)MoodSky.CALM else moodSky(view.state)
     val morning=Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
     val period=when(morning){in 5..10->"清晨";in 11..16->"午后";in 17..19->"薄暮";else->"夜间"}
@@ -66,10 +66,10 @@ internal fun moodSky(s:RelationState):MoodSky {
                 sky==MoodSky.MISSING->RelationshipSummary.degree(view.state.missing)+"想你"
                 else->"心里"+RelationshipSummary.mood(view.state).sentence
             },fontFamily=FontFamily.Serif,fontSize=26.sp,color=ink)
-            Row(verticalAlignment=Alignment.CenterVertically) {
-                Text(listOfNotNull(RelationshipSummary.trust(view.state.trust).takeUnless{view.attributionIncomplete},
-                    RelationshipSummary.closeness(view.state.closeness).takeUnless{view.attributionIncomplete},view.label).joinToString(" · "),Modifier.weight(1f,false),color=Muted,style=MaterialTheme.typography.bodySmall)
-                TextButton(template){Text("换",color=GreenText)}
+            if (!view.attributionIncomplete) {
+                val summary = listOf(RelationshipSummary.trust(view.state.trust), RelationshipSummary.closeness(view.state.closeness))
+                    .filter { it.isNotBlank() }.joinToString(" · ")
+                if (summary.isNotEmpty()) Text(summary, color = Muted, style = MaterialTheme.typography.bodySmall)
             }
             val visibleNote=view.innerNote?.takeUnless{view.attributionIncomplete}
             val savedNote=remember{mutableStateOf(visibleNote)}

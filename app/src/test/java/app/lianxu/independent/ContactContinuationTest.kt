@@ -11,8 +11,10 @@ class ContactContinuationTest {
         val definition=ImmediateContact.definition(1,now).toString()
         val record=CompanionRecord.definition(1,false).toString()
         val ref=SourceRef("a",1,1);val context=RoleContext("a",ref,mapOf(1L to ref),emptyList(),emptyList(),emptyList(),emptyList())
+        assertFalse(record.contains("改主动参数"))
+        assertFalse(definition.contains("改主动参数"))
         for(key in listOf("silenceDays","resendDays","resendCount","dailyMax")){
-            assertFalse(definition.contains(key));assertFalse(record.contains(key));assertFalse(RelationParameterContract.instruction.contains(key))
+            assertFalse(definition.contains(key));assertFalse(record.contains(key))
             val raw="""{"改主动参数":{"消息":"1","参数":{"$key":3},"她的话":"等你确认"}}"""
             assertTrue(runCatching{ImmediateContact.parse(raw,"更改频率",context,now)}.isFailure)
         }

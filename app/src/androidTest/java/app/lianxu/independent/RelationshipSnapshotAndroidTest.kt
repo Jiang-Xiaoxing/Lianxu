@@ -53,7 +53,7 @@ class RelationshipSnapshotAndroidTest {
         }
         old.writableDatabase;old.close()
         Store(context,name).use{store->
-            assertEquals(16,store.writableDatabase.version)
+            assertEquals(21,store.writableDatabase.version)
             assertEquals("保留简介",store.friends().single().bio)
             assertTrue(store.readableDatabase.rawQuery("SELECT value FROM preferences WHERE key='preserve-test'",null).use{it.moveToFirst()&&it.getString(0)=="保留配置"})
             val core=CompanionRepository(store);seed(store,core,System.currentTimeMillis()-day)
