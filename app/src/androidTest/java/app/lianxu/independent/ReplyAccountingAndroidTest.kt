@@ -63,6 +63,29 @@ class ReplyAccountingAndroidTest {
         assertFalse(access.reviewCurrent(explicit.stamp));assertEquals("fake",access.reviewCredential()?.config?.id)
     }
 
+    @Test fun factOnlyReviewHeatFollowsTheValidMessageAcrossEditsWithdrawalAndForgetting()=runBlocking {
+        repo.saveMemoryRules(MemoryRules(reviewRounds=1))
+        suspend fun review(turn:ChatTurn,phase:String,id:String,content:String){
+            val source=turn.userMessageId
+            val response="""{"records":[{"source":$source,"record":{"备注":"附注","learning":{"phase":"$phase","id":"$id","kind":"interest","scope":"读书","content":"$content","evidence":[{"source":$source,"layer":"fact"}]}}}]}"""
+            assertTrue(processor{TextChatResult.Success(response)}.drain("a"))
+        }
+        review(closed(text="想看这本书"),"propose","","偶尔一起读")
+        val original=core.learningRecords("a").single().state
+        for(mode in listOf("edit","retract","forget")){
+            val turn=closed(text="今天又聊到了这本书")
+            review(turn,"revise",original.id,"想继续一起读")
+            val revised=core.learningRecords("a").single().state
+            assertEquals(60.0,revised.temperature.anchor,.1);assertEquals(28,revised.temperature.days)
+            when(mode){
+                "forget"->core.forget("a",turn.userMessageId)
+                else->SourceChanges(repo).run{confirm(preview("a",turn.userMessageId,"user","聊的是另外一本",mode=="retract"))}
+            }
+            val restored=core.learningRecords("a").single().state
+            assertEquals(original.content,restored.content);assertEquals(original.temperature,restored.temperature)
+        }
+    }
+
     @Test fun noteOnlyReviewKeepsTheRelationshipEventAcceptedDuringChat()=runBlocking {
         repo.saveMemoryRules(MemoryRules(reviewRounds=1))
         val ledger=ChatLedger(store)

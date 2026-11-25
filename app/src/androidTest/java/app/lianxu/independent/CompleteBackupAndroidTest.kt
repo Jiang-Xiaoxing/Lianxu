@@ -42,6 +42,38 @@ class CompleteBackupAndroidTest {
     private fun pw()="合成备份密码-synthetic-0123456789".toCharArray()
     private fun pack(export:BackupRepository.Export):BackupArchive.Package=BackupArchive.read(ByteArrayOutputStream().also{BackupArchive.write(export.root,export.files,it)}.toByteArray().inputStream())
     private suspend fun roundTrip(target:Fixture,all:Boolean=false,keys:Boolean=false):List<String>{val p=pack(f.backup.export(if(all)null else "a",keys,if(keys)pw()else null));return target.backup.commit(target.backup.preview(p,if(all)"REPLACE"else"ADD"),all,password=if(keys)pw()else null)}
+    @Test fun learningControlsAndDisputedNoteTravelWithRoleAndFullBackup()=runBlocking{
+        val seed=LearningRecordsFixture(f.store)
+        seed.now=System.currentTimeMillis()
+        val turn=seed.proposeHabit()
+        val learning=seed.core.learningRecords("a").single().state
+        seed.core.controlLearning("a",learning.id,"pin")
+        seed.core.controlLearning("a",learning.id,"pause")
+        val ref=learning.source
+        assertEquals(turn.userMessageId,ref.turnId)
+        f.repo.tx{db->
+            val proposal=JsonParser.parseString(db.rawQuery("SELECT proposal FROM companion_sources WHERE role=? AND source_id=?",arrayOf("a",ref.turnId.toString())).use{it.moveToFirst();it.getString(0)}).asJsonObject
+            proposal.add("innerNote",Gson().toJsonTree(ReviewInnerNote("想一起读完这本书",seed.now)))
+            db.execSQL("UPDATE companion_sources SET proposal=? WHERE role=? AND source_id=?",arrayOf<Any>(proposal.toString(),"a",ref.turnId))
+        }
+        assertTrue(seed.core.correctInnerNote(ref))
+        for(all in listOf(false,true)){
+            val target=fixture()
+            val ids=roundTrip(target,all)
+            val id=if(all)ids.first{restored->target.store.friends().first{it.id==restored}.name=="合成甲"} else ids.single()
+            val core=CompanionRepository(target.store){seed.now}
+            val restored=core.learningRecords(id).single().state
+            assertTrue(restored.pinned);assertEquals("paused",restored.state);assertEquals("chat",restored.origin)
+            assertNull(core.relationship(id).innerNote)
+            val record=target.repo.read{db->db.rawQuery("SELECT proposal FROM companion_sources WHERE role=? AND source_id=?",arrayOf(id,restored.source.turnId.toString())).use{it.moveToFirst();Gson().fromJson(it.getString(0),ExperienceProposal::class.java)}}
+            assertTrue(requireNotNull(record.innerNote).disputed)
+            core.controlLearning(id,restored.id,"resume")
+            assertEquals("已记牢",core.learningRecords(id).single().state.familiarity)
+            core.forget(id,restored.source.turnId);assertTrue(core.learningRecords(id).isEmpty())
+            target.backup.deleteRole(target.backup.previewRoleDeletion(id),true)
+            assertEquals("",target.store.preference(LearningControls.key(id),""))
+        }
+    }
     @Test fun completeRoleRoundTripPreservesSourcesExamplesAssociationsAssets()=runBlocking{
         val other=fixture();val id=roundTrip(other).single();val memories=other.repo.memories(id);assertEquals(2,memories.size);assertTrue(memories.all{it.friendId==id&&it.evidence.all{e->e.source.characterId==id}})
         assertEquals(listOf("avatar.png","attachments/note.bin").sorted(),RoleAssets(other.repo).list(id).map{it.path}.sorted());assertArrayEquals(byteArrayOf(1,2,3,4),RoleAssets(other.repo).list(id).first{it.kind=="avatar"}.bytes)

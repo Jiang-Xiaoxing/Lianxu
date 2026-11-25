@@ -22,11 +22,58 @@ class RoleUnderstandingTest {
         val second=flow(3,RoleLearning("candidate",kind,"共同解题","在新的共同结果后，我对共同解题更有兴趣","revise",evidence),relation,certain)
         return listOf(RoleEntry(ref(1),first,action(1,first)),RoleEntry(ref(3),second,action(3,second)))
     }
+    @Test fun retiredLearningCannotReenterModelMaterialThroughOldEntries(){
+        val rows=entries()
+        val learning=RoleLearningProjector.project(rows).single()
+        val context=RoleContext("a",ref(5),rows.associate{it.source.turnId to it.source},rows,rows.mapNotNull{it.action},listOf(learning),emptyList())
+        for(value in listOf(context.copy(learning=listOf(learning.copy(state="faded"))),
+            context.copy(learning=emptyList(),learningControls=mapOf(learning.id to LearningControl(deleted=true))),
+            context.copy(learning=listOf(learning.copy(state="paused")),learningControls=mapOf(learning.id to LearningControl(paused=true))))){
+            val visible=value.visibleLearning()
+            assertTrue(visible.learning.isEmpty());assertTrue(visible.entries.all{it.flow.learning==null})
+            assertFalse(visible.prompt().contains(learning.content))
+        }
+    }
+    @Test fun groundedFeedbackRaisesHeatOncePerActualAction(){
+        val prior=entries(kind="habit")
+        val change=prior.last().flow.copy(usedLearningIds=listOf("candidate"),consideredLearningIds=listOf("candidate"))
+        val revised=prior.dropLast(1)+RoleEntry(ref(3),change,action(3,change),at=100)
+        val feedback=flow(5,feedback=listOf(RoleFeedback(4,"helpful","这次很有帮助")))
+        val evidence=revised+RoleEntry(ref(5),feedback,null,at=100)+RoleEntry(ref(7),feedback,null,at=100)
+        val item=RoleLearningProjector.project(evidence).single()
+        assertEquals(setOf(2L,4L),item.supportingResults);assertEquals(85.0,item.temperature.anchor,0.001)
+        assertEquals(56,item.temperature.days)
+    }
     @Test fun groundedInterestCanEvolveWithoutAnyApprovalOrPositiveFeedback(){
         val result=RoleLearningProjector.project(entries()).single()
         assertEquals("active",result.state);assertEquals(2,result.version);assertTrue(result.content.contains("更有兴趣"));assertEquals(setOf(2L),result.supportingResults)
     }
-    @Test fun lightLearningRevisionNeedsTheActualActionAndANewResultFromThisTurn(){
+    @Test fun lightRevisionUsesOnlyTheCurrentUserFactAndCountsEachMessageOnce(){
+        val prior=entries().first().copy(at=1000)
+        fun revise(previous:List<RoleEntry>,id:Long,evidence:Long=id,nullQuote:Boolean=false):RoleEntry {
+            val current=ref(id)
+            val known=(previous.map{it.source}+current).associateBy{it.turnId}
+            val view=RoleContext("a",current,known,previous,emptyList(),RoleLearningProjector.project(previous),emptyList())
+            val wire="""{"learning":{"id":"candidate","kind":"interest","scope":"共同解题","content":"想接着解题","phase":"revise","evidence":[{"source":$evidence,"layer":"fact"}]}}"""
+            val payload=com.google.gson.JsonParser.parseString(wire).asJsonObject
+            if(nullQuote)payload["learning"].asJsonObject.add("resultQuote",com.google.gson.JsonNull.INSTANCE)
+            val flow=RoleUnderstandingContract.parse(payload.toString(),"今天又解开了一题",ExperienceProposal(),view,1000,false,lenient=true,learningOnly=true){_,_->}
+            RoleUnderstandingContract.validateAccepted(flow,view,"今天又解开了一题")
+            return RoleEntry(current,flow,null,at=1000)
+        }
+        val second=revise(listOf(prior),3)
+        val rows=listOf(prior,second,second)
+        val once=RoleLearningProjector.project(rows).single()
+        assertEquals(60.0,once.temperature.anchor,0.0);assertEquals(28,once.temperature.days);assertEquals(2,once.version)
+        val after=RoleLearningProjector.project(rows+revise(listOf(prior,second),5,nullQuote=true)).single()
+        assertEquals(85.0,after.temperature.anchor,0.0);assertEquals(56,after.temperature.days)
+        assertNull(revise(listOf(prior),3,evidence=1).flow.learning)
+        assertNull(revise(listOf(prior),3,evidence=99).flow.learning)
+        assertTrue(RoleLearningProjector.project(listOf(second)).isEmpty())
+        assertEquals(35.0,RoleLearningProjector.project(listOf(prior)).single().temperature.anchor,0.0)
+    }
+
+    @Test fun lightRevisionStillChecksAnOptionalActionAndExactQuote(){
         val prior=entries().first()
         val source=ref(3)
         val view=RoleContext("a",source,mapOf(1L to ref(1),3L to source),listOf(prior),listOf(prior.action!!),

@@ -1,6 +1,7 @@
 package app.lianxu.independent
 
 import com.google.gson.Gson
+import com.google.gson.JsonNull
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 
@@ -16,7 +17,7 @@ internal class ReviewBatchModel(private val client:TextChatClient) {
             道歉和好填“指向之前”:{消息:旧编号,方式:道歉和好}。解释填“解释”:{事件:旧编号,判断:真误会/有原因,类别:工作忙/身体不舒服/忘了/家里有事/其他}。
             已经弥补才填“修复心结”:旧编号、“弥补已完成”:true。旧编号只能选材料中有效且适用的原话，没有就省略。假设、转述、回忆不算新的互动。
             ${if(allowInnerNote) "整批最多在一行 record 内附 innerNote，一句自己心里的话，30字以内。该行用户原话就是依据，没有就省略。" else "本批还有后续内容，本段省略 innerNote。"}
-            确有新看法或习惯时可附 learning:{id,kind:viewpoint/interest/habit,scope,content,phase:propose/revise/pause,evidence:[{source:编号,layer:"fact"}]}。新提议 id 填空，修订/暂停沿用已有 id 和范围。若本轮确实说出了先前行动的新结果，修订时用 resultQuote 摘录本轮原话，并引用本轮 fact 和已有行动 {source:当时用户消息编号,layer:"action",message:实际回复编号}。
+            确有新看法或习惯时可附 learning:{id,kind:viewpoint/interest/habit,scope,content,phase:propose/revise/pause,evidence:[{source:编号,layer:"fact"}]}。新提议 id 填空，修订/暂停沿用已有 id 和范围。本轮让你修正或印证已有学习时，用 revise，依据填本轮用户消息编号和 fact 即可。
             不继续聊天，不重复写经历。即时控制与联系安排不得执行或重新安排。
         """.trimIndent()
         val data=Gson().toJson(items.map{mapOf("source" to it.source.turnId,"version" to it.source.version,"发生时间" to ExperiencePresentation.at(it.at,now),"用户原话" to it.input,"已发回复编号" to it.turn.assistantMessageId,"已实际说过的正文" to it.spoken)})
@@ -37,23 +38,40 @@ internal class ReviewBatchModel(private val client:TextChatClient) {
             val light=record!=null && !record.has("experience")
             return if(light && record?.get("关系输入")?.takeUnless{it.isJsonNull}==null) cached else parsed
         }
+        private val lightFields=setOf("关系输入","innerNote","learning")
+
+        private fun ignoreNote(reason:String) {
+            Diagnostics.event("review.inner_note.ignored",mapOf("reason" to reason))
+        }
+
+        private fun cleanNote(raw:String):String? {
+            val text=raw.filterNot{it.isISOControl() || it=='\u2028' || it=='\u2029'}.trim()
+            if(text.isEmpty())return null
+            return when(text.codePointCount(0,text.length)){
+                in 1..30 -> text
+                in 31..80 -> text.substring(0,text.offsetByCodePoints(0,29))+"…"
+                else -> {ignoreNote("too_long");null}
+            }
+        }
+
         fun parse(raw:String,items:List<ReplyAccountingQueue.Item>,now:Long,allowInnerNote:Boolean=true):Map<Long,JsonObject?> {
             val rows=JsonParser.parseString(raw).asJsonObject.get("records")?.takeIf{it.isJsonArray}?.asJsonArray
             require(rows!=null){"BATCH_RECORDS_REQUIRED"}
             require(rows.size()==items.size){"BATCH_COVERAGE"}
-            var notes=0
+            var lastNote:JsonObject?=null
             return items.zip(rows).associate{(item,value)->
                 val row=value.asJsonObject;require(row.get("source").asBigDecimal.longValueExact()==item.source.turnId){"BATCH_SOURCE_ORDER"}
                 require(row.has("record")){"BATCH_RECORD_REQUIRED"}
                 val record=row.get("record").takeUnless{it.isJsonNull}?.asJsonObject
                 if(record!=null){
-                    if(record.has("experience")) {
+                    require((!record.has("future") || record["future"].isJsonNull) && !record.has("改主动参数")){"IMMEDIATE_ACTION_NOT_ALLOWED_IN_REVIEW"}
+                    if(record["experience"]?.isJsonObject==true) {
                         JointExperience.parse(record,item.input,now)
                         require(record.has("关系输入")){"RELATION_INPUT_MISSING"}
                     }
                     else {
-                        require(record.keySet().all{it in setOf("关系输入","innerNote","learning")} && record.size()>0){"INVALID_REVIEW_FIELDS"}
-                        if(record.entrySet().all{it.value.isJsonNull})return@associate item.source.turnId to null
+                        require(record.keySet().any{it in lightFields}){"INVALID_REVIEW_FIELDS"}
+                        record.keySet().retainAll(lightFields)
                         record.get("关系输入")?.takeUnless{it.isJsonNull}?.let{event->
                             require(event.isJsonObject)
                             val normalized=RelationInputContract.reviewEvent(event.asJsonObject,item.source)
@@ -61,13 +79,19 @@ internal class ReviewBatchModel(private val client:TextChatClient) {
                         }
                     }
                     record.get("innerNote")?.takeUnless{it.isJsonNull}?.let{note->
-                        require(note.isJsonPrimitive && note.asJsonPrimitive.isString && ReviewInnerNote.validText(note.asString)){"INVALID_INNER_NOTE"}
-                        require(allowInnerNote && ++notes<=1){"ONE_INNER_NOTE_PER_BATCH"}
+                        val clean=if(allowInnerNote){
+                            require(note.isJsonPrimitive && note.asJsonPrimitive.isString){"INVALID_INNER_NOTE"}
+                            cleanNote(note.asString)
+                        }else{ignoreNote("non_final_segment");null}
+                        record.addProperty("innerNote",clean)
+                        if(clean!=null){
+                            lastNote?.let{it.add("innerNote",JsonNull.INSTANCE);ignoreNote("superseded")}
+                            lastNote=record
+                        }
                     }
-                    require((!record.has("future")||record.get("future").isJsonNull)&&!record.has("改主动参数")){"IMMEDIATE_ACTION_NOT_ALLOWED_IN_REVIEW"}
                 }
                 item.source.turnId to record
-            }
+            }.mapValues{(_,record)->record?.takeIf{it.entrySet().any{field->!field.value.isJsonNull}}}
         }
     }
 }

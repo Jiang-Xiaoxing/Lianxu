@@ -19,14 +19,12 @@ class RelationshipUiAndroidTest {
         ui.waitUntil(10000){ui.onAllNodesWithTag("relationship-tab-0").fetchSemanticsNodes().isNotEmpty()}
         val before=runBlocking{vm.companion.relationshipAudit("seed-lin")}
         fun selected(index:Int){ui.onNodeWithTag("relationship-tab-$index").assertIsDisplayed();(0..2).filter{it!=index}.forEach{ui.onNodeWithTag("relationship-tab-$it").assertDoesNotExist()}}
-        ui.capturePagerDrag("relationship")
-        selected(0);swipeTab(false);selected(0);swipeTab(true);selected(1);shot("swipe-knots");swipeTab(true);selected(2);swipeTab(true);selected(2);shot("swipe-promises")
-        repeat(3){swipeTab(false);selected(1);ui.onNodeWithTag("relationship-tab-button-0").performClick();selected(0);ui.onNodeWithTag("relationship-tab-button-2").performClick();selected(2)}
-        ui.onNodeWithTag("relationship-tab-button-0").performClick()
-        ui.onNodeWithTag("relationship-page").performTouchInput{swipe(Offset(width-1f,height*.65f),Offset(width*.3f,height*.65f),400)};selected(0)
-        ui.onNodeWithTag("relationship-tab-button-2").performClick()
-        ui.onNodeWithTag("relationship-page").performTouchInput{swipe(Offset(1f,height*.65f),Offset(width*.7f,height*.65f),400)};selected(2)
-        ui.onNodeWithTag("relationship-page").performTouchInput{swipeUp()};selected(2)
+        selected(0)
+        for(index in listOf(1,2,0)){ui.onNodeWithTag("relationship-tab-button-$index").performClick();selected(index)}
+        swipeTab(true);ui.onNodeWithTag("inner-tab-1").assertIsSelected()
+        ui.onNodeWithTag("learning-page").performTouchInput{swipe(Offset(width*.80f,height*.8f),Offset(width*.20f,height*.8f),380)}
+        ui.onNodeWithTag("inner-tab-2").assertIsSelected()
+        ui.onNodeWithTag("inner-tab-0").performClick();selected(0)
         assertEquals(before,runBlocking{vm.companion.relationshipAudit("seed-lin")})
     }
     @Test fun scrollingLongDetailAndSwitchingRoleKeepContentAndRoleIsolation(){
@@ -41,7 +39,7 @@ class RelationshipUiAndroidTest {
         val range=scroller.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange];assertTrue(range.maxValue()>0&&range.value()>0)
         shot("swipe-long-detail-scrolled")
         androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
-        ui.onNodeWithTag("relationship-tab-0").assertIsDisplayed();swipeTab(true);ui.onNodeWithTag("relationship-tab-1").assertIsDisplayed()
+        ui.onNodeWithTag("relationship-tab-0").assertIsDisplayed();ui.onNodeWithTag("relationship-tab-button-1").performClick();ui.onNodeWithTag("relationship-tab-1").assertIsDisplayed()
         ui.runOnIdle{vm.open("role-relationship","seed-an")};ui.waitUntil(10000){ui.onAllNodesWithTag("relationship-tab-0").fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithTag("relationship-tab-0").assertIsDisplayed();ui.onNodeWithText("还没有让她感觉变了的事").assertIsDisplayed()
         ui.runOnIdle{vm.open("role-relationship","seed-lin")};ui.waitUntil(10000){ui.onAllNodesWithTag("relationship-all").fetchSemanticsNodes().isNotEmpty()};shot("swipe-moments-role-returned")
@@ -79,6 +77,22 @@ class RelationshipUiAndroidTest {
             vm.refreshProcessing()
         }
     }
+    @Test fun disputingANoteWithNoRelationshipEventClearsPaperAndPrompt(){
+        seed()
+        val core=vm.companion
+        runBlocking{
+            val ledger=ChatLedger(vm.processing.store)
+            val t=ledger.begin("seed-lin","还想再见面","synthetic");val snap=core.snapshot("seed-lin")
+            val p=ExperienceProposal(innerNote=ReviewInnerNote("下次还想见他",System.currentTimeMillis()))
+            assertTrue(core.accept(t,p,snap){true});assertTrue(ledger.finish(t.id,1,"我也想"))
+            vm.processing.tx{core.finish(it,t,snap,p)}
+            vm.refreshProcessing()
+        }
+        ui.runOnIdle{vm.open("role-relationship","seed-lin")}
+        await("下次还想见他");ui.onNodeWithTag("inner-note-correct").performScrollTo().performClick()
+        ui.waitUntil(10000){ui.onAllNodesWithTag("mood-inner-note").fetchSemanticsNodes().isEmpty()}
+        runBlocking{val view=core.relationship("seed-lin");assertNull(view.innerNote);assertFalse(view.modelMaterial.contains("下次还想见他"))}
+    }
     private fun enrich()=runBlocking {
         val core=vm.companion;val ledger=ChatLedger(vm.processing.store)
         suspend fun row(text:String,make:(SourceRef,Long)->RelationInput):SourceRef {
@@ -92,7 +106,7 @@ class RelationshipUiAndroidTest {
         vm.refreshProcessing()
     }
     private fun await(text:String){ui.waitUntil(10000){ui.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()}}
-    @Test fun relationshipRendersPendingBigAndFooter(){seed();enrich();ui.runOnIdle{vm.open("detail","seed-lin")};ui.onNodeWithTag("role-relationship-open").performScrollTo();shot("detail-entry");ui.runOnIdle{vm.open("role-relationship","seed-lin")};ui.waitUntil(10000){ui.onAllNodesWithText("心结 ·",substring=true).fetchSemanticsNodes().isNotEmpty()};shot("relationship-1");ui.onNodeWithText("心结 ·",substring=true).performClick();ui.onNodeWithText("你说：「合成失约原话」").assertIsDisplayed();assertTrue(ui.onAllNodesWithText("她一直记着",substring=true).fetchSemanticsNodes().isEmpty());assertTrue(ui.onAllNodesWithText("跟她说开就会好一些",substring=true).fetchSemanticsNodes().isEmpty());shot("relationship-ledger");ui.onNodeWithText("数值帮助她理解当前感受，不规定表达").assertIsDisplayed();shot("relationship-2")}
+    @Test fun relationshipRendersPendingBigAndFooter(){seed();enrich();ui.runOnIdle{vm.open("detail","seed-lin")};ui.onNodeWithTag("role-relationship-open").performScrollTo();shot("detail-entry");ui.runOnIdle{vm.open("role-relationship","seed-lin")};ui.waitUntil(10000){ui.onAllNodesWithText("心结 ·",substring=true).fetchSemanticsNodes().isNotEmpty()};shot("relationship-1");ui.onNodeWithText("心结 ·",substring=true).performClick();ui.onNodeWithText("你说：「合成失约原话」").assertIsDisplayed();assertTrue(ui.onAllNodesWithText("她一直记着",substring=true).fetchSemanticsNodes().isEmpty());assertTrue(ui.onAllNodesWithText("跟她说开就会好一些",substring=true).fetchSemanticsNodes().isEmpty());shot("relationship-ledger");ui.onNodeWithText("这些感受来自相处中的点滴，只供她参考").assertIsDisplayed();shot("relationship-2")}
     @Test fun confirmReenterAndUndoOnlyOnce(){
         seed();val old=runBlocking{vm.companion.relationship("seed-lin").parameters}
         ui.runOnIdle{vm.open("chat","seed-lin")};await("就这样");shot("card-pending");ui.onNodeWithText("就这样").performClick();await("✓ 已改，从现在起生效 ·")

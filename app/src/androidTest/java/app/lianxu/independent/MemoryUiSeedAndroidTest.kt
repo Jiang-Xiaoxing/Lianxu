@@ -67,6 +67,9 @@ class MemoryUiSeedAndroidTest {
   ui.onAllNodesWithTag("chat-turn-highlight",useUnmergedTree=true).onFirst().assertIsDisplayed()
   shot("after_jump")
   ui.mainClock.autoAdvance=true
+  InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+  ui.waitUntil(10000){ui.onAllNodesWithTag("memory-timeline").fetchSemanticsNodes().isNotEmpty()}
+  ui.onNodeWithTag("inner-tab-2").assertIsSelected()
  }
  /** 那轮聊天后来被改过：来源卡仍显示她记下时的原话（回退到证据原句），跳转按钮按轮次照常出现。 */
  @Test fun editedSourceKeepsRecordedWords(){

@@ -204,14 +204,45 @@ class ReplyAccountingTest {
         assertEquals(ModelPurpose.CHAT,reviewPurposeFor(""))
         assertEquals(ModelPurpose.REVIEW,reviewPurposeFor("explicit"))
     }
-    @Test fun oneShortNoteAcrossTheWholeFrozenBatch(){
-        val rows=items(2)
-        fun notes(text:String)=emptyBatch(rows).replace("null","""{"innerNote":"$text"}""")
-        assertTrue(runCatching{ReviewBatchModel.parse(notes("开心"),rows,200000)}.isFailure)
-        fun single(text:String)=emptyBatch(rows.take(1)).replace("null","""{"innerNote":"$text"}""")
-        assertTrue(runCatching{ReviewBatchModel.parse(single("开心"),rows.take(1),200000,false)}.isFailure)
-        assertTrue(runCatching{ReviewBatchModel.parse(single("想".repeat(31)),rows.take(1),200000)}.isFailure)
-        assertNotNull(ReviewBatchModel.parse(single("想".repeat(30)),rows.take(1),200000)[9])
+    private fun lightBatch(vararg records:com.google.gson.JsonObject,allowNotes:Boolean=true):List<com.google.gson.JsonObject?> {
+        val rows=items(records.size)
+        val raw=com.google.gson.GsonBuilder().serializeNulls().create().toJson(mapOf("records" to rows.zip(records).map{(row,record)->
+            mapOf("source" to row.source.turnId,"record" to record)
+        }))
+        return ReviewBatchModel.parse(raw,rows,200000,allowNotes).values.toList()
+    }
+    private fun note(text:String)=com.google.gson.JsonObject().apply{addProperty("innerNote",text)}
+
+    @Test fun notesAreCleanedAndTruncatedOnCodePointBoundaries(){
+        fun clean(raw:String)=lightBatch(note(raw)).single()?.get("innerNote")?.asString
+        val thirty="念".repeat(29)+"🌙"
+        assertEquals(thirty,clean(" \n"+thirty+"\t "))
+        assertEquals("想你",clean("想\r\n\u0000你"));assertNull(clean("\t\n "))
+        val prefix="念".repeat(28)+"🌙"
+        for(size in listOf(31,35,80)){
+            val shortened=requireNotNull(clean(prefix+"🙂".repeat(size-29)))
+            assertEquals(prefix+"…",shortened);assertTrue(ReviewInnerNote.validText(shortened))
+        }
+        for(size in listOf(81,100))assertNull(clean("🙂".repeat(size)))
+    }
+    @Test fun onlyLastValidNoteSurvivesAndOtherFieldsStayWithTheirOwnRow(){
+        val event=note("第一句").apply{add("关系输入",JsonParser.parseString("""{"P":"轻"}"""))}
+        val values=lightBatch(event,note("第二句"),note(" 最后一句 "),note("想".repeat(100)))
+        assertTrue(values[0]!!["关系输入"].isJsonObject);assertTrue(values[0]!!["innerNote"].isJsonNull)
+        assertNull(values[1]);assertEquals("最后一句",values[2]!!["innerNote"].asString);assertNull(values[3])
+        val split=lightBatch(event,note("最后一句"),allowNotes=false)
+        assertTrue(split.first()!!["关系输入"].isJsonObject);assertTrue(split.first()!!["innerNote"].isJsonNull);assertNull(split.last())
+    }
+    @Test fun extraKeysAreDiscardedButMisspellingsAndImmediateActionsStillRetry(){
+        fun parse(json:String)=lightBatch(JsonParser.parseString(json).asJsonObject).single()
+        assertEquals(setOf("innerNote"),parse("""{"innerNote":"想出门走走","reason":"晴天","备注":123}""")!!.keySet())
+        assertNull(parse("""{"learning":null,"备注":"无需学习"}"""))
+        for(raw in listOf("""{"relation":{}}""","""{"inner_note":"想你"}""")){
+            assertEquals("INVALID_REVIEW_FIELDS",assertThrows(IllegalArgumentException::class.java){parse(raw)}.message)
+        }
+        for(raw in listOf("""{"innerNote":null,"future":{}}""","""{"learning":null,"改主动参数":null}""")){
+            assertEquals("IMMEDIATE_ACTION_NOT_ALLOWED_IN_REVIEW",assertThrows(IllegalArgumentException::class.java){parse(raw)}.message)
+        }
     }
     @Test fun coverageAndOrderAreMandatory(){
         val rows=items(2)
