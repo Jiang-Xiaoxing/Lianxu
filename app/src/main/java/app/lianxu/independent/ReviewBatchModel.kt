@@ -10,7 +10,7 @@ internal class ReviewBatchModel(private val client:TextChatClient) {
     suspend fun review(config:ModelConfig,key:String,items:List<ReplyAccountingQueue.Item>,context:RoleContext,profile:String,now:Long,allowInnerNote:Boolean=true,active:()->Boolean):Map<Long,JsonObject?> {
         val instructions="""
             $profile
-            [多轮后台轻回顾] 记忆总结保持独立。按顺序看每轮实际说过的话，只用当时已经发生的事。
+            $HEADING 记忆总结保持独立。按顺序看每轮实际说过的话，只用当时已经发生的事。
             只返回 {"records":[{"source":本轮用户消息编号,"record":null}]}。每轮恰好一行，普通闲聊填 null。
             有波澜时才写 record，例如 {"关系输入":{"P":"轻"}}。只填发生的事：暖心 P、兑现 C、失约 V、越界 B，程度轻/中/重。
             定下新约加“约定”:true；兑现必须填“兑现约定”:旧约编号。提前改期只填“没达到预期”:小/中/大。
@@ -33,7 +33,8 @@ internal class ReviewBatchModel(private val client:TextChatClient) {
         val messages=if(ConservativeTokens.tokens(notes)+8<=remaining)listOf(fixed.first(),WireMessage("system",notes),fixed.last())else fixed
         return StructuredModelCall(client).generate("reply_batch_review",config,key,messages,active=active){parse(it,items,now,allowInnerNote)}
     }
-    companion object {
+    internal companion object {
+        const val HEADING = "[多轮后台轻回顾]"
         fun relationForCommit(record:JsonObject?,parsed:RelationInput?,cached:RelationInput?):RelationInput? {
             val light=record!=null && !record.has("experience")
             return if(light && record?.get("关系输入")?.takeUnless{it.isJsonNull}==null) cached else parsed

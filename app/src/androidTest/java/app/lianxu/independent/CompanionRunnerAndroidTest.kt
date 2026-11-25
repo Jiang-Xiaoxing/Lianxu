@@ -68,7 +68,7 @@ class CompanionRunnerAndroidTest {
     private suspend fun review():Boolean=ReplyAccounting(store,ModelAccess(vault),object:TextChatClient{
         override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {
             reviewCalls++
-            assertTrue(request.messages.any{"[多轮后台回顾]" in it.content})
+            assertTrue(request.messages.any{ReviewBatchModel.HEADING in it.content})
             if(editPersonaDuringReview)store.savePersona(UserPersona("改后的用户","新称呼","新资料"))
             if(reviewCalls<=invalid)return TextChatResult.Success("{\"records\":[]}")
             val rows=JSONArray(request.messages.last{it.role=="user"}.content);val records=JSONArray()

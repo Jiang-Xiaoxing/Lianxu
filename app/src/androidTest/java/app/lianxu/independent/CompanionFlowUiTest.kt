@@ -28,7 +28,7 @@ class CompanionFlowUiTest {
             if(fail)return TextChatResult.Failure(ChatFailure.NETWORK)
             val system=request.messages.filter{it.role=="system"}.joinToString{it.content}
             if(system.contains("[companion.reconsider.v1]"))return TextChatResult.Success("""{"action":"send","reason":"合成事件已经结束，可以温和关心","text":"【合成回访】事情结束了，想说说今天吗？"}""")
-            if(system.contains("[多轮后台回顾]")){
+            if(system.contains(ReviewBatchModel.HEADING)){
                 reviewCalls.incrementAndGet()
                 if(malformedRecord)return TextChatResult.Success("{\"records\":[]}")
                 val rows=org.json.JSONArray(request.messages.last{it.role=="user"}.content);val records=org.json.JSONArray()
