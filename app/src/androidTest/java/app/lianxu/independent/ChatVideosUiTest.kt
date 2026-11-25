@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicInteger
 @androidx.test.filters.SdkSuppress(minSdkVersion=29)
 class ChatVideosUiTest {
     private val calls=AtomicInteger()
-    private val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{calls.incrementAndGet();assertTrue(request.messages.any{it.videos.size==1});return TextChatResult.Success("合成视频已接收")}}
+    private val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{calls.incrementAndGet();assertTrue(request.messages.flatMap { it.videos }.isEmpty());assertEquals(23,request.messages.flatMap { it.images }.count { it.videoFrame });return TextChatResult.Success("合成视频已接收")}}
     @get:Rule(order=0)val fixture=MockChatFixture({client},wrapFinalReply=false)
     @get:Rule(order=1)val ui=createAndroidComposeRule<MainActivity>()
     private lateinit var vm:AppState;private var uri:Uri?=null

@@ -23,6 +23,7 @@ class MoonLayoutUiTest {
     }
     @get:Rule(order=1)val ui=createAndroidComposeRule<ComponentActivity>()
     @Before fun show(){
+        if (method.methodName == "updateNoticeAcknowledgesAndHistoryRemainsAvailable") seedLegacyTestRoles(context, name)
         ui.runOnUiThread{vm=ViewModelProvider(ui.activity,object:ViewModelProvider.Factory{
             @Suppress("UNCHECKED_CAST")override fun <T:androidx.lifecycle.ViewModel> create(modelClass:Class<T>):T=
                 AppState(ui.activity.application,object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult=error("No network allowed")},"no-vault-$name") as T
@@ -30,6 +31,10 @@ class MoonLayoutUiTest {
         ui.waitUntil(15000){vm.ready}
         runBlocking{val code=InstalledBuild.read(context).versionCode;if(method.methodName!="updateNoticeAcknowledgesAndHistoryRemainsAvailable"&&LocalReleaseNotes.forVersion(code)!=null)LocalUpdateRepository(vm.processing.store).acknowledge(code)}
         ui.setContent{LianxuTheme{Lianxu(vm)}}
+        if (vm.friends.isEmpty()) {
+            ui.onNodeWithTag("first-encounter").performClick()
+            ui.onNodeWithTag("first-encounter-enter-home").performClick()
+        }
     }
     @Test fun userPersonaFieldsPersistTogether(){
         ui.onNodeWithTag("tab-3").performClick()
@@ -98,7 +103,7 @@ class MoonLayoutUiTest {
         ui.runOnIdle{vm.open("settings-updates")}
         ui.onNodeWithTag("updates-current-toggle").assertTextContains(InstalledBuild.read(context).versionName,substring=true)
         ui.onNodeWithTag("settings-back").performClick()
-        ui.onNodeWithTag("roles-empty-chat").assertIsDisplayed()
+        ui.onNodeWithTag("home-title").assertIsDisplayed()
     }
     @Test fun backgroundStopsWindowFramesAndResumeKeepsHome(){
         val frames=java.util.concurrent.atomic.AtomicInteger()

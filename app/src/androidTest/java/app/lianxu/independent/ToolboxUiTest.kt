@@ -96,6 +96,7 @@ class ToolboxUiTest {
         ui.onNodeWithTag("memory-tools-save").performClick();ui.waitUntil(10000){runBlocking{vm.processing.memoryRules().first==old.copy(proactiveRecall=true,immediateWrite=false)}};shot("03-memory-tools");back()
         ui.onNodeWithTag("tool-card-video").performClick()
         ui.waitUntil(10000){runCatching{ui.onNodeWithTag("video-mode-frames").assertIsSelected();true}.getOrDefault(false)}
+        ui.onNodeWithText("智能均匀抽帧（推荐）").assertIsDisplayed()
         ui.onNodeWithTag("video-mode-original").performClick()
         ui.waitUntil(10000){runBlocking{ToolboxPreferences.videoMode(vm.processing.store)==ToolboxPreferences.VideoMode.ORIGINAL}};shot("04-video-settings");back()
         ui.onNodeWithTag("tool-card-video").performClick()
