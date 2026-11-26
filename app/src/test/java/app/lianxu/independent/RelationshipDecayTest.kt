@@ -102,20 +102,6 @@ class RelationshipDecayTest {
             assertEquals(target,1-exp(-ln(2.0)/24*(1+c)*time),1e-9)
         }
     }
-    @Test fun proactiveCrossingAndCaps(){
-        val c=cursor();c.contact(0);val p=RelationTemplate.STEADY.parameters
-        val due=RelationshipProactive.next(p,0,emptyList(),0,0){t->c.copy().also{it.advance(t)}.state()}!!
-        val exact=-ln(.4)/RelationDecay.missingRate(.4)*hour
-        org.junit.Assert.assertTrue(due>=exact&&due-exact<=60_000)
-        org.junit.Assert.assertNull(RelationshipProactive.next(p.copy(dailyMax=0),0,emptyList(),0,0))
-        org.junit.Assert.assertNull(RelationshipProactive.next(p,null,emptyList(),0,0))
-        org.junit.Assert.assertNull(RelationshipProactive.next(p,0,emptyList(),0,0){c.state().copy(missing=0.0)})
-        c.apply(row())
-        val withGrudge=RelationshipProactive.next(p,0,emptyList(),0,0){t->c.copy().also{it.advance(t)}.state()}!!
-        // 心结不自己变淡，门槛按记下的心结固定抬高。
-        val frozenCrossing=-ln(1-RelationDecay.theta(RelationDecay.thetaBase(p.silenceDays),.126))/RelationDecay.missingRate(.4)*hour
-        org.junit.Assert.assertTrue(withGrudge>=frozenCrossing&&withGrudge-frozenCrossing<=60_000)
-    }
     @Test fun lowTriggerIsBasedOnExistingGrudge(){
         for(g in listOf(RelationDecay.LOW_TRIGGER,RelationDecay.LOW_TRIGGER+.001)){
             val c=cursor();c.at=0;c.impacts[SourceRef("r",99,1)]=RelationImpact(tension=g)
@@ -202,14 +188,6 @@ class RelationshipDecayTest {
         listOf(0.0 to 0.5,0.4 to 0.7,1.0 to 1.0).forEach{(c,e)->
             assertEquals(e,RelationDecay.expectation(c),1e-9)
         }
-    }
-    @Test fun openingThreshold() {
-        listOf(1.0 to 0.4,1.5 to 0.5,2.0 to 0.6,3.5 to 0.8,
-            4.0 to (13.0/15),0.5 to 0.3,14.0 to 0.9).forEach{(s,e)->
-            assertEquals(e,RelationDecay.thetaBase(s),1e-9)
-        }
-        assertEquals(0.8,RelationDecay.theta(0.6,0.4),1e-9)
-        assertEquals(0.95,RelationDecay.theta(0.9,1.0),1e-9)
     }
     @Test fun careMultiplier() {
         listOf(0,1,3,10).forEach{n->

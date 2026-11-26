@@ -28,7 +28,7 @@ class UpdatesPageUiTest {
     @get:Rule(order=0) val fixture=MockChatFixture()
     @get:Rule(order=1) val ui=createAndroidComposeRule<MainActivity>()
     private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
-    private val currentPrefix get()=if(UpdatesPresentation.experienceFor(InstalledBuild.read(context).versionCode)!=null)"experience" else "current"
+    private val currentPrefix get()=if(UpdatesPresentation.current(InstalledBuild.read(context))?.let { UpdatesPresentation.experienceFor(it.code) }!=null)"experience" else "current"
     private lateinit var app:AppState
     private var dark by mutableStateOf(false)
     private var width by mutableIntStateOf(411)
@@ -43,7 +43,7 @@ class UpdatesPageUiTest {
     @After fun restoreOrientation(){ui.activityRule.scenario.onActivity{it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}}
     private fun receipt()=runBlocking{Store(context,fixture.database).use{it.preference(LocalUpdateReceipt.KEY,"")}}
     @Test fun currentStartsOpenHistoryStartsClosedAndChangesUseNumbers(){
-        ui.onNodeWithTag("updates-current-toggle").assertTextContains(InstalledBuild.read(context).versionName,substring=true)
+        ui.onNodeWithTag("updates-current-toggle").assertTextContains("v${InstalledBuild.read(context).releaseName}",substring=true)
         ui.onNodeWithTag("updates-current-toggle").assertHeightIsAtLeast(48.dp).assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription,"已展开"))
         ui.onNodeWithTag("updates-current-content").assertIsDisplayed()
         ui.onNodeWithText("本地体验改动 · 尚未正式发布").assertDoesNotExist()
@@ -86,14 +86,8 @@ class UpdatesPageUiTest {
             ui.onNodeWithTag("updates-item-original-$prefix-${i+1}").performScrollTo().assertTextContains(text)
         }
         LocalReleaseNotes.forVersion(60)!!.limits.forEach{ui.onNodeWithText(it).performScrollTo().assertIsDisplayed()}
-        ui.onNodeWithTag("updates-history-58").performScrollTo().performClick()
-        ui.onNodeWithTag("updates-item-history-58-4").assertDoesNotExist()
-        ui.onNodeWithTag("updates-item-original-history-58-17").assertDoesNotExist()
-        ui.onNodeWithTag("updates-details-history-58").performScrollTo().performClick()
-        ui.onNodeWithTag("updates-item-original-history-58-17").performScrollTo().assertTextContains(LocalReleaseNotes.forVersion(58)!!.changes.last())
-        ui.onNodeWithTag("updates-history-16").performScrollTo().performClick()
-        ui.onNodeWithTag("updates-details-history-16").performScrollTo().performClick()
-        ui.onNodeWithText(LocalReleaseNotes.forVersion(16)!!.limits.single()).performScrollTo().assertIsDisplayed()
+        ui.onNodeWithTag("updates-history-58").assertDoesNotExist()
+        ui.onNodeWithTag("updates-history-16").assertDoesNotExist()
         assertTrue(LocalReleaseNotes.forVersion(60)!!.changes.none{"暖灰棕" in it||"分页" in it})
     }
     @Test fun nativeCurrentAndHistoryScreensAcrossThemesSmallWidthAndLargeText(){

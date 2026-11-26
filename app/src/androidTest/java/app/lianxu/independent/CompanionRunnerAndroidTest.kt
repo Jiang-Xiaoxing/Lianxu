@@ -68,7 +68,7 @@ class CompanionRunnerAndroidTest {
     private suspend fun review():Boolean=ReplyAccounting(store,ModelAccess(vault),object:TextChatClient{
         override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {
             reviewCalls++
-            assertTrue(request.messages.any{"[多轮后台回顾]" in it.content})
+            assertTrue(request.messages.any{ReviewBatchModel.HEADING in it.content})
             if(editPersonaDuringReview)store.savePersona(UserPersona("改后的用户","新称呼","新资料"))
             if(reviewCalls<=invalid)return TextChatResult.Success("{\"records\":[]}")
             val rows=JSONArray(request.messages.last{it.role=="user"}.content);val records=JSONArray()
@@ -97,7 +97,7 @@ class CompanionRunnerAndroidTest {
     private fun healReplyStorage()=store.writableDatabase.execSQL("DROP TRIGGER synthetic_fail_c2")
     private suspend fun enableFuture(){makeFuture=true;AppServices.companionClock={clock};CompanionRepository(store){clock}.setPolicy("a",true,"synthetic-owner")}
     private fun contactTool(request:TextChatRequest)=request.tools.single{toolNameOf(it)==ImmediateContact.NAME}
-    @Test fun disabledContactRequestKeepsOnlyTheParameterSuggestion():Unit=runBlocking {
+    @Test fun disabledContactOmitsTheTool():Unit=runBlocking {
         val t=send();assertEquals(TurnState.COMPLETED,t.state)
         val request=requests.single();val whole=Gson().toJson(request)
         assertFalse(whole.contains("\"future\""))
@@ -109,10 +109,7 @@ class CompanionRunnerAndroidTest {
         assertFalse(whole.contains("对方尚未开启主动联系"))
         assertFalse(whole.contains("对方已暂停主动联系"))
         assertTrue(whole.contains(ExperiencePresentation.READ_STATE_RULE))
-        val encoded=Gson().toJson(contactTool(request))
-        assertTrue(encoded.contains("改主动参数"))
-        val function=JsonParser.parseString(encoded).asJsonObject.getAsJsonObject("function")
-        assertEquals(setOf("改主动参数"),function.getAsJsonObject("parameters").getAsJsonObject("properties").keySet())
+        assertTrue(request.tools.none { toolNameOf(it)==ImmediateContact.NAME })
     }
     @Test fun enabledContactRequestStillOffersTheScheduleEntry():Unit=runBlocking {
         CompanionRepository(store){clock}.setPolicy("a",true,"synthetic-owner")
@@ -120,8 +117,8 @@ class CompanionRunnerAndroidTest {
         val encoded=Gson().toJson(contactTool(requests.single()))
         assertTrue(encoded.contains("\"future\""))
         assertTrue(encoded.contains("\"when\""))
-        assertTrue(encoded.contains("每轮聊天结束前"))
-        assertTrue(encoded.contains("改主动参数"))
+        assertFalse(encoded.contains("每轮聊天结束前"))
+        assertFalse(encoded.contains("改主动参数"))
     }
     @Test fun twoFormatFailuresRecoverBeforeNormalReplyIsPublished():Unit=runBlocking {
         invalid=2;val t=send();assertEquals(TurnState.COMPLETED,t.state);assertEquals(1,calls)

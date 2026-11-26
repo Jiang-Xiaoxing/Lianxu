@@ -18,6 +18,16 @@ class UpdatesMetadataUiTest {
         ui.onNodeWithText("当前安装版本没有随包更新记录。").assertDoesNotExist()
         ui.onNodeWithTag("updates-item-experience-1").assertDoesNotExist()
     }
+    @Test fun testBuildUsesFormalReleaseInsteadOfItsTestCounter() {
+        val build = InstalledBuild("synthetic.testing","1.0.6-test.26+2458e5743d16",26)
+        ui.setContent { LianxuTheme { Column(Modifier.verticalScroll(rememberScrollState())) { UpdatesContent(build) } } }
+        ui.onNodeWithTag("updates-current-toggle").assertTextContains("v1.0.6").assertTextContains("当前版本 · 测试 26")
+        ui.onNodeWithTag("updates-item-current-1").assertTextContains(UpdatesPresentation.summary(LocalReleaseNotes.forVersion(65)!!).first())
+        ui.onNodeWithTag("updates-history-64").assertExists()
+        ui.onNodeWithTag("updates-history-26").assertDoesNotExist()
+        ui.onNodeWithTag("updates-history-65").assertDoesNotExist()
+    }
+
     @Test fun unknownActualBuildDoesNotBorrowAnOlderCurrentRecord(){
         ui.setContent{LianxuTheme{Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())){UpdatesContent(InstalledBuild("synthetic","unknown-build",99))}}}
         ui.onNodeWithTag("updates-current-toggle").assertTextContains("unknown-build",substring=true)

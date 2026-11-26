@@ -1,5 +1,6 @@
 package app.lianxu.independent
 
+import androidx.compose.ui.unit.dp
 import android.app.Application
 import android.content.Context
 import android.graphics.Bitmap
@@ -91,13 +92,34 @@ class ModelConfigUiTest {
         File(dir,"$name.png").outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}
     }
     private fun edit(id:String="ui-a"){ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-$id"));ui.onNodeWithTag("config-edit-$id").performClick()}
+    @Test fun settingsPurposesPersistsReviewSelectionAndReturnsHome(){
+        ui.onNodeWithTag("config-open-purposes").assertDoesNotExist()
+        back()
+        val opener=ui.onNodeWithTag("settings-purposes")
+        opener.performScrollTo().performClick()
+        opener.assertDoesNotExist()
+        ui.onNodeWithTag("purpose-select-aux-vision").assertDoesNotExist()
+        ui.onNodeWithTag("purpose-select-memory").performScrollTo().assertTextContains("沿用聊天模型")
+        val review=ui.onNodeWithTag("purpose-select-review")
+        review.performScrollTo().assertTextContains("沿用聊天模型").performClick()
+        ui.onNodeWithTag("purpose-option-review-${b.id}").performClick()
+        ui.waitUntil(10000){!state.busy && state.purposes[ModelPurpose.REVIEW]==b.id}
+        back()
+        ui.onNodeWithTag("settings-home").assertIsDisplayed()
+        opener.performScrollTo().performClick()
+        review.performScrollTo().assertTextContains(b.modelId,substring=true)
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        opener.assertIsDisplayed()
+        assertEquals(b.id,vault.purposeId(ModelPurpose.REVIEW))
+        assertEquals(0,client.calls.get())
+    }
     @Test fun inlineChatSelectionPersistsWithoutProbing() {
         fun assertSelected(current: ModelConfig, other: ModelConfig) {
             ui.onNodeWithTag("config-current-chat-${current.id}").assertHasNoClickAction()
             ui.onNodeWithTag("config-use-chat-${current.id}").assertDoesNotExist()
             ui.onNodeWithTag("config-current-chat-${other.id}").assertDoesNotExist()
-            ui.onNodeWithTag("config-use-chat-${other.id}").assertHasClickAction()
-            ui.onAllNodesWithText("当前聊天模型").assertCountEquals(1)
+            ui.onNodeWithTag("config-use-chat-${other.id}").assertHasClickAction().assertTextContains("使用").assertHeightIsAtLeast(48.dp).assertWidthIsAtLeast(48.dp)
+            ui.onAllNodesWithText("• 使用中").assertCountEquals(1)
             assertEquals(current.id, vault.purposeId(ModelPurpose.CHAT))
         }
         fun select(config: ModelConfig) {
@@ -109,7 +131,7 @@ class ModelConfigUiTest {
         val otherPurposes = ModelPurpose.entries.filter { it != ModelPurpose.CHAT }
         val previous = otherPurposes.associateWith(vault::purposeId)
         assertTrue(vault.defaultId().isEmpty())
-        ui.onAllNodesWithText("当前聊天模型").assertCountEquals(0)
+        ui.onAllNodesWithText("• 使用中").assertCountEquals(0)
         select(a)
         assertSelected(a, b)
         select(b)

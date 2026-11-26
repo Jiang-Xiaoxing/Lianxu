@@ -24,4 +24,23 @@ class VideoPolicyTest {
         assertEquals(listOf(0L,1000L),VideoPolicy.frameTimes(1001).toList())
         assertEquals(24L,VideoPolicy.frameCount(23_001))
     }
+    @Test fun uniformSamplesCoverLongVideosAndTheBoundary() {
+        assertEquals(23_000L, VideoPolicy.frameTimes(24_000).last())
+        for (duration in listOf(24_001L, 120_000L, 180_000L, Long.MAX_VALUE / 1000)) {
+            val times = VideoPolicy.frameTimes(duration).toList()
+            assertEquals(24L, VideoPolicy.frameCount(duration))
+            assertEquals(24, times.size)
+            assertEquals(0L, times.first())
+            assertEquals(duration - 1, times.last())
+            val gaps = times.zipWithNext { a, b -> b - a }
+            assertTrue(gaps.min() > 0 && gaps.max() - gaps.min() <= 1)
+        }
+    }
+
+    @Test fun timeLabelsIncludeHoursOnlyWhenNeeded() {
+        assertEquals("0:00", VideoPolicy.formatTime(999))
+        assertEquals("0:23", VideoPolicy.formatTime(23_000))
+        assertEquals("2:35", VideoPolicy.formatTime(155_999))
+        assertEquals("1:02:05", VideoPolicy.formatTime(3_725_000))
+    }
 }

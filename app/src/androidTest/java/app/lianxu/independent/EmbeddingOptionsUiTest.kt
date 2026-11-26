@@ -28,7 +28,7 @@ class EmbeddingOptionsUiTest {
             },namespace) as T
         })[ModelConfigState::class.java]}
         ui.waitUntil(15000){ui.onAllNodesWithTag("tab-2").fetchSemanticsNodes().isNotEmpty()}
-        ui.onNodeWithTag("tab-2").performClick();ui.onNodeWithTag("settings-models").performClick();ui.onNodeWithTag("config-tab-purposes").performClick()
+        ui.onNodeWithTag("tab-2").performClick();ui.onNodeWithTag("settings-purposes").performClick()
     }
     @After fun close(){ui.runOnIdle{state.clearResult()};vault.list().forEach{vault.delete(it.id)};assertEquals(0,calls.get())}
     private fun seed(configs:List<ModelConfig>,selected:String=""){

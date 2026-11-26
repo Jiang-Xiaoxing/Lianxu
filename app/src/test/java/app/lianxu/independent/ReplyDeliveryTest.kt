@@ -74,10 +74,11 @@ class ReplyDeliveryTest {
         d.update("甲\n\n乙完成",true);d.acknowledge(2)
         assertEquals("甲\n\n乙完成",d.spoken)
     }
-    @Test fun finalFourthBubbleKeepsItsEntireRemainder() {
+    @Test fun fifthParagraphIsRevealedAndAcknowledgedSeparately() {
         val d=ReplyDelivery();val text="一\n\n二\n\n三\n\n四\n\n五"
         d.update(text);d.acknowledge(3);assertEquals(3,d.visible)
-        d.update(text,true);assertEquals(4,d.bubbles.size)
-        d.acknowledge(4);assertEquals(text,d.spoken)
+        d.update(text,true);assertEquals(5,d.bubbles.size)
+        d.acknowledge(4);assertFalse(d.spoken.endsWith("五"))
+        d.acknowledge(5);assertEquals(text,d.spoken)
     }
 }

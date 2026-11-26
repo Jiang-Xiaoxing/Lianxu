@@ -42,6 +42,138 @@ class CompleteBackupAndroidTest {
     private fun pw()="合成备份密码-synthetic-0123456789".toCharArray()
     private fun pack(export:BackupRepository.Export):BackupArchive.Package=BackupArchive.read(ByteArrayOutputStream().also{BackupArchive.write(export.root,export.files,it)}.toByteArray().inputStream())
     private suspend fun roundTrip(target:Fixture,all:Boolean=false,keys:Boolean=false):List<String>{val p=pack(f.backup.export(if(all)null else "a",keys,if(keys)pw()else null));return target.backup.commit(target.backup.preview(p,if(all)"REPLACE"else"ADD"),all,password=if(keys)pw()else null)}
+    @Test fun quoteSurvivesRoleImportAndRejectsMissingTarget()=runBlocking {
+        val ledger=ChatLedger(f.store)
+        val original=turn(body="需要引用的旧消息").user
+        val quote=ChatReplyQuote(original.id,true,original.text)
+        val t=ledger.begin("a","引用后的回答","service",quote=quote)
+        assertEquals(quote,ledger.begin("a","引用后的回答","service",id=t.id,quote=quote).replyQuote)
+        assertTrue(ledger.finish(t.id,1,"已收到"))
+        val other=fixture()
+        val role=roundTrip(other).single()
+        val restored=other.store.messages().single { it.friendId==role && it.text==original.text }
+        val restoredTurn=ChatLedger(other.store).all().single { it.replyQuote!=null }
+        assertNotEquals(t.id,restoredTurn.id)
+        assertEquals(quote.copy(messageId=restored.id),restoredTurn.replyQuote)
+        val export=f.backup.export("a")
+        export.root["roles"].asJsonArray.single().asJsonObject["preferences"].asJsonObject
+            .addProperty(ChatReplyQuote.PREFIX+t.id,quote.copy(messageId=Long.MAX_VALUE).encode())
+        assertTrue(runCatching { other.backup.preview(pack(export),"ADD") }.isFailure)
+    }
+    @Test fun dailyAgendaSurvivesBackupAsInactiveHistory()=runBlocking {
+        val zone = java.time.ZoneId.systemDefault()
+        val started = java.time.LocalDate.now(zone).plusDays(1).atTime(9, 0).atZone(zone).toInstant().toEpochMilli()
+        var now = started
+        val core=CompanionRepository(f.store){now}
+        core.setPolicy("a",true,"test")
+        val q=QuietHours(false,1310,430)
+        f.store.savePreference(QuietHours.KEY,q.encode())
+        val planner=DailyPlanner(core)
+        var calls = 0
+        val client = object : TextChatClient {
+            override suspend fun complete(config: ModelConfig, key: String, request: TextChatRequest): TextChatResult {
+                assertTrue(request.messages.first().content.contains(ContactTime.GUIDE))
+                calls++
+                val json = if (calls == 1) """{"points":[{"when":"30分钟后","reason":"想到昨天的聊天"}]}""" else """{"points":[]}"""
+                return TextChatResult.Success(json)
+            }
+        }
+        planner.run("a",ModelAccess(f.vault),client)
+        val point=core.queued().single{it.id.startsWith("daily:")}
+        assertEquals(0L,point.source);assertTrue(planner.wakes().single{it.role=="a"}.due>core.clock())
+        planner.run("a",ModelAccess(f.vault),client);assertEquals(1,core.queued().count{it.id.startsWith("daily:")})
+        for(all in listOf(false,true)){
+            val target=fixture();roundTrip(target,all)
+            val restored=CompanionRepository(target.store)
+            assertTrue(restored.queued().isEmpty());assertTrue(DailyPlanner(restored).wakes().isEmpty())
+            if(all)assertEquals(q,QuietHours.decode(target.store.preference(QuietHours.KEY,"")))
+        }
+        now=point.notBefore
+        val due=requireNotNull(core.claim(point.id,"test"))
+        val text="刚想起你说的那首歌。\n\n我有点好奇后来怎么样了。"
+        val sent = requireNotNull(core.conclude(due,"test",OpportunityDecision("send","接着昨天的话题",text),core.snapshot("a")){true})
+        assertEquals(2,ChatBubbleSegments.forMessage(text,false).size)
+        assertEquals(1,core.contactPace("a",now).streak)
+        assertTrue(planner.wakes().single{it.role=="a"}.due>now)
+        suspend fun reply(): Long {
+            val id = turn("a", "嗯嗯好").user.id
+            f.repo.tx { db -> db.execSQL("UPDATE messages SET created=? WHERE id=?", arrayOf(now, id)) }
+            return id
+        }
+        suspend fun deleteMessage(id: Long) = f.repo.tx { db ->
+            db.execSQL("INSERT OR REPLACE INTO message_state(message_id,revision,deleted) VALUES(?,2,1)", arrayOf(id))
+        }
+        val replyId = reply()
+        assertEquals(0, core.contactPace("a", now).streak)
+        deleteMessage(replyId)
+        assertEquals(1, core.contactPace("a", now).streak)
+        val ledger=ChatLedger(f.store)
+        val source=requireNotNull(core.sourceOfMessage("a",sent))
+        assertEquals(sent,source)
+        core.stopReminder("a",source)
+        assertTrue(core.contactHistory("a").any { it.id==sent })
+        assertTrue(ledger.completedMessages("a").any { it.id==sent })
+        core.forget("a",source)
+        assertFalse(core.contactHistory("a").any { it.id==sent })
+        assertFalse(ledger.completedMessages("a").any { it.id==sent })
+        assertTrue(f.store.messages().any { it.id==sent && it.text==text })
+        deleteMessage(sent)
+        assertEquals(0, core.contactPace("a", now).today)
+        assertEquals(0, core.contactPace("a", now).streak)
+
+        reply()
+        assertEquals(started + 4 * 3_600_000L, planner.wakes().single().due)
+        now = started + 4 * 3_600_000L - 60_000L
+        reply()
+        val idleAt = now + 30 * 60_000L
+        assertEquals(idleAt, planner.wakes().single().due)
+        now = idleAt - 1
+        planner.run("a", ModelAccess(f.vault), client)
+        assertEquals(1, calls)
+        now = idleAt
+        planner.run("a", ModelAccess(f.vault), client)
+        assertEquals(2, calls)
+        assertTrue(core.queued().isEmpty())
+        repeat(3) {
+            now += 60_000L
+            reply()
+            assertEquals(idleAt + 4 * 3_600_000L, planner.wakes().single().due)
+            planner.run("a", ModelAccess(f.vault), client)
+        }
+        assertEquals(2, calls)
+    }
+    @Test fun learningControlsAndDisputedNoteTravelWithRoleAndFullBackup()=runBlocking{
+        val seed=LearningRecordsFixture(f.store)
+        seed.now=System.currentTimeMillis()
+        val turn=seed.proposeHabit()
+        val learning=seed.core.learningRecords("a").single().state
+        seed.core.controlLearning("a",learning.id,"pin")
+        seed.core.controlLearning("a",learning.id,"pause")
+        val ref=learning.source
+        assertEquals(turn.userMessageId,ref.turnId)
+        f.repo.tx{db->
+            val proposal=JsonParser.parseString(db.rawQuery("SELECT proposal FROM companion_sources WHERE role=? AND source_id=?",arrayOf("a",ref.turnId.toString())).use{it.moveToFirst();it.getString(0)}).asJsonObject
+            proposal.add("innerNote",Gson().toJsonTree(ReviewInnerNote("想一起读完这本书",seed.now)))
+            db.execSQL("UPDATE companion_sources SET proposal=? WHERE role=? AND source_id=?",arrayOf<Any>(proposal.toString(),"a",ref.turnId))
+        }
+        assertTrue(seed.core.correctInnerNote(ref))
+        for(all in listOf(false,true)){
+            val target=fixture()
+            val ids=roundTrip(target,all)
+            val id=if(all)ids.first{restored->target.store.friends().first{it.id==restored}.name=="合成甲"} else ids.single()
+            val core=CompanionRepository(target.store){seed.now}
+            val restored=core.learningRecords(id).single().state
+            assertTrue(restored.pinned);assertEquals("paused",restored.state);assertEquals("chat",restored.origin)
+            assertNull(core.relationship(id).innerNote)
+            val record=target.repo.read{db->db.rawQuery("SELECT proposal FROM companion_sources WHERE role=? AND source_id=?",arrayOf(id,restored.source.turnId.toString())).use{it.moveToFirst();Gson().fromJson(it.getString(0),ExperienceProposal::class.java)}}
+            assertTrue(requireNotNull(record.innerNote).disputed)
+            core.controlLearning(id,restored.id,"resume")
+            assertEquals("已记牢",core.learningRecords(id).single().state.familiarity)
+            core.forget(id,restored.source.turnId);assertTrue(core.learningRecords(id).isEmpty())
+            target.backup.deleteRole(target.backup.previewRoleDeletion(id),true)
+            assertEquals("",target.store.preference(LearningControls.key(id),""))
+        }
+    }
     @Test fun completeRoleRoundTripPreservesSourcesExamplesAssociationsAssets()=runBlocking{
         val other=fixture();val id=roundTrip(other).single();val memories=other.repo.memories(id);assertEquals(2,memories.size);assertTrue(memories.all{it.friendId==id&&it.evidence.all{e->e.source.characterId==id}})
         assertEquals(listOf("avatar.png","attachments/note.bin").sorted(),RoleAssets(other.repo).list(id).map{it.path}.sorted());assertArrayEquals(byteArrayOf(1,2,3,4),RoleAssets(other.repo).list(id).first{it.kind=="avatar"}.bytes)

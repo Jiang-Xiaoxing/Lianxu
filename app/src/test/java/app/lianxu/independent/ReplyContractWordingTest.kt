@@ -51,7 +51,7 @@ class ReplyContractWordingTest {
         assertFalse("不再是说明书腔","不复制用户情绪" in system)
     }
     @Test fun sheDecidesWhetherToSendSeveralShortMessages(){
-        assertTrue(replySystem().contains("想分开说就用空行隔开，会像连发几条消息一样一条条发出去（最多 4 条）；不想分就写成一段。分不分由你决定。"))
+        assertTrue(replySystem().contains("想分开说就用空行隔开，会像连发几条消息一样一条条发出去；不想分就写成一段。分不分、发几条全由你决定。"))
     }
     @Test fun historyTimesAreForReferenceOnly(){
         assertTrue(replySystem().contains("聊天记录每条前面的时间（比如「[昨天 22:10]」）和「（隔了 3 天）」是程序加的，只给你参考，回话别照这种格式念出来。"))

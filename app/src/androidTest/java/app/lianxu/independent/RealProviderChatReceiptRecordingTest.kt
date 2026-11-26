@@ -169,18 +169,18 @@ class RealProviderChatReceiptRecordingTest {
         assertTrue("至少要有一条可对照的记忆", texts.isNotEmpty())
         ui.onNodeWithTag("back").performClick()
         ui.waitUntil(30000) { ui.onAllNodesWithTag("tab-2").fetchSemanticsNodes().isNotEmpty() }
-        ui.onNodeWithTag("tab-2").performClick()
-        ui.waitUntil(30000) { ui.onAllNodesWithTag("settings-processing").fetchSemanticsNodes().isNotEmpty() }
-        ui.onNodeWithTag("settings-processing").performClick()
-        ui.waitUntil(30000) { ui.onAllNodesWithTag("processing-friend-seed-lin").fetchSemanticsNodes().isNotEmpty() }
-        ui.onNodeWithTag("processing-friend-seed-lin").performClick()
+        ui.onNodeWithTag("tab-1").performClick()
+        ui.waitUntil(30000) { ui.onAllNodesWithTag("friend-row-seed-lin").fetchSemanticsNodes().isNotEmpty() }
+        ui.onNodeWithTag("friend-row-seed-lin").performClick()
+        ui.waitUntil(30000) { ui.onAllNodesWithTag("role-processing-open").fetchSemanticsNodes().isNotEmpty() }
+        ui.onNodeWithTag("role-processing-open").performScrollTo().performClick()
         ui.waitUntil(30000) { ui.onAllNodesWithTag("memory-list").fetchSemanticsNodes().isNotEmpty() }
         texts.forEach { t -> assertTrue("记忆页里应有这条内容：$t", ui.onAllNodesWithText(t).fetchSemanticsNodes().isNotEmpty()) }
         android.os.SystemClock.sleep(1500)
         shot("05-memory-page")
         android.os.SystemClock.sleep(600)
         ui.onNodeWithTag("back").performClick()
-        ui.waitUntil(30000) { ui.onAllNodesWithTag("processing-friend-seed-lin").fetchSemanticsNodes().isNotEmpty() }
+        ui.waitUntil(30000) { ui.onAllNodesWithTag("role-processing-open").fetchSemanticsNodes().isNotEmpty() }
         ui.onNodeWithTag("back").performClick()
         ui.waitUntil(30000) { ui.onAllNodesWithTag("tab-0").fetchSemanticsNodes().isNotEmpty() }
     }

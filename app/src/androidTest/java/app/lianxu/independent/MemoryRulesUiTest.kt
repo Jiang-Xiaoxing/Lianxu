@@ -17,7 +17,7 @@ class MemoryRulesUiTest{
     private fun app():AppState{lateinit var v:AppState;ui.activityRule.scenario.onActivity{v=ViewModelProvider(it)[AppState::class.java]};return v}
     private fun hideIme(){ui.activityRule.scenario.onActivity{a->(a.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(a.window.decorView.windowToken,0);a.window.decorView.clearFocus()};ui.waitForIdle()}
     @Test fun settingsDefaultsValidationSaveCancelAndRecreation(){
-        ui.waitUntil(15000){app().ready};val v=app();ui.runOnIdle{v.tab=2};ui.onNodeWithTag("settings-processing").performClick();ui.onNodeWithTag("settings-memory-rules").performClick()
+        ui.waitUntil(15000){app().ready};val v=app();ui.runOnIdle{v.tab=2};ui.onNodeWithTag("settings-memory-rules").performClick()
         ui.onNodeWithTag("rules-recent").assertTextContains("40");ui.onNodeWithTag("rules-summary").assertTextContains("20");ui.onNodeWithTag("rules-related").assertTextContains("15")
         ui.onNodeWithTag("rules-recall-enabled").assertDoesNotExist();ui.onNodeWithTag("rules-write-enabled").assertDoesNotExist()
         // The accepted adaptive-recall design removed these fixed quota controls.
@@ -33,7 +33,7 @@ class MemoryRulesUiTest{
     @Test fun reviewSheetAndHelpPreserveSwitchesAndOnlySaveOnRequest(){
         ui.waitUntil(15000){app().ready};val v=app()
         runBlocking{v.processing.saveMemoryRules(MemoryRules(proactiveRecall=false,immediateWrite=true,adaptiveContext=true))}
-        ui.runOnIdle{v.tab=2};ui.onNodeWithTag("settings-processing").performClick();ui.onNodeWithTag("settings-memory-rules").performClick()
+        ui.runOnIdle{v.tab=2};ui.onNodeWithTag("settings-memory-rules").performClick()
         ui.onNodeWithTag("rules-review-open").performScrollTo().assertTextContains("每 5 轮",substring=true).performClick()
         ui.onNodeWithTag("rules-review-minus").performClick();ui.onNodeWithTag("rules-review-value").assertTextContains("4")
         ui.onNodeWithTag("rules-review-plus").performClick();ui.onNodeWithTag("rules-review-value").assertTextContains("5")

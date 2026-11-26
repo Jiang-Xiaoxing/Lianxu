@@ -46,7 +46,7 @@ class CompanionTimeReferenceTest {
         assertEquals(listOf(reference),continued.messages.filter{it.turnContext});assertEquals(listOf(thinking),continued.messages.filter{it.thinkingContext})
         assertEquals(listOf(reference,thinking),continued.messages.takeLast(2))
         assertEquals("纯虚构工具结果",continued.messages.single{it.role=="tool"}.content)
-        assertEquals(continued.messages.indexOfFirst{it.role=="assistant"}+1,continued.messages.indexOfFirst{it.role=="tool"})
+        assertEquals(continued.messages.indexOfFirst{it.role=="assistant"&&it.toolCalls.isNotEmpty()}+1,continued.messages.indexOfFirst{it.role=="tool"})
         assertEquals(first.messages.last{it.role=="user"},continued.messages.last{it.role=="user"})
         assertFalse(continued.messages.last{it.role=="user"}.content.endsWith("\n\n"+CompanionPrompt.THINKING_REMINDER))
         assertEquals(1,continued.messages.sumOf{Regex.fromLiteral("[思考语言]").findAll(it.content).count()})

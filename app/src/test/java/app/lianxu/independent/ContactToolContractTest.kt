@@ -66,7 +66,7 @@ class ContactToolContractTest {
     }
     @Test fun knownRootErrorsAreSpecificAndDoNotClaimUnexecutedTimeValidation(){
         val empty=feedback("{}");assertEquals("EMPTY_CONTACT",empty["validation_code"]);assertEquals(listOf("$"),fields(empty))
-        val parameters=feedback("""{"改主动参数":{}}""");assertEquals("INVALID_CONTACT_PARAMETERS",parameters["validation_code"]);assertEquals(listOf("改主动参数"),fields(parameters))
+        val parameters=feedback("""{"改主动参数":{}}""");assertEquals("INVALID_CONTACT_FIELDS",parameters["validation_code"]);assertEquals(listOf("$"),fields(parameters))
         val root=feedback("""{"extra":1,"future":{}}""");assertEquals(listOf("$"),fields(root));assertFalse(root.toString().contains("时间校验"))
     }
     @Test fun stateFailuresDoNotInventParameterProblemsOrTurnSuccessIntoFailure(){

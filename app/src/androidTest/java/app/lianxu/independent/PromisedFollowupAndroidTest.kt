@@ -24,9 +24,7 @@ class PromisedFollowupAndroidTest {
     private fun state()=store.readableDatabase.rawQuery("SELECT state FROM companion_opportunities WHERE id='followup'",null).use{it.moveToFirst();it.getString(0)}
     private fun notBefore()=store.readableDatabase.rawQuery("SELECT not_before FROM companion_opportunities WHERE id='followup'",null).use{it.moveToFirst();it.getLong(0)}
     @Test fun lowMissingStillReconsidersAtNotBefore():Unit=runBlocking {
-        val (r,f)=core.relationshipForecast(store.readableDatabase,"a")
-        val due=RelationshipProactive.next(r.parameters,r.state.lastContact,emptyList(),now,relationshipDayStart(now),f)
-        assertTrue("missing should still be below threshold",due==null||due>now)
+        assertEquals(0.0, core.relationship("a").state.missing, 1e-6)
         val o=core.claim("followup",owner)!!;assertEquals("running",state());var calls=0
         val model=CompanionModel(object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{calls++;return TextChatResult.Success("""{"action":"send","reason":"回访","text":"现在怎么样？"}""")}})
         val s=core.snapshot("a");val d=model.reconsider(ModelConfig("synthetic","测试","custom","https://example.invalid","test",128000,2048),"synthetic",o,s,"测试",now,"")

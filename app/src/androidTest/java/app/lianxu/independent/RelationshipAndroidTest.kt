@@ -25,7 +25,7 @@ class RelationshipAndroidTest {
                 val reply=if(adaptive)CompanionPrompt.replyReferences(s.references).joinToString("\n"){it.label+"\n"+it.text}else s.replyPrompt
                 for(text in listOf(reply,s.proactivePrompt)){
                     assertEquals(1,Regex.fromLiteral(RelationshipPrompt.LABEL).findAll(text).count())
-                    assertTrue(text.contains("开心=${before.happy}"));assertTrue(text.contains("信任=${before.trust}"))
+                    assertTrue(text.contains(RelationshipSummary.mood(before).sentence));assertTrue(text.contains(RelationshipSummary.trust(before.trust)))
                     assertTrue(text.contains(words));assertTrue(text.contains(ExperiencePresentation.reference(ref)))
                     assertTrue(text.contains("状态依据"));assertFalse(text.contains("当前关系小结"));assertFalse(text.contains("主动交流语气："))
                 }
@@ -61,7 +61,7 @@ class RelationshipAndroidTest {
             store.close();store=Store(context,"$name.db");core=CompanionRepository(store){clock}
             assertEquals(before,core.relationship("r").state)
             assertTrue(core.snapshot("r").references.single{it.label==RelationshipPrompt.LABEL}.mandatory)
-            assertTrue(core.snapshot("r").prompt.contains("失望=0.27"))
+            assertTrue(core.snapshot("r").prompt.contains("对先前的落空还有点在意"))
             clock=origin+118*RelationshipProjector.HOUR;add("电影真好看，谢谢你陪我",c=.6,fulfills=promise)
             // The first small positive impact fades for 98 hours with a 14-day half-life.
             // Fulfilment then adds .22 * .6 of the remaining trust capacity (independent arithmetic).

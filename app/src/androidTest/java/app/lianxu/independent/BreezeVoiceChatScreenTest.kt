@@ -46,11 +46,15 @@ class BreezeVoiceChatScreenTest {
             bubble.performClick()
             bubble.assert(hasStateDescription("已暂停"))
             bubble.performTouchInput { longClick() }
+            ui.onNodeWithTag("chat-menu-copy").assertIsDisplayed()
+            ui.onNodeWithTag("chat-menu-quote").assertIsDisplayed()
+            ui.onNodeWithTag("chat-menu-transcript").assertTextEquals("转文字").performClick()
             val transcript = ui.onNodeWithText("到家就好。")
             transcript.assertIsDisplayed()
             saveVoiceTestScreenshot("voice-conversation")
             transcript.performTouchInput { longClick() }
-            ui.onNodeWithText("这条消息的使用方式").assertIsDisplayed()
+            ui.onNodeWithTag("chat-menu-transcript").assertTextEquals("收起").performClick()
+            transcript.assertDoesNotExist()
         } finally {
             wav.delete()
             store.close()

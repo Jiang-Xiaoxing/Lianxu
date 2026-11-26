@@ -18,7 +18,7 @@ class ToneExamplesRemovalUiTest {
         override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {
             // Completed seeded turns may trigger private review; that is unrelated to the retired
             // tone-example generator. Reject/count every other request, including any old generator.
-            if(request.messages.any{"[多轮后台回顾]" in it.content}){
+            if(request.messages.any{ReviewBatchModel.HEADING in it.content}){
                 val rows=org.json.JSONArray(request.messages.last{it.role=="user"}.content)
                 val records=org.json.JSONArray()
                 for(i in 0 until rows.length())records.put(org.json.JSONObject().put("source",rows.getJSONObject(i).getLong("source")).put("record",org.json.JSONObject.NULL))

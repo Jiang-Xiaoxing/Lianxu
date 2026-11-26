@@ -72,9 +72,10 @@ class OrderedChatReplyTest {
         val turn=ChatTurn("t","r",1,2,TurnState.COMPLETED,1,"m",null)
         assertNotEquals(OrderedChatReply.audioKey(turn,"原句\n\n原句",0),OrderedChatReply.audioKey(turn,"原句\n\n原句",1))
         assertNull(OrderedChatReply.decode("旧文字",null))
-        val raw="一\n\n二\n\n三\n\n四\n\n五"
+        val segments=(1..12).map(Int::toString)
+        val raw=segments.joinToString("\n\n")
         val delivery=ReplyDelivery().also{it.update(raw,final=true)}
         assertEquals(ChatBubbleSegments.forMessage(raw,false),delivery.bubbles)
-        assertEquals(listOf("一","二","三","四\n\n五"),delivery.bubbles)
+        assertEquals(segments,delivery.bubbles)
     }
 }

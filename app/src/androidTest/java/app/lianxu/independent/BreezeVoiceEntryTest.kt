@@ -1,5 +1,9 @@
 package app.lianxu.independent
 
+import androidx.activity.compose.setContent
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import android.app.Activity
 import android.app.Instrumentation
 import android.content.ContentValues
@@ -25,6 +29,26 @@ class BreezeVoiceEntryTest {
     @get:Rule(order=1) val ui=createAndroidComposeRule<MainActivity>()
     private val inst=InstrumentationRegistry.getInstrumentation()
     private val app get()=inst.targetContext
+    @Test fun helpLinksOpenTheApprovedPagesWithoutLaunchingABrowser() {
+        val opened = mutableListOf<String>()
+        val handler = object : UriHandler {
+            override fun openUri(uri: String) { opened.add(uri) }
+        }
+        val account = BreezeVoiceAccount(app)
+        ui.activityRule.scenario.onActivity { activity ->
+            activity.setContent {
+                LianxuTheme {
+                    CompositionLocalProvider(LocalUriHandler provides handler) {
+                        BreezeVoiceConnectSheet(account, false) {}
+                    }
+                }
+            }
+        }
+        ui.onNodeWithTag("voice-key-help").performScrollTo().performClick()
+        ui.onNodeWithTag("voice-site-help").performScrollTo().performClick()
+        ui.runOnIdle { assertEquals(listOf("https://breezeblue.ai/app/developer/api-keys", "https://breezeblue.ai/zh"), opened) }
+    }
+
     private fun clickText(text:String)=ui.onNodeWithText(text).performScrollTo().performClick()
     private fun waitText(text:String)=ui.waitUntil(12000){ui.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()}
     private fun shot(file:String){
@@ -34,8 +58,10 @@ class BreezeVoiceEntryTest {
         finally{image.recycle()}
     }
     @Test fun settingsBindingAndStudioFromApp(){
-        // Fixture changes a dedicated probe's voice vault and preferences. Never operate on a user's test channel.
-        check(app.packageName.endsWith(".voicewaveprobe") || app.packageName.endsWith(".voicestudiorefreshprobe"))
+        // Only the voice probes and the development debug package may write the fixture account.
+        check(app.packageName.endsWith(".voicewaveprobe") || app.packageName.endsWith(".voicestudiorefreshprobe") ||
+            app.packageName == "app.lianxu.independent.companionstage1")
+        val fixtureKey = "synthetic-entry-fixture"
         val resolver=app.contentResolver
         val audio=inst.context.assets.open("voice/modulated-tone.mp3").use{it.readBytes()}
         val uri=requireNotNull(resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,ContentValues().apply{
@@ -88,13 +114,19 @@ class BreezeVoiceEntryTest {
             ui.onNodeWithTag("voice-action-breezeblue").assertExists()
             ui.onNodeWithTag("voice-action-breezeblue").performClick()
             ui.onNodeWithTag("voice-verify").assertIsNotEnabled()
+            ui.onNodeWithTag("voice-connect-guide").assertExists()
+            ui.onNodeWithTag("voice-key-help").assertExists()
+            ui.onNodeWithTag("voice-site-help").assertExists()
             val input=ui.onNodeWithTag("voice-key-input")
             input.performTextInput("simulate-failure")
-            ui.onNodeWithTag("voice-verify").assertIsEnabled().performClick()
+            ui.onNodeWithTag("voice-verify").performScrollTo().assertIsEnabled().performClick()
             waitText("密钥无效，检查后再试")
-            input.performTextInput("synthetic-entry-fixture")
-            ui.onNodeWithTag("voice-verify").assertIsEnabled().performClick()
+            input.performTextReplacement(fixtureKey)
+            ui.onNodeWithTag("voice-verify").performScrollTo().assertIsEnabled().performClick()
             waitText("已连接")
+            ui.onNodeWithTag("voice-connect-guide").assertDoesNotExist()
+            ui.onNodeWithTag("voice-key-help").assertExists()
+            ui.onNodeWithTag("voice-site-help").assertExists()
             ui.onNodeWithTag("voice-cancel").performClick()
             ui.waitForIdle()
             ui.onNodeWithText("API 语音").assertIsDisplayed()
@@ -132,6 +164,7 @@ class BreezeVoiceEntryTest {
             waitText("测试音色甲")
             shot("library")
 
+            ui.onNodeWithTag("voice-library-refresh").assertIsEnabled()
             fun pull(empty: Boolean, expected: String) {
                 val before = paths.count { it == "voices" }
                 emptyCatalog.set(empty)
@@ -141,20 +174,21 @@ class BreezeVoiceEntryTest {
             }
             pull(true, "还没有保存的音色")
             pull(false, "测试音色甲")
-            fun openLine() = ui.onNodeWithText("试听台词").performClick()
+            fun openLine() = ui.onNodeWithTag("voice-audition-line-open").performClick()
             fun completeLine() = ui.onNodeWithText("完成").performClick()
             fun audition(expected: String) {
                 val before = ttsLines.size
                 ui.onNodeWithContentDescription("试听测试音色甲").performClick()
                 ui.waitUntil(12000) { ttsLines.size == before + 1 }
                 assertEquals(expected, ttsLines.last())
-                waitText("停止播放")
-                ui.onNodeWithText("停止播放").performClick()
+                waitText("正在试听… 轻触停止")
+                ui.onNodeWithContentDescription("停止试听测试音色甲").performClick()
             }
             val custom = "今天风很轻，想和你散散步。"
             openLine()
             ui.onNodeWithTag("voice-audition-line").performTextReplacement(custom)
             completeLine()
+            ui.onNodeWithText("试听句：「$custom」").assertExists()
             openLine()
             ui.onNodeWithText(custom).assertExists()
             shot("line")
@@ -181,14 +215,15 @@ class BreezeVoiceEntryTest {
             ui.onNodeWithTag("voice-audition-line").performTextReplacement("   ")
             completeLine()
             audition(BreezeVoiceStudio.DEFAULT_LINE)
-            ui.onNodeWithText("＋ 创建").performClick()
-            ui.onNodeWithText("录音克隆").assertExists()
-            ui.onNodeWithText("文字设计").performClick()
+            fun create(tag: String) {
+                ui.onNodeWithTag("voice-library-list").performScrollToNode(hasTestTag(tag))
+                ui.onNodeWithTag(tag).performClick()
+            }
+            create("voice-create-design")
             ui.onNodeWithText("描述想要的声音").performTextInput("轻柔的测试声音")
             clickText("生成预览");waitText("音色预览")
             ui.activityRule.scenario.onActivity{it.onBackPressedDispatcher.onBackPressed()}
-            ui.onNodeWithText("＋ 创建").performClick()
-            ui.onNodeWithText("录音克隆").performClick()
+            create("voice-create-clone")
             val filter=IntentFilter(Intent.ACTION_OPEN_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);addDataType("audio/*")}
             val monitor=inst.addMonitor(filter,Instrumentation.ActivityResult(Activity.RESULT_OK,Intent().setData(uri)),true)
             try {clickText("选择本地录音");waitText("本地试听")}finally{inst.removeMonitor(monitor)}
@@ -201,7 +236,7 @@ class BreezeVoiceEntryTest {
             waitText("服务商要求验证此音色，完成验证后再保存。")
             ui.onNodeWithText("另存为新音色").assertIsNotEnabled()
             ui.activityRule.scenario.onActivity{it.onBackPressedDispatcher.onBackPressed()}
-            ui.onAllNodesWithText("改音色")[1].performClick()
+            ui.onAllNodesWithText("微调")[1].performClick()
             ui.onNodeWithText("原音色 · 测试音色乙").assertIsDisplayed()
             assertTrue(remixSources.isEmpty())
             ui.onNodeWithText("描述想要的声音").performTextInput("更柔和一点")
@@ -213,6 +248,12 @@ class BreezeVoiceEntryTest {
             assertEquals(3,ttsLines.size)
             assertEquals(1,paths.count{it.endsWith("/save")});assertEquals(1,paths.count{it=="voice-previews/clone"})
             assertEquals("a",account.selected("seed-lin"))
-        }finally{AppServices.voiceConnections=old;VoiceConnectProbe.reachable=oldProbe;resolver.delete(uri,null,null)}
+        } finally {
+            AppServices.voiceConnections = old
+            VoiceConnectProbe.reachable = oldProbe
+            ModelVault(app, "breezeblue-speech").delete("tts-${stableDigest(fixtureKey)}")
+            check(app.getSharedPreferences("breezeblue-roles", android.content.Context.MODE_PRIVATE).edit().clear().commit())
+            resolver.delete(uri, null, null)
+        }
     }
 }

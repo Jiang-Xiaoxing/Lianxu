@@ -28,21 +28,33 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class ChatImagesUiTest {
     private val calls=AtomicInteger()
+    private val saves=AtomicInteger()
     private val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{calls.incrementAndGet();return TextChatResult.Success("这张合成图片已经收到了。")}}
     @get:Rule(order=0)val fixture=MockChatFixture({client},wrapFinalReply=false)
     @get:Rule(order=1)val ui=createAndroidComposeRule<MainActivity>()
     private lateinit var vm:AppState;private var uri:Uri?=null;private var launches=0
     private val instrument get()=InstrumentationRegistry.getInstrumentation()
-    private fun show(){
+    private var permissionRequests = 0
+    private fun show(simulateLegacyPermission: Boolean = false){
         ui.runOnUiThread{vm=ViewModelProvider(ui.activity,ViewModelProvider.AndroidViewModelFactory.getInstance(ui.activity.application))[AppState::class.java]}
         ui.waitUntil(30000){vm.ready};ui.runOnIdle{vm.open("chat","seed-lin")}
         val owner=object:ActivityResultRegistryOwner{override val activityResultRegistry=object:ActivityResultRegistry(){
             override fun <I,O> onLaunch(requestCode:Int,contract:ActivityResultContract<I,O>,input:I,options:ActivityOptionsCompat?){
+                if (contract is ActivityResultContracts.RequestPermission) {
+                    assertTrue(simulateLegacyPermission)
+                    assertEquals(android.Manifest.permission.WRITE_EXTERNAL_STORAGE, input)
+                    val grant = ++permissionRequests == 2
+                    Handler(Looper.getMainLooper()).post { dispatchResult(requestCode, grant) }
+                    return
+                }
                 assertTrue(contract is ActivityResultContracts.PickVisualMedia);launches++;val selected=uri
                 Handler(Looper.getMainLooper()).post{dispatchResult(requestCode,if(selected==null)Activity.RESULT_CANCELED else Activity.RESULT_OK,Intent().setData(selected))}
             }
         }}
-        ui.runOnUiThread{ui.activity.setContent{CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner){LianxuTheme(false){Lianxu(vm)}}}}
+        ui.runOnUiThread{ui.activity.setContent{CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner,
+            LocalChatMediaPermissionCheck provides { !simulateLegacyPermission }, LocalChatMediaSaver provides { _, ref, source ->
+            assertTrue(ref.mime.startsWith("image/")); source.input().use { assertTrue(it.read()>=0) }; saves.incrementAndGet(); Unit
+        }){LianxuTheme(false){Lianxu(vm)}}}}
     }
     private fun source():Uri{
         val b=Bitmap.createBitmap(320,260,Bitmap.Config.ARGB_8888);b.eraseColor(Color.rgb(199,218,173));val c=android.graphics.Canvas(b);val p=android.graphics.Paint().apply{color=Color.YELLOW;isAntiAlias=true};c.drawCircle(150f,130f,65f,p);p.color=Color.rgb(110,80,40);c.drawCircle(150f,130f,26f,p)
@@ -51,6 +63,26 @@ class ChatImagesUiTest {
     }
     private fun pick(){uri=source();ui.onNodeWithTag("chat-attach").performClick();ui.waitUntil(10000){vm.chatDrafts["seed-lin"]?.image?.value!=null};ui.waitForIdle()}
     private fun shot(name:String){ui.waitForIdle();val bitmap=instrument.uiAutomation.takeScreenshot();val dir=File(instrument.targetContext.getExternalFilesDir(null),"chat-image-evidence").apply{mkdirs()};File(dir,"$name.png").outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()}
+    @Test fun savingPictureRequestsPermissionAndOnlySavesAfterGrant() {
+        show(simulateLegacyPermission = true)
+        pick()
+        ui.onNodeWithTag("send-message").performClick()
+        ui.waitUntil(15000) { vm.messages.any { it.mine && it.image != null } && !vm.chatSending }
+        val id = vm.messages.single { it.mine && it.image != null }.id
+        fun save() {
+            ui.onNodeWithTag("message-image-$id", true).performTouchInput { longClick() }
+            ui.onNodeWithTag("chat-menu-save").performClick()
+        }
+        save()
+        ui.onNodeWithTag("chat-action-toast").assertTextEquals("未授予存储权限，无法保存到相册")
+        assertEquals(1, permissionRequests)
+        assertEquals(0, saves.get())
+        save()
+        ui.waitUntil(5000) { saves.get() == 1 }
+        ui.onNodeWithTag("chat-action-toast").assertTextEquals("已保存到相册")
+        assertEquals(2, permissionRequests)
+    }
+
     @Test fun approvedPendingCardRemoveImageOnlyCaptionSendAndReview(){
         show();pick();assertEquals(0,calls.get());ui.onNodeWithTag("pending-picture-collapsed").assertIsDisplayed();shot("01-collapsed")
         ui.onNodeWithTag("message-input").performClick();ui.onNodeWithTag("pending-picture-expanded").assertIsDisplayed()
@@ -62,7 +94,13 @@ class ChatImagesUiTest {
         assertEquals(TurnState.COMPLETED,vm.turns.last{it.friendId=="seed-lin"}.state)
         val sent=vm.messages.single{it.friendId=="seed-lin"&&it.mine&&it.text.isEmpty()&&it.image!=null}
         ui.onNodeWithTag("pending-picture").assertDoesNotExist();ui.onNodeWithTag("message-image-${sent.id}",true).performClick();ui.onNodeWithTag("image-viewer").assertIsDisplayed();ui.onNodeWithTag("image-viewer-close").performClick()
-        ui.onNodeWithTag("message-image-${sent.id}",true).performTouchInput{longClick()};ui.onNodeWithText("这条消息的使用方式").assertIsDisplayed();ui.onNodeWithText("取消").performClick()
+        ui.onNodeWithTag("message-image-${sent.id}",true).performTouchInput{longClick()}
+        ui.onNodeWithTag("chat-menu-save").assertIsDisplayed()
+        ui.onNodeWithTag("chat-menu-quote").assertIsDisplayed()
+        ui.onNodeWithTag("chat-menu-copy").assertDoesNotExist()
+        ui.onNodeWithTag("chat-menu-save").performClick()
+        ui.waitUntil(5000) { saves.get()==1 }
+        ui.onNodeWithText("已保存到相册").assertIsDisplayed()
         pick();ui.onNodeWithTag("message-input").performTextInput("今天看到的花")
         ui.onNodeWithTag("send-message").performClick();ui.waitUntil(15000){vm.messages.any{it.text=="今天看到的花"&&it.image!=null}&&!vm.chatSending}
         assertEquals(TurnState.COMPLETED,vm.turns.last{it.friendId=="seed-lin"}.state)

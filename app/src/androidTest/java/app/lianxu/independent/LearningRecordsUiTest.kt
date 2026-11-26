@@ -2,7 +2,6 @@ package app.lianxu.independent
 
 import android.graphics.Bitmap
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.core.view.WindowInsetsCompat
@@ -33,68 +32,119 @@ class LearningRecordsUiTest {
     private fun shot(name:String){
         ui.waitForIdle();val instrument=InstrumentationRegistry.getInstrumentation()
         val dir=File(instrument.targetContext.getExternalFilesDir(null),"evidence-learning-view").apply{mkdirs()}
+        instrument.uiAutomation.waitForIdle(250,5000)
         val bitmap=instrument.uiAutomation.takeScreenshot()
-        File(dir,"$name.png").outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}
-        bitmap.recycle()
+        val file=File(dir,"$name.png")
+        try{
+            file.outputStream().use{assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG,100,it))}
+            InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")?.let{output->
+                File(output).mkdirs()
+                file.copyTo(File(output,file.name),overwrite=true)
+            }
+        }finally{bitmap.recycle()}
     }
-    @Test fun allFourChipsAlsoSwipeAndKeepSearchAndIndependentListPositions(){
+    @Test fun learningActionsPersistAndSwipingMovesBetweenWorldTabsWithoutModelCalls(){
         start()
-        runBlocking{val seed=LearningRecordsFixture(vm.processing.store)
-            for(kind in listOf("viewpoint","interest","habit"))repeat(7){index->
-                seed.event("seed-lin","合成${kind}来源$index"){wire,c->wire.put("learning",seed.learning("","propose",org.json.JSONArray().put(seed.evidence(c.current.turnId)),"合成${kind}记录$index").put("kind",kind))}
-            };vm.refreshProcessing()}
-        val before=runBlocking{vm.companion.learningRecords("seed-lin")};assertEquals(21,before.size)
-        ui.runOnIdle{vm.open("role-learning","seed-lin")};awaitTag("learning-list")
-        ui.onNodeWithTag("learning-search").performTextInput("合成")
-        ui.runOnIdle{WindowInsetsControllerCompat(ui.activity.window,ui.activity.window.decorView).hide(WindowInsetsCompat.Type.ime())}
-        fun swipe(left:Boolean){ui.onNodeWithTag("learning-list").performTouchInput{swipe(Offset(width*(if(left).8f else .2f),height*.7f),Offset(width*(if(left).2f else .8f),height*.7f),400)}}
-        fun scroll()=ui.onNodeWithTag("learning-list").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
-        ui.capturePagerDrag("learning")
-        ui.onNodeWithTag("learning-filter-all").assertIsSelected();swipe(false);ui.onNodeWithTag("learning-filter-all").assertIsSelected();shot("swipe-all-chips")
-        ui.onNodeWithTag("learning-list").performScrollToIndex(7);val allPosition=scroll();assertTrue(allPosition>0)
-        swipe(true);ui.onNodeWithTag("learning-filter-viewpoint").assertIsSelected();ui.onNodeWithTag("learning-list").performScrollToIndex(6);val viewPosition=scroll()
-        swipe(true);ui.onNodeWithTag("learning-filter-interest").assertIsSelected();swipe(true);ui.onNodeWithTag("learning-filter-habit").assertIsSelected();swipe(true);ui.onNodeWithTag("learning-filter-habit").assertIsSelected();shot("swipe-habit")
-        swipe(false);swipe(false);assertEquals(viewPosition,scroll(),2f);swipe(false);assertEquals(allPosition,scroll(),2f)
-        ui.onNodeWithTag("learning-list").performScrollToIndex(0);ui.onNodeWithTag("learning-search").assertTextContains("合成")
-        repeat(2){ui.onNodeWithTag("learning-filter-habit").performScrollTo().performClick();swipe(false);ui.onNodeWithTag("learning-filter-interest").assertIsSelected();ui.onNodeWithTag("learning-filter-all").performClick();ui.onNodeWithTag("learning-filter-all").assertIsSelected()}
-        ui.onNodeWithTag("learning-list").performTouchInput{swipeUp()};ui.onNodeWithTag("learning-list").performScrollToIndex(0);ui.onNodeWithTag("learning-filter-all").assertIsSelected()
-        ui.onNodeWithTag("learning-list").performTouchInput{swipe(Offset(width-1f,height*.7f),Offset(width*.3f,height*.7f),400)};ui.onNodeWithTag("learning-filter-all").assertIsSelected()
-        assertEquals(before,runBlocking{vm.companion.learningRecords("seed-lin")});assertEquals(0,calls.get())
+        val record=runBlocking{
+            val seed=LearningRecordsFixture(vm.processing.store)
+            seed.now=System.currentTimeMillis()
+            seed.proposeHabit("seed-lin")
+            vm.refreshProcessing()
+            vm.companion.learningRecords("seed-lin").single()
+        }
+        val item="learning-item-${record.state.id}"
+        val before=runBlocking{vm.processing.store.messages()}
+        ui.runOnIdle{vm.open("detail","seed-lin")}
+        ui.onNodeWithTag("role-learning-open").performScrollTo().performClick()
+        awaitTag(item)
+        ui.onNodeWithTag("inner-tab-1").assertIsSelected()
+        for(kind in listOf("interest","habit","viewpoint","all")){
+            ui.onNodeWithTag("learning-filter-$kind").performScrollTo().performClick().assertIsSelected()
+        }
+        ui.onNodeWithTag("learning-list").performTouchInput{swipe(Offset(width*.80f,height*.78f),Offset(width*.20f,height*.78f),380)}
+        awaitTag("memory-timeline");ui.onNodeWithTag("inner-tab-2").assertIsSelected()
+        ui.onNodeWithTag("memory-browser").performTouchInput{swipe(Offset(width*.20f,height*.72f),Offset(width*.80f,height*.72f),380)}
+        awaitTag(item)
+        ui.onNodeWithTag(item).performScrollTo().performClick()
+        fun act(tag:String){awaitTag(tag);ui.onNodeWithTag(tag).performScrollTo().performClick()}
+        act("learning-pin")
+        ui.waitUntil(8000){runBlocking{vm.companion.learningRecords("seed-lin").single().state.pinned}}
+        act("learning-pause")
+        ui.waitUntil(8000){runBlocking{vm.companion.learningRecords("seed-lin").single().state.state=="paused"}}
+        ui.onNodeWithTag("detail-back").performClick();awaitTag("learning-list")
+        ui.onNodeWithTag(item).assertDoesNotExist()
+        ui.onNodeWithTag("learning-archived").performClick();ui.onNodeWithTag(item).performScrollTo().performClick()
+        act("learning-pause");ui.waitUntil(8000){runBlocking{vm.companion.learningRecords("seed-lin").single().state.state!="paused"}}
+        act("learning-delete");ui.onNodeWithTag("learning-delete-confirm").performClick()
+        ui.waitUntil(8000){runBlocking{vm.companion.learningRecords("seed-lin").isEmpty()}}
+        assertEquals(before,runBlocking{vm.processing.store.messages()});assertEquals(0,calls.get())
+    }
+    @Test fun resumeReturnsAFadedRecordToTheActiveList()=reactivateFaded("learning-pause")
+    @Test fun pinReturnsAFadedRecordToTheActiveList()=reactivateFaded("learning-pin")
+    private fun reactivateFaded(control:String){
+        start()
+        val state=runBlocking{
+            val seed=LearningRecordsFixture(vm.processing.store).apply{now=System.currentTimeMillis()-35*RelationshipProjector.DAY}
+            seed.proposeHabit("seed-lin")
+            vm.companion.learningRecords("seed-lin").single().state
+        }
+        assertEquals("faded",state.state)
+        val item="learning-item-${state.id}"
+        ui.runOnIdle{vm.open("role-learning","seed-lin")}
+        awaitTag("learning-empty")
+        ui.onNodeWithTag("learning-archived").performClick()
+        ui.onNodeWithTag(item).performScrollTo().performClick()
+        ui.onNodeWithText("重新启用").assertExists()
+        ui.onNodeWithTag(control).performScrollTo().performClick()
+        ui.waitUntil(8000){runBlocking{vm.companion.learningRecords("seed-lin").single().state.state!="faded"}}
+        ui.onNodeWithTag("detail-back").performClick()
+        ui.onNodeWithText("还没有收起的记录").assertExists()
+        ui.onNodeWithTag("learning-archived").performClick()
+        ui.onNodeWithTag(item).assertIsDisplayed()
+        assertEquals(control=="learning-pin",runBlocking{vm.companion.learningRecords("seed-lin").single().state.pinned})
+        assertEquals(0,calls.get())
     }
     @Test fun roleEntrySearchDetailAndHistoryAreReadOnly(){
         start()
         val records=runBlocking{
-            val seed=LearningRecordsFixture(vm.processing.store)
+            val seed=LearningRecordsFixture(vm.processing.store).apply{now=System.currentTimeMillis()+60_000}
             val first=seed.proposeHabit("seed-lin")
             seed.reviseHabit(first,"seed-lin")
+            seed.event("seed-lin","散步时慢一点，就能看见路边的小花"){wire,context->
+                val evidence=org.json.JSONArray().put(seed.evidence(context.current.turnId))
+                wire.put("learning",seed.learning("","propose",evidence,"散步时，你喜欢慢下来看看路边的小花")
+                    .put("kind","viewpoint").put("scope","一起散步时"))
+            }
             vm.refreshProcessing()
             vm.companion.learningRecords("seed-lin")
         }
-        val record=records.single()
+        val record=records.single{it.state.kind=="habit"}
         val before=runBlocking{vm.processing.store.messages()}
         ui.runOnIdle{vm.open("detail","seed-lin")}
         ui.onNodeWithTag("role-learning-open").performScrollTo().performClick()
         awaitTag("learning-item-${record.state.id}")
+        shot("01-learning-list")
         ui.onNodeWithTag("learning-filter-interest").performClick()
         ui.onNodeWithText("没有找到匹配的记录").assertExists()
         ui.onNodeWithTag("learning-filter-all").performClick()
+        ui.onNodeWithTag("learning-open-search").performClick()
         ui.onNodeWithTag("learning-search").performTextInput("不会匹配的合成词")
         ui.onNodeWithText("没有找到匹配的记录").assertExists()
         ui.onNodeWithTag("learning-search").performTextClearance()
         ui.onNodeWithTag("learning-search").performTextInput(record.state.scope)
         ui.runOnIdle{WindowInsetsControllerCompat(ui.activity.window,ui.activity.window.decorView).hide(WindowInsetsCompat.Type.ime())}
-        shot("01-learning-list")
         ui.onNodeWithTag("learning-item-${record.state.id}").performScrollTo().performClick()
         ui.onNodeWithTag("learning-detail").assertExists()
-        ui.onNodeWithText("当前状态：可使用").assertExists()
+        ui.onNodeWithText("${record.state.familiarity} · 聊天时会参考").assertExists()
+        ui.onNodeWithTag("learning-evidence").assertDoesNotExist()
+        ui.onNodeWithTag("learning-history").assertDoesNotExist()
         shot("02-learning-detail")
-        ui.onNodeWithTag("learning-detail").performScrollToNode(hasText(record.evidence.first().text))
-        ui.onNodeWithText(record.evidence.first().text).assertIsDisplayed()
-        ui.onNodeWithTag("learning-detail").performScrollToNode(hasTestTag("learning-history"))
-        ui.onNodeWithTag("learning-history").assertIsDisplayed()
-        ui.onNodeWithTag("learning-detail").performScrollToNode(hasTestTag("learning-change-evidence-1"))
-        ui.onNodeWithTag("learning-change-evidence-1").performClick()
-        shot("03-learning-history")
+        ui.onNodeWithTag("learning-origin-toggle").performScrollTo().performClick()
+        ui.onNodeWithText(record.evidence.first().text).performScrollTo().assertIsDisplayed()
+        ui.onNodeWithText("补充调整",substring=true).performScrollTo().assertIsDisplayed()
+        shot("03-learning-origin")
+        ui.onNodeWithTag("learning-history").assertExists()
+        ui.onNodeWithText("查看这次依据",substring=true).assertDoesNotExist()
         ui.onNodeWithTag("detail-back").performClick()
         ui.onNodeWithTag("learning-search").assertTextContains(record.state.scope)
         ui.onNodeWithTag("learning-back").performClick()
@@ -103,10 +153,24 @@ class LearningRecordsUiTest {
         assertEquals(records,runBlocking{vm.companion.learningRecords("seed-lin")})
         assertEquals(before,runBlocking{vm.processing.store.messages()})
     }
+    @Test fun roleMemoryEntryOpensMemoryAndBackFromMoodReturnsToRole(){
+        start()
+        ui.runOnIdle{vm.open("detail","seed-lin")}
+        ui.onNodeWithTag("role-processing-open").performScrollTo().performClick()
+        ui.onNodeWithTag("inner-tab-2").assertIsSelected()
+        ui.onNodeWithTag("inner-tab-0").performClick();awaitTag("mood-hero")
+        ui.waitUntil(8000){ui.onAllNodesWithTag("memory-browser").fetchSemanticsNodes().isEmpty()}
+        ui.onNodeWithTag("inner-tab-0").assertIsSelected()
+        ui.onNodeWithTag("mood-hero").assertIsDisplayed()
+        shot("04-mood-hero")
+        ui.onNodeWithTag("back").performClick()
+        ui.onNodeWithTag("role-processing-open").assertExists()
+        assertEquals(0,calls.get())
+    }
     @Test fun roleSwitchAndWithdrawnSourceDoNotLeaveStaleLearning(){
         start()
         val first=runBlocking{
-            val seed=LearningRecordsFixture(vm.processing.store)
+            val seed=LearningRecordsFixture(vm.processing.store).apply{now=System.currentTimeMillis()}
             seed.proposeHabit("seed-lin").also{vm.refreshProcessing()}
         }
         val id=runBlocking{vm.companion.learningRecords("seed-lin").single().state.id}
@@ -118,10 +182,9 @@ class LearningRecordsUiTest {
         ui.onNodeWithTag("learning-evidence").assertDoesNotExist()
         ui.runOnIdle{vm.open("role-learning","seed-an")}
         awaitTag("learning-empty")
-        ui.onNodeWithText("时安 · 学习记录").assertExists()
+        ui.onNodeWithText("时安").assertExists()
         ui.onNodeWithText("还没有学习记录").assertExists()
         ui.onNodeWithTag("learning-item-$id").assertDoesNotExist()
-        shot("04-learning-empty-other-role")
         assertEquals(0,calls.get())
     }
 }

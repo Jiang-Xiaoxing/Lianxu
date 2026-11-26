@@ -40,6 +40,18 @@ class LearningRecordsAndroidTest {
         assertEquals(before,storedRows())
     }
 
+    @Test fun futureSourceAndKindRemainReadableWithVerifiedOriginalEvidence():Unit=runBlocking{
+        val first=fixture.proposeHabit()
+        val previous=requireNotNull(fixture.core.cached(first))
+        val flow=requireNotNull(previous.understanding)
+        val future=requireNotNull(flow.learning).copy(kind="future-kind",origin="future-origin")
+        store.writableDatabase.execSQL("UPDATE companion_sources SET proposal=? WHERE role=? AND source_id=?",
+            arrayOf<Any>(Gson().toJson(previous.copy(understanding=flow.copy(learning=future))),"a",first.userMessageId))
+        val restored=fixture.core.learningRecords("a").single()
+        assertEquals("future-origin",restored.origin);assertEquals("future-kind",restored.state.kind)
+        assertEquals(first.userMessageId,restored.evidence.single().messageId)
+        fixture.core.forget("a",first.userMessageId);assertTrue(fixture.core.learningRecords("a").isEmpty())
+    }
     @Test fun revisionsAndFeedbackPauseShowTheirRealSources():Unit=runBlocking {
         val first=fixture.proposeHabit()
         val revised=fixture.reviseHabit(first)

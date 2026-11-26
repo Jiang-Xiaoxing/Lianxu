@@ -103,7 +103,7 @@ class JointReplyAndroidTest {
         // A successful record is folded into a short note: its payload is not dialogue.
         val followUp=requests[1]
         assertFalse(followUp.messages.any{it.role=="tool"&&it.name==CompanionRecord.NAME})
-        assertTrue(followUp.messages.any{"[多轮后台回顾]" in it.content})
+        assertTrue(followUp.messages.any{ReviewBatchModel.HEADING in it.content})
         assertEquals(listOf("你好"),requests.first().messages.filter{it.role=="user"}.map{it.content})
         assertEquals(1,requests.first().messages.sumOf{m->Regex.fromLiteral("[思考语言]").findAll(m.content).count()})
         assertTrue(requests.first().messages.last().thinkingContext)
@@ -437,7 +437,7 @@ class JointReplyAndroidTest {
         assertFalse("a reply must not be steered by the template tone","主动交流语气" in joined)
         assertFalse("the steady template line is tone too","不催促、不施压" in joined)
         assertTrue(RelationshipPrompt.LABEL in joined);assertFalse("当前关系小结" in joined)
-        assertFalse("按模板语气" in joined);assertTrue("总和无需为1" in joined)
+        assertFalse("按模板语气" in joined);assertTrue("结合原话自主理解，不必逐项表达" in joined)
         // Both paths carry independent values and evidence, without prescribing expression.
         val snapshot=CompanionRepository(store).snapshot("a")
         assertFalse("主动交流语气" in snapshot.proactivePrompt);assertFalse("当前关系小结" in snapshot.proactivePrompt);assertFalse("按模板语气" in snapshot.proactivePrompt)

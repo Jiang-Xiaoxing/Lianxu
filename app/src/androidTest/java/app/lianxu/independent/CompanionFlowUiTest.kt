@@ -28,7 +28,7 @@ class CompanionFlowUiTest {
             if(fail)return TextChatResult.Failure(ChatFailure.NETWORK)
             val system=request.messages.filter{it.role=="system"}.joinToString{it.content}
             if(system.contains("[companion.reconsider.v1]"))return TextChatResult.Success("""{"action":"send","reason":"合成事件已经结束，可以温和关心","text":"【合成回访】事情结束了，想说说今天吗？"}""")
-            if(system.contains("[多轮后台回顾]")){
+            if(system.contains(ReviewBatchModel.HEADING)){
                 reviewCalls.incrementAndGet()
                 if(malformedRecord)return TextChatResult.Success("{\"records\":[]}")
                 val rows=org.json.JSONArray(request.messages.last{it.role=="user"}.content);val records=org.json.JSONArray()
@@ -120,9 +120,18 @@ class CompanionFlowUiTest {
         ui.waitUntil(20000){vm().turns.any{it.state==TurnState.COMPLETED}}
         val store=Store(context,fixture.database);val repo=CompanionRepository(store){clock}
         val opportunity=runBlocking{repo.queued()}.single{it.reason=="合成事件结束后的关心"}
-        ui.runOnIdle{vm().home()};clock+=900_000L;fail=true
-        val work=OneTimeWorkRequestBuilder<CompanionWorker>().setInputData(workDataOf("opportunity" to opportunity.id)).build()
-        WorkManager.getInstance(context).enqueue(work).result.get(15,TimeUnit.SECONDS)
+        ui.runOnIdle { vm().home() }
+        fail=true
+        val manager=WorkManager.getInstance(context)
+        // Advance only the fixture clock through the actual scheduled retries.
+        repeat(4) { attempt ->
+            val due=runBlocking { repo.queued().single { it.id==opportunity.id } }.notBefore
+            if(attempt>0) assertTrue(due>clock)
+            clock=due
+            val work=OneTimeWorkRequestBuilder<CompanionWorker>().setInputData(workDataOf("opportunity" to opportunity.id)).build()
+            manager.enqueue(work).result.get(15,TimeUnit.SECONDS)
+            ui.waitUntil(15000) { manager.getWorkInfoById(work.id).get()?.state==WorkInfo.State.SUCCEEDED }
+        }
         ui.waitUntil(25000){runBlocking{repo.latestContactFailure("seed-lin")}!=null}
         assertEquals(ContactFailureKind.NETWORK,runBlocking{repo.latestContactFailure("seed-lin")}!!.kind)
         fail=false
@@ -180,7 +189,7 @@ class CompanionFlowUiTest {
         ui.onNodeWithTag("companion-enabled").performClick()
         ui.waitUntil(10000){vm().companionPolicy=="enabled"}
         ui.onNodeWithTag("companion-background-hint").assertExists()
-        ui.onNodeWithText(CompanionHints.BACKGROUND).assertExists()
+        ui.onNodeWithText(backgroundSteps(android.os.Build.MANUFACTURER,android.os.Build.BRAND)).assertExists()
         ui.onNodeWithTag("companion-background-close").performClick()
         ui.onNodeWithTag("companion-background-hint").assertDoesNotExist()
         ui.onNodeWithTag("companion-page").assertExists()
@@ -233,8 +242,12 @@ class CompanionFlowUiTest {
         ui.waitUntil(10000){vm().page=="chat"&&vm().activeId=="seed-an"}
         open();ui.onNodeWithTag("chat-history").performScrollToNode(hasTestTag("message-${receipt.messageId}"))
         ui.onNodeWithTag("message-${receipt.messageId}").performTouchInput{longClick()}
-        shot("04-source-controls-dialog")
-        ui.onNodeWithTag("companion-forget").performClick()
+        ui.onNodeWithTag("chat-menu-copy").assertIsDisplayed()
+        ui.onNodeWithTag("chat-menu-quote").assertIsDisplayed()
+        ui.onNodeWithText("这条消息的使用方式").assertDoesNotExist()
+        shot("04-message-menu")
+        ui.onNodeWithTag("chat-menu-dismiss").performClick()
+        ui.runOnIdle { vm().sourceControl(receipt.messageId,true) }
         ui.waitUntil(10000){runBlocking{!repo.snapshot("seed-lin").prompt.contains("今天做一个练习面试")}}
         assertTrue(runBlocking{store.messages().any{it.text.contains("今天做一个练习面试")}})
         ui.onNodeWithTag("companion-forget").assertDoesNotExist()

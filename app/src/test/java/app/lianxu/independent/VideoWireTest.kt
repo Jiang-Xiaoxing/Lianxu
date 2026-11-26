@@ -34,8 +34,9 @@ class VideoWireTest {
     }
     @Test fun frameCountDoesNotInheritOrdinaryImageQuotaAndRolesStillApply(){
         val file=File.createTempFile("frame-wire-",".png");try{file.writeBytes(byteArrayOf(1,2,3))
-            val frames=(0..64).map{WireImage.videoFrame(file,"${it*1000} ms")}
-            assertTrue(ImageWire.fits(TextChatRequest(listOf(WireMessage("user","",images=frames)))))
+            val frames=VideoPolicy.frameTimes(180_000).map{WireImage.videoFrame(file,VideoPolicy.formatTime(it))}.toList()
+            assertEquals(24,frames.size)
+            assertTrue(ImageWire.fits(TextChatRequest(listOf(WireMessage("user","",images=frames + frames + frames)))))
             val ordinary=(0..64).map{WireImage("image/png",byteArrayOf(1,2,3))}
             assertFalse(ImageWire.fits(TextChatRequest(listOf(WireMessage("user","",images=ordinary)))))
             assertTrue(runCatching{WireMessage("assistant","文字",videos=listOf(WireVideo("video/mp4",file,"")))}.isFailure)

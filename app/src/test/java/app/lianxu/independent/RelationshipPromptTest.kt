@@ -10,17 +10,29 @@ class RelationshipPromptTest {
     private val source=SourceRef("a",12,3)
     private fun state()=RelationState(.8,.7,.6,.5,.9,.8,.7,emptyMap(),now,hurt=.6,low=.5)
     private fun render(s:RelationState?=state())=RelationshipPrompt.render(s,now){"原话"}
-    @Test fun independentValuesAreNotNormalizedOrTurnedIntoCannedMood(){
+    @Test fun moodAndRelationshipUseNaturalLanguage(){
         val text=render()
-        for(value in listOf("开心=0.9","委屈=0.6","生气=0.8","想念=0.7","低落=0.5","信任=0.8","亲近=0.7","心结=0.6","失望=0.5"))assertTrue(value,text.contains(value))
-        assertTrue(text.contains("各项独立取0–1"));assertTrue(text.contains("总和无需为1"))
-        assertFalse(text.contains("其他都还好"));assertFalse(text.contains("很开心"));assertFalse(text.contains("按模板语气"))
+        for(word in listOf("很开心","很信任","很亲近","疙瘩","落空")) assertTrue(word,text.contains(word))
+        assertFalse(Regex("""\d+\.\d+""").containsMatchIn(text))
     }
-    @Test fun unknownAndInvalidValuesAreNotInventedAsZero(){
-        val missing=render(null);assertEquals(9,Regex("=未知").findAll(missing).count())
-        val text=render(state().copy(trust=Double.NaN,closeness=Double.POSITIVE_INFINITY,tension=-.1,happy=1.01,low=0.0,hurt=1.0))
-        for(label in listOf("信任","亲近","心结","开心"))assertTrue(text.contains("$label=未知"))
-        assertTrue(text.contains("低落=0.0"));assertTrue(text.contains("委屈=1.0"));assertFalse(text.contains("NaN"));assertFalse(text.contains("Infinity"))
+    @Test fun unknownAndInvalidValuesRemainUnknown(){
+        for(text in listOf(render(null),render(state().copy(trust=Double.NaN)))){
+            assertTrue(text.contains("还说不准"));assertFalse(text.contains("NaN"))
+        }
+    }
+    @Test fun noteNeedsTheCurrentPermittedSourceAndExpiresAtOneDay(){
+        val note=ReviewInnerNote("其实我还挺期待那场电影",now)
+        val allowed=mutableSetOf(source)
+        assertTrue(note.visible(now+RelationshipProjector.DAY-1,source,allowed::contains))
+        assertFalse(note.visible(now+RelationshipProjector.DAY,source,allowed::contains))
+        assertFalse(note.visible(now,source.copy(version=2),allowed::contains))
+        assertTrue(RelationshipPrompt.render(state(),now,innerNote={note.text}){null}.contains(note.text))
+        allowed.clear()
+        assertFalse(note.visible(now,source,allowed::contains))
+    }
+    @Test fun incompleteAttributionSuppressesEvenARecentNote(){
+        val text=RelationshipPrompt.render(state(),now,true,{error("note consulted")}){error("source consulted")}
+        assertEquals(RelationshipPrompt.UNVERIFIED,text)
     }
     @Test fun sharedCausesKeepOriginalQuoteAndUsableVersionWithoutRepeatingIt(){
         val hidden=SourceRef("a",20,1)
@@ -33,7 +45,7 @@ class RelationshipPromptTest {
     }
     @Test fun promptLeavesExpressionToModelAndMarksSnapshotLag(){
         val text=render()
-        for(value in listOf("可能还没计入最新几轮聊天","不保证实时","自主理解","不是规定口气或行为的指令","不必逐项表达","过去的感受不等于此刻感受"))assertTrue(text.contains(value))
+        for(value in listOf("可能还没计入最新几轮聊天","不保证实时","自主理解","不必逐项表达","过去的感受不等于此刻感受"))assertTrue(text.contains(value))
     }
     @Test fun renderingDoesNotMutateCalculatedStateOrItsSources(){
         val input=RelationInput(source,now,now/RelationshipProjector.DAY,"关于关系",.3,0.0,.6,0.0)
@@ -58,7 +70,7 @@ class RelationshipPromptTest {
         assertEquals(1,calls)
         for(text in listOf(reply.messages.joinToString("\n"){it.content},actual)){
             assertEquals(1,Regex.fromLiteral(RelationshipPrompt.LABEL).findAll(text).count())
-            assertTrue(text.contains("开心=0.9"));assertTrue(text.contains(experience));assertTrue(text.contains("消息 12，版本 3"))
+            assertTrue(text.contains("很开心"));assertTrue(text.contains(experience));assertTrue(text.contains("消息 12，版本 3"))
             assertFalse(text.contains("当前关系小结"));assertFalse(text.contains("主动交流语气：固定句式"))
         }
     }

@@ -53,23 +53,16 @@ class CompanionSemanticAndroidTest {
         assertTrue(built.request.messages.any{"做陶艺杯子" in it.content&&"消息 ${t.userMessageId}，版本 1" in it.content})
         assertEquals(t.userMessageId.toString(),index.search("a",query,3).single().startMessageId)
     }
-    @Test fun completedBackgroundReviewIndexesNewExperienceBeforeTheNextParaphrasedQuery():Unit=runBlocking {
+    @Test fun backgroundReviewLeavesLegacyIndexEmpty():Unit=runBlocking {
         vault.setPurpose(ModelPurpose.CHAT,config.id)
-        val repo=ProcessingRepository(store);repo.saveMemoryRules(MemoryRules(reviewRounds=1))
-        val t=ledger.begin("a","做陶艺杯子",config.id);assertTrue(ledger.finish(t.id,t.attempt,"合成回复"))
-        val index=CompanionVectorIndex(core,access,fake)
-        index.index("a");assertEquals(0,calls) // No experience exists at reply completion.
-        val accounting=ReplyAccounting(store,access,reviewer(t),fake)
-        assertTrue(accounting.drain("a"));assertEquals(1,calls)
-        val relation=core.relationship("a").inputs;assertEquals(1,relation.size)
-        assertTrue(accounting.drain("a"));assertEquals(1,calls);assertEquals(1,reviews);assertEquals(relation,core.relationship("a").inputs)
-        val query="制作饮水器皿";assertEquals(0.0,MemoryRecall.relevance(query,"做陶艺杯子"),0.0)
-        assertEquals(t.userMessageId.toString(),index.search("a",query,3).single().startMessageId)
-        val scores=index.scores("a",query);assertEquals(1.0,scores.values.single(),0.0)
-        val prompt=core.snapshot("a",query,scores,200).prompt
-        assertTrue(prompt.contains("做陶艺杯子"));assertTrue(prompt.contains("消息 ${t.userMessageId}，版本 1"))
-        core.forget("a",t.userMessageId);assertTrue(index.search("a",query,3).isEmpty())
-        assertEquals("做陶艺杯子",store.messages().single{it.mine}.text)
+        ProcessingRepository(store).saveMemoryRules(MemoryRules(reviewRounds=1))
+        val t=ledger.begin("a","做陶艺杯子",config.id)
+        assertTrue(ledger.finish(t.id,t.attempt,"合成回复"))
+        val accounting=ReplyAccounting(store,access,reviewer(t))
+        assertTrue(accounting.drain("a"))
+        assertTrue(accounting.drain("a"))
+        assertEquals(1,reviews)
+        assertEquals(0,store.readableDatabase.rawQuery("SELECT COUNT(*) FROM companion_vectors",null).use { it.moveToFirst(); it.getInt(0) })
     }
     private fun reviewer(t:ChatTurn)=object:TextChatClient{
             override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {
@@ -85,28 +78,6 @@ class CompanionSemanticAndroidTest {
             }
         }
 
-    @Test fun committedReviewSurvivesIndexFailureAndExistingRebuildDoesNotRepeatAccounting():Unit=runBlocking { indexFailure(false) }
-    @Test fun committedReviewSurvivesIndexCancellationAndExistingRebuildDoesNotRepeatAccounting():Unit=runBlocking { indexFailure(true) }
-    private suspend fun indexFailure(cancel:Boolean)=coroutineScope {
-        vault.setPurpose(ModelPurpose.CHAT,config.id)
-        val repo=ProcessingRepository(store);repo.saveMemoryRules(MemoryRules(reviewRounds=1))
-        val t=ledger.begin("a","做陶艺杯子",config.id);assertTrue(ledger.finish(t.id,t.attempt,"合成回复"))
-        beforeReturn={if(cancel)throw CancellationException("synthetic index cancellation")else throw java.io.IOException("synthetic index failure")}
-        val accounting=ReplyAccounting(store,access,reviewer(t),fake)
-        if(cancel){val job=launch{accounting.drain("a")};job.join();assertTrue(job.isCancelled)}
-        else assertTrue(accounting.drain("a"))
-        assertEquals(1,reviews);assertEquals(1,core.experiences("a").size)
-        val relation=core.relationship("a").inputs;assertEquals(1,relation.size);assertTrue((relation.single().p?:0.0)>0)
-        assertTrue(repo.read{ReplyAccountingQueue.pending(it,"a").isEmpty()})
-        assertEquals(0,store.readableDatabase.rawQuery("SELECT count(*) FROM companion_vectors",null).use{it.moveToFirst();it.getInt(0)})
-        beforeReturn=null
-        assertTrue(accounting.drain("a"));assertEquals(1,reviews);assertEquals(1,calls);assertEquals(relation,core.relationship("a").inputs)
-        // Same rebuild entry called by MemoryEngine.afterChat/recover; no new scheduler or review.
-        val index=CompanionVectorIndex(core,access,fake);index.index("a");assertEquals(2,calls)
-        assertEquals(t.userMessageId.toString(),index.search("a","制作饮水器皿",3).single().startMessageId)
-        assertEquals(1,reviews);assertEquals(relation,core.relationship("a").inputs)
-        core.forget("a",t.userMessageId);assertTrue(index.search("a","制作饮水器皿",3).isEmpty())
-    }
     @Test fun withdrawnAndLateIndexResponseCannotReappear():Unit=runBlocking {
         val t=event("做陶艺杯子");val index=CompanionVectorIndex(core,access,fake)
         beforeReturn={core.forget("a",t.userMessageId)};index.index("a");beforeReturn=null
@@ -130,18 +101,18 @@ class CompanionSemanticAndroidTest {
         assertTrue(index.search("a","陶艺",3).isNotEmpty());assertTrue(index.search("a","制作饮水器皿",3).isEmpty());assertEquals(0,calls)
         assertFalse(core.snapshot("a","陶艺",tokenBudget=0).prompt.contains("做陶艺杯子"))
     }
-    @Test fun productionRecallToolReturnsSemanticOnlyExperienceToTheNextModelRequest():Unit=runBlocking {
-        val first=event("做陶艺杯子");val index=CompanionVectorIndex(core,access,fake);index.index("a")
+    @Test fun productionRecallToolReturnsLexicalExperienceToTheNextModelRequest():Unit=runBlocking {
+        val first=event("做陶艺杯子")
         val repo=ProcessingRepository(store);repo.saveMemoryRules(MemoryRules(proactiveRecall=true))
-        core.beginInput("a");val t=ledger.begin("a","制作饮水器皿","synthetic-chat")
-        val tools=MemoryTools(repo,t,"制作饮水器皿",repo.references("a","制作饮水器皿",t.userMessageId),index){true}
+        core.beginInput("a");val t=ledger.begin("a","陶艺","synthetic-chat")
+        val tools=MemoryTools(repo,t,"陶艺",repo.references("a","陶艺",t.userMessageId)){true}
         var steps=0
         val fakeChat=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult {
             steps++
-            return if(steps==1)TextChatResult.Success("",listOf(ChatToolCall("synthetic-call","agent_recall_search","""{"query":"制作饮水器皿","limit":3}""")))
+            return if(steps==1)TextChatResult.Success("",listOf(ChatToolCall("synthetic-call","agent_recall_search","""{"query":"陶艺","limit":3}""")))
             else {assertTrue(request.messages.any{it.role=="tool"&&"做陶艺杯子" in it.content&&first.userMessageId.toString() in it.content});TextChatResult.Success("来自经历的合成答案")}
         }}
-        val result=tools.run(config,"synthetic-only",TextChatRequest(listOf(WireMessage("system","仅合成测试"),WireMessage("user","制作饮水器皿"))),fakeChat)
+        val result=tools.run(config,"synthetic-only",TextChatRequest(listOf(WireMessage("system","仅合成测试"),WireMessage("user","陶艺"))),fakeChat)
         assertEquals("来自经历的合成答案",(result as TextChatResult.Success).text);assertEquals(2,steps)
     }
     @Test fun cancelledIndexAndSourceRevisionCannotPublishLateCache():Unit=runBlocking {

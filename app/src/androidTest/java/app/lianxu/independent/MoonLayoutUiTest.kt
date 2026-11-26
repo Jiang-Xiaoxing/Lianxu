@@ -23,6 +23,7 @@ class MoonLayoutUiTest {
     }
     @get:Rule(order=1)val ui=createAndroidComposeRule<ComponentActivity>()
     @Before fun show(){
+        if (method.methodName == "updateNoticeAcknowledgesAndHistoryRemainsAvailable") seedLegacyTestRoles(context, name)
         ui.runOnUiThread{vm=ViewModelProvider(ui.activity,object:ViewModelProvider.Factory{
             @Suppress("UNCHECKED_CAST")override fun <T:androidx.lifecycle.ViewModel> create(modelClass:Class<T>):T=
                 AppState(ui.activity.application,object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult=error("No network allowed")},"no-vault-$name") as T
@@ -30,6 +31,10 @@ class MoonLayoutUiTest {
         ui.waitUntil(15000){vm.ready}
         runBlocking{val code=InstalledBuild.read(context).versionCode;if(method.methodName!="updateNoticeAcknowledgesAndHistoryRemainsAvailable"&&LocalReleaseNotes.forVersion(code)!=null)LocalUpdateRepository(vm.processing.store).acknowledge(code)}
         ui.setContent{LianxuTheme{Lianxu(vm)}}
+        if (vm.friends.isEmpty()) {
+            ui.onNodeWithTag("first-encounter").performClick()
+            ui.onNodeWithTag("first-encounter-enter-home").performClick()
+        }
     }
     @Test fun userPersonaFieldsPersistTogether(){
         ui.onNodeWithTag("tab-3").performClick()
@@ -54,7 +59,7 @@ class MoonLayoutUiTest {
     @Test fun aboutUsesInstalledVersionAndAuthor(){
         ui.runOnIdle{vm.open("settings-info")}
         ui.onNodeWithText("姜小星").assertExists()
-        ui.onNodeWithTag("settings-version").performScrollTo().assertTextContains(InstalledBuild.read(context).versionName,substring=true)
+        ui.onNodeWithTag("settings-version").performScrollTo().assertTextEquals(InstalledBuild.read(context).versionLabel)
         ui.onNodeWithText("第三方致谢").performScrollTo().assertExists()
     }
     @Test fun emptyTabsAndIndependentMemoryReturn(){
@@ -64,10 +69,10 @@ class MoonLayoutUiTest {
         ui.runOnIdle{vm.createCompanion("合成记忆角色","合成角色设定","","","")}
         ui.waitUntil(10000){!vm.busy&&vm.friends.size==1}
         val id=vm.friends.single().id
-        ui.runOnIdle{vm.open("processing");vm.open("processing-role",id)}
+        ui.runOnIdle{vm.open("home");vm.open("processing-role",id)}
         ui.onNodeWithText("我写的").performClick();ui.onNodeWithTag("memory-add").assertIsDisplayed()
         ui.onNodeWithTag("back").performClick()
-        ui.runOnIdle{assertEquals("processing",vm.page);vm.open("detail",id);vm.open("processing-role",id)}
+        ui.runOnIdle{assertEquals("home",vm.page);vm.open("detail",id);vm.open("processing-role",id)}
         ui.onNodeWithTag("back").performClick()
         ui.runOnIdle{assertEquals("detail",vm.page)}
     }
@@ -98,7 +103,7 @@ class MoonLayoutUiTest {
         ui.runOnIdle{vm.open("settings-updates")}
         ui.onNodeWithTag("updates-current-toggle").assertTextContains(InstalledBuild.read(context).versionName,substring=true)
         ui.onNodeWithTag("settings-back").performClick()
-        ui.onNodeWithTag("roles-empty-chat").assertIsDisplayed()
+        ui.onNodeWithTag("home-title").assertIsDisplayed()
     }
     @Test fun backgroundStopsWindowFramesAndResumeKeepsHome(){
         val frames=java.util.concurrent.atomic.AtomicInteger()

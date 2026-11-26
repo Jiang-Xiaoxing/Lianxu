@@ -9,6 +9,21 @@ import java.io.File
 import java.nio.file.Files
 
 class DiagnosticJournalTest {
+    @Test fun tokenCountsAndOrdinaryKeysSurviveCredentialRedaction() {
+        val r = DiagnosticRedactor()
+        for (key in listOf("max_tokens","prompt_tokens","completion_tokens","total_tokens","context_tokens","token_limit","monkey")) {
+            assertEquals("$key: 4096", r.text("$key: 4096"))
+            val data=JsonObject().apply { addProperty(key,4096) }
+            assertEquals(data,r.clean(data))
+        }
+        assertFalse(r.text("""error {"mime_type":"image/png","data":"fixture-media"}""").contains("fixture-media"))
+        for (key in listOf("api_key","privateKey","access-token","refreshToken","auth_token","bearerToken","credential","openai_api_key","secretKey","token","key")) {
+            assertFalse(r.text("$key:leakme").contains("leakme"))
+            assertFalse(r.clean(JsonObject().apply { addProperty(key,"leakme") }).toString().contains("leakme"))
+        }
+        assertFalse(r.text("failure sk-xxx").contains("sk-xxx"))
+    }
+
     private fun directory()=Files.createTempDirectory("diagnostic-test-").toFile()
     private fun rows(bytes:ByteArray)=bytes.toString(Charsets.UTF_8).lineSequence().filter{it.isNotBlank()}.map{JsonParser.parseString(it).asJsonObject}.toList()
     private fun cleanup(dir:File){require(dir.name.startsWith("diagnostic-test-"));dir.deleteRecursively()}
