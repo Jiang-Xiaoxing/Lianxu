@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -72,7 +71,6 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
         "purposes" -> "models-purposes"; "edit" -> "model-editor"; "providers" -> "model-providers"; "voice-studio" -> "voice-studio"; else -> "models"
     }) }
     val tabs=rememberPageTabs(4)
-    val overviewTab=tabs.selected
     val servicesScroll=rememberLazyListState()
     val purposesScroll=rememberLazyListState()
     val voiceScroll=rememberLazyListState()
@@ -162,20 +160,15 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
             title=when(screen){"purposes"->"模型用途";"providers"->if(embeddingEditor)"选择向量服务商" else "选择聊天服务商";"edit"->if(embeddingEditor)"向量模型配置" else if(original==null)"添加 ${providerName(preset)}" else "编辑配置";else->"大模型配置"},
             onBack={back()},backTag="config-back",enabled=!state.saving,
             extra={when(screen){
-                "overview"->if(saveForPurpose==null) ModelPurposesButton {screen="purposes"} else Spacer(Modifier.width(48.dp))
                 "edit"->SaveAction(!state.busy&&!sharedWithOtherPurposes(draftId)&&ThinkingFields.customError(thinkingCustom)==null){ProcessDiagnostics.action(ProcessAction.SAVE_MODEL);reveal=false;if(saveForPurpose==ModelPurpose.CHAT)state.saveChatFromCreation(draft(),enteredKey(),original,originalRevision){key="";screen="overview"}else state.save(draft(),enteredKey(),if(embeddingEditor)ModelPurpose.EMBEDDING else null,original,originalRevision){key="";if(returnToChatOnDone&&openedDirectlyToEdit){openedDirectlyToEdit=false;onBack()}else screen="overview"}}
                 else->Spacer(Modifier.width(48.dp))
             }}
         )
         if(saveForPurpose==ModelPurpose.CHAT&&!embeddingEditor)Text("这里只设置全局聊天。其他用途正在使用的配置可直接选用，但不能在这里修改或删除；可另加全局聊天配置。",Modifier.padding(horizontal=UiSpace.page,vertical=8.dp).testTag("config-chat-context"),style=MaterialTheme.typography.bodySmall,color=ConfigMuted)
         if(panel=="overview"){
-            Row(Modifier.padding(horizontal=UiSpace.page,vertical=12.dp).fillMaxWidth().selectableGroup().clip(RoundedCornerShape(28.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(4.dp)){
-                listOf("聊天模型","向量","语音","画图").forEachIndexed{index,label->
-                    Tab(selected=overviewTab==index,onClick={tabs.select(index)},
-                        modifier=Modifier.weight(1f).heightIn(min=UiSpace.action).clip(RoundedCornerShape(24.dp)).background(if(overviewTab==index)Paper else Color.Transparent).testTag(listOf("config-tab-chat","config-tab-embedding","config-tab-voice","config-tab-image")[index]),
-                        selectedContentColor=ConfigInk,unselectedContentColor=ConfigGreen,text={Text(label,style=MaterialTheme.typography.labelMedium,maxLines=1)})
-                }
-            }
+            SlidingPageTabs(tabs, listOf("聊天模型","向量","语音","画图"),
+                listOf("config-tab-chat","config-tab-embedding","config-tab-voice","config-tab-image"),
+                "config-tab-indicator", inactive = ConfigGreen, labelStyle = MaterialTheme.typography.labelMedium)
             if(saveForPurpose!=null){
                 LazyColumn(Modifier.fillMaxSize().testTag("config-overview"),state=purposesScroll,contentPadding=PaddingValues(UiSpace.page),verticalArrangement=Arrangement.spacedBy(16.dp)){
                     if(state.status.isNotBlank())item("status"){Notice(state.status,state.statusError)}
@@ -367,10 +360,6 @@ private val ThinkingSelected:Color @Composable get()=lerp(Paper,Ink,.08f)
     deleting?.let{config->AlertDialog(onDismissRequest={deleting=null},title={Text("删除这份配置？")},text={Text("同时清除保存的密钥。聊天记录不受影响。")},confirmButton={TextButton(onClick={state.delete(config);deleting=null;key="";reveal=false;screen="overview"}){Text("确认删除")}},dismissButton={TextButton(onClick={deleting=null}){Text("取消")}})}
 }
 
-@Composable
-private fun ModelPurposesButton(onClick:()->Unit) {
-    TextButton(onClick,modifier=Modifier.heightIn(min=48.dp).testTag("config-open-purposes")){Text("用途分工")}
-}
 
 // Keep the editor and advanced fields in separate DEX methods from the navigation branches.
 @Composable

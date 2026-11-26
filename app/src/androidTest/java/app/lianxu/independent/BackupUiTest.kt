@@ -64,7 +64,7 @@ class BackupUiTest {
     private fun swipeTab(left:Boolean){ui.onNodeWithTag("role-archive-page").performTouchInput{swipe(Offset(width*(if(left).8f else .2f),height*.5f),Offset(width*(if(left).2f else .8f),height*.5f),400)}}
     @Test fun swipeDirectionsBoundariesAndClicksKeepSelectedTabAndPanelTogether(){
         show()
-        fun data(){ui.onNodeWithTag("backup-tab-data").assertIsSelected();ui.onNodeWithTag("backup-role-entry").assertExists();ui.onNodeWithTag("backup-export-diagnostics").assertDoesNotExist()}
+        fun data(){ui.onNodeWithTag("backup-tab-indicator").assertExists();ui.onNodeWithTag("backup-tab-data").assertIsSelected();ui.onNodeWithTag("backup-role-entry").assertExists();ui.onNodeWithTag("backup-export-diagnostics").assertDoesNotExist()}
         fun diagnostic(){ui.onNodeWithTag("backup-tab-diagnostics").assertIsSelected();ui.onNodeWithTag("backup-export-diagnostics").assertExists();ui.onNodeWithTag("backup-role-entry").assertDoesNotExist()}
         ui.capturePagerDrag("backup")
         data();swipeTab(false);data();swipeTab(true);diagnostic();swipeTab(true);diagnostic();shot("swipe-diagnostics")

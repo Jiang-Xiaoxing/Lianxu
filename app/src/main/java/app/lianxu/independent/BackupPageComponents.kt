@@ -22,12 +22,30 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 
-@Composable internal fun BackupTabs(selected:Int,enabled:Boolean,select:(Int)->Unit){
-    Row(Modifier.padding(horizontal=UiSpace.page,vertical=12.dp).fillMaxWidth().height(IntrinsicSize.Min).selectableGroup().clip(RoundedCornerShape(28.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(4.dp)){
-        listOf("备份与恢复","诊断日志").forEachIndexed{index,title->
-            Tab(selected==index,{select(index)},enabled=enabled,
-                modifier=Modifier.weight(1f).fillMaxHeight().heightIn(min=UiSpace.action).clip(RoundedCornerShape(24.dp)).background(if(selected==index)Paper else Color.Transparent).testTag(if(index==0)"backup-tab-data"else"backup-tab-diagnostics"),
-                selectedContentColor=Ink,unselectedContentColor=Muted,text={Text(title,style=MaterialTheme.typography.labelLarge,textAlign=androidx.compose.ui.text.style.TextAlign.Center)})
+@Composable internal fun BackupTabs(tabs: PageTabs, enabled: Boolean) {
+    SlidingPageTabs(tabs, listOf("备份与恢复", "诊断日志"), listOf("backup-tab-data", "backup-tab-diagnostics"),
+        "backup-tab-indicator", enabled)
+}
+
+@Composable internal fun SlidingPageTabs(tabs: PageTabs, labels: List<String>, tags: List<String>,
+    indicator: String, enabled: Boolean = true, inactive: Color = Muted,
+    labelStyle: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.labelLarge) {
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = UiSpace.page, vertical = 12.dp)
+        .clip(RoundedCornerShape(28.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(4.dp)) {
+        val width = maxWidth / labels.size
+        val position = (tabs.pager.currentPage + tabs.pager.currentPageOffsetFraction).coerceIn(0f, labels.lastIndex.toFloat())
+        Box(Modifier.matchParentSize()) {
+            Box(Modifier.offset(x = width * position).width(width).fillMaxHeight()
+                .background(Paper, RoundedCornerShape(24.dp)).testTag(indicator))
+        }
+        Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).selectableGroup()) {
+            labels.forEachIndexed { index, title ->
+                Tab(tabs.selected == index, { tabs.select(index) }, enabled = enabled,
+                    modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = UiSpace.action).clip(RoundedCornerShape(24.dp)).testTag(tags[index]),
+                    selectedContentColor = Ink, unselectedContentColor = inactive,
+                    text = { Text(title, color = softColor(if (tabs.selected == index) Ink else inactive),
+                        style = labelStyle, maxLines = 1) })
+            }
         }
     }
 }

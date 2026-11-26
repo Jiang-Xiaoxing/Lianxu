@@ -1,5 +1,6 @@
 package app.lianxu.independent
 
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -26,6 +27,10 @@ private class BadgeArt(val paper:Color,val ink:Color,body:String,detail:String){
     val lines=detail.takeIf{it.isNotEmpty()}?.let{PathParser().parsePathString(it).toPath()}
 }
 private val badgeArt=mapOf(
+    "voice" to BadgeArt(Color(0xFFE3ECE5),Color(0xFF4C7759),"M4 11h2v2H4Z","M8 8v8 M12 4v16 M16 7v10 M20 10v4"),
+    "play" to BadgeArt(Color(0xFFF5E9DA),Color(0xFFA66E38),"M8.5 6.4c0-1.15 1.26-1.85 2.25-1.24l8.35 5.1c.94.58.94 1.94 0 2.52l-8.35 5.1c-.99.61-2.25-.09-2.25-1.24V6.4Z",""),
+    "design" to BadgeArt(Color(0xFFF5E9DA),Color(0xFFA66E38),"M10.5 4.2 Q11.5 9.5 16.5 11.5 Q11.5 13.5 10.5 19 Q9.5 13.5 4.5 11.5 Q9.5 9.5 10.5 4.2Z","M18 4v4.2 M15.9 6.1h4.2 M17.2 15.8v2.8 M15.8 17.2h2.8"),
+    "clone" to BadgeArt(Color(0xFFE3ECE5),Color(0xFF4C7759),"M8.8 6.7a3.2 3.2 0 0 1 6.4 0v3.8a3.2 3.2 0 0 1 -6.4 0Z","M5.6 10.8a6.4 6.4 0 0 0 12.8 0 M12 17.2v3.3 M9.2 20.5h5.6"),
     "model" to BadgeArt(Color(0xFFF5E9DA),Color(0xFFA66E38),"M11 3 Q12 9 18 12 Q12 14 10 21 Q9 15 3 12 Q9 10 11 3Z","M18 3v5 M15.5 5.5h5"),
     "purposes" to BadgeArt(Color(0xFFEFE6F2),Color(0xFF7C588C),"M8 5a3 3 0 1 0 .1 0Z M16 13a3 3 0 1 0 .1 0Z","M3 8h2 M11 8h10 M3 16h10 M19 16h2"),
     "memory" to BadgeArt(Color(0xFFF4E5DC),Color(0xFFB4634A),"M6 4 Q6 3 8 3 H16 Q18 3 18 5 V21 L12 17 L6 21Z","M12 6l1 3 3 1-3 1-1 3-1-3-3-1 3-1Z"),
@@ -39,15 +44,26 @@ private val badgeArt=mapOf(
 )
 
 @Composable internal fun DirectoryBadge(icon:String){
-    val art=badgeArt.getValue(if(icon=="heart")"about" else icon)
+    val art=badgeArt.getValue(when(icon) { "heart" -> "about"; "playing" -> "voice"; else -> icon })
+    val playback = icon == "play" || icon == "playing"
+    val wave = if (icon == "playing" && android.animation.ValueAnimator.areAnimatorsEnabled())
+        rememberInfiniteTransition(label = "试听").animateFloat(.75f, 1.1f, infiniteRepeatable(tween(650), RepeatMode.Reverse), label = "声波") else null
     val dark=Paper.luminance()<.3f
     val ground=if(dark)lerp(Paper,art.ink,.24f) else art.paper
     val ink=if(dark)lerp(art.ink,art.paper,.62f) else art.ink
-    Box(Modifier.size(36.dp).testTag("badge-$icon").background(ground,RoundedCornerShape(11.dp)),contentAlignment=Alignment.Center){
+    Box(Modifier.size(if (playback) 38.dp else 36.dp).testTag("badge-$icon").background(ground,RoundedCornerShape(if (playback) 12.dp else 11.dp)),contentAlignment=Alignment.Center){
         Canvas(Modifier.size(20.dp)){
             withTransform({scale(size.width/24f,size.height/24f,pivot=Offset.Zero)}){
-                drawPath(art.shape,ink.copy(alpha=.14f))
-                drawPath(art.shape,ink,style=IconStroke)
+                if (icon == "playing") {
+                    val scale = wave?.value ?: 1f
+                    listOf(5f * scale, 7.5f / scale, 4f * scale).forEachIndexed { index, half ->
+                        val x = 7.3f + index * 4.7f
+                        drawLine(ink, Offset(x,12f-half), Offset(x,12f+half), 2.6f, StrokeCap.Round)
+                    }
+                    return@withTransform
+                }
+                drawPath(art.shape,ink.copy(alpha=if (playback) .18f else .14f))
+                drawPath(art.shape,ink,style=if (playback) Stroke(1.7f, cap=StrokeCap.Round, join=StrokeJoin.Round) else IconStroke)
                 art.lines?.let{drawPath(it,ink,style=IconStroke)}
             }
         }

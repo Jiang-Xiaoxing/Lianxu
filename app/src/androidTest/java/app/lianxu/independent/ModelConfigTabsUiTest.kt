@@ -75,11 +75,17 @@ class ModelConfigTabsUiTest {
         if(ui.onAllNodesWithTag("config-tab-chat").fetchSemanticsNodes().isEmpty()){
             ui.waitUntil(5000){ui.activity.hasWindowFocus()}
             ui.onNodeWithTag("config-back").performClick()
+            ui.onNodeWithTag("settings-models").performScrollTo().performClick()
             ui.waitUntil(5000){ui.onAllNodesWithTag("config-tab-chat").fetchSemanticsNodes().isNotEmpty()}
         }
         ui.onNodeWithTag("config-tab-chat").performClick().assertIsSelected()
     }
-    private fun purposes(){ui.onNodeWithTag("config-open-purposes").assertTextContains("用途分工").assertHeightIsAtLeast(48.dp).performClick()}
+    private fun purposes(){
+        ui.onNodeWithTag("config-open-purposes").assertDoesNotExist()
+        ui.onNodeWithTag("config-tab-indicator").assertExists()
+        ui.onNodeWithTag("config-back").performClick()
+        ui.onNodeWithTag("settings-purposes").performScrollTo().performClick()
+    }
     private fun swipeTab(left:Boolean){ui.onNodeWithTag("config-overview").performTouchInput{swipe(Offset(width*(if(left).8f else .2f),height*.55f),Offset(width*(if(left).2f else .8f),height*.55f),400)}}
     @Test fun swipesClicksEdgesAndVerticalListsKeepPurposeAndScrollState(){
         seed()
@@ -150,9 +156,6 @@ class ModelConfigTabsUiTest {
         ui.onNodeWithTag("auxiliary-vision-switch",useUnmergedTree=true).assertDoesNotExist()
         ui.waitUntil(5000){ui.activity.hasWindowFocus()}
         back()
-        ui.waitUntil(5000){ui.onAllNodesWithTag("config-overview").fetchSemanticsNodes().isNotEmpty()}
-        ui.onNodeWithTag("config-tab-chat").assertExists()
-        back()
         ui.waitUntil(5000){ui.onAllNodesWithTag("settings-toolbox").fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithTag("settings-toolbox").performScrollTo().performClick();ui.onNodeWithTag("tool-card-image").performClick()
         ui.onNodeWithTag("purpose-help-aux-vision").performScrollTo().performClick()
@@ -187,7 +190,7 @@ class ModelConfigTabsUiTest {
         }
         assertEquals(listOf(chat,embedding).toSet(),vault.list().toSet())
         ui.onNodeWithTag("purpose-select-aux-vision").assertDoesNotExist()
-        back();back();ui.onNodeWithTag("settings-home").assertIsDisplayed()
+        back();ui.onNodeWithTag("settings-home").assertIsDisplayed()
         ui.onNodeWithTag("settings-toolbox").performScrollTo().performClick();ui.onNodeWithTag("tool-card-image").performClick()
         ui.onNodeWithTag("purpose-select-aux-vision").assertTextContains(chat.modelId,substring=true);back();back()
         ui.onNodeWithTag("settings-models").performClick();ui.onNodeWithTag("config-tab-chat").assertIsSelected()
@@ -223,6 +226,13 @@ class ModelConfigTabsUiTest {
             for(night in listOf(false,true))for(dp in listOf(320,411)){
                 ui.runOnIdle{dark=night;width=dp;scale=if(dp==320)1.3f else 1f}
                 services();ui.onNodeWithTag("model-tabs-viewport").assertWidthIsEqualTo(dp.dp)
+                val indicator = ui.onNodeWithTag("config-tab-indicator").fetchSemanticsNode().boundsInRoot
+                for (tab in listOf("chat", "embedding", "voice", "image")) {
+                    val bounds = ui.onNodeWithTag("config-tab-$tab").fetchSemanticsNode().boundsInRoot
+                    assertEquals(indicator.top, bounds.top, .1f)
+                    assertEquals(indicator.bottom, bounds.bottom, .1f)
+                    assertEquals(indicator.width, bounds.width, 1f)
+                }
                 if(saved)ui.onNodeWithTag("config-edit-${chat.id}").performScrollTo().assertIsDisplayed() else ui.onNodeWithTag("config-services-empty").assertIsDisplayed()
                 shot("services",saved)
                 ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-add-chat"))

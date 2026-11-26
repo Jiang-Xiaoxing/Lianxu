@@ -92,9 +92,11 @@ class ModelConfigUiTest {
         File(dir,"$name.png").outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}
     }
     private fun edit(id:String="ui-a"){ui.onNodeWithTag("config-overview").performScrollToNode(hasTestTag("config-edit-$id"));ui.onNodeWithTag("config-edit-$id").performClick()}
-    @Test fun overviewOpensReviewSelectionAndReturnsToTheSameTab(){
-        val opener=ui.onNodeWithTag("config-open-purposes")
-        opener.performClick()
+    @Test fun settingsPurposesPersistsReviewSelectionAndReturnsHome(){
+        ui.onNodeWithTag("config-open-purposes").assertDoesNotExist()
+        back()
+        val opener=ui.onNodeWithTag("settings-purposes")
+        opener.performScrollTo().performClick()
         opener.assertDoesNotExist()
         ui.onNodeWithTag("purpose-select-aux-vision").assertDoesNotExist()
         ui.onNodeWithTag("purpose-select-memory").performScrollTo().assertTextContains("沿用聊天模型")
@@ -103,8 +105,8 @@ class ModelConfigUiTest {
         ui.onNodeWithTag("purpose-option-review-${b.id}").performClick()
         ui.waitUntil(10000){!state.busy && state.purposes[ModelPurpose.REVIEW]==b.id}
         back()
-        ui.onNodeWithTag("config-tab-chat").assertIsSelected()
-        opener.performClick()
+        ui.onNodeWithTag("settings-home").assertIsDisplayed()
+        opener.performScrollTo().performClick()
         review.performScrollTo().assertTextContains(b.modelId,substring=true)
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         opener.assertIsDisplayed()
