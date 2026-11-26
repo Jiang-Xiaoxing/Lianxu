@@ -28,7 +28,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 private val SettingsPaper:androidx.compose.ui.graphics.Color @Composable get()=Chrome
 private val SettingsInk:androidx.compose.ui.graphics.Color @Composable get()=Ink
 private val SettingsMuted:androidx.compose.ui.graphics.Color @Composable get()=Muted
-private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Line
 
 @Composable internal fun SettingsDirectory(vm:AppState,models:ModelConfigState=viewModel()) {
     val current=models.configs.firstOrNull {it.id==models.defaultId}
@@ -92,20 +91,26 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
 @Composable internal fun DataAndVersion(onBack:()->Unit) {
     val context=LocalContext.current
     val build=remember(context){runCatching{InstalledBuild.read(context)}.getOrNull()}
-    val version=build?.let{"${it.versionName}（${it.versionCode}）"}?:"暂时无法读取"
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
     SettingsPage("关于恋叙",onBack) {
-        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Paper).testTag("settings-info-page")) {
-            InformationRow("info","作者",AppInformation.AUTHOR)
-            InformationRow("storage","本地数据","角色、消息与配置保存在本机。API 密钥加密保存；全部导出时可明确选择包含密钥，包含时需要备份密码。请妥善保管备份和密码。卸载应用会清除本地数据。")
-            HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
-            InformationRow("model","当前能力","文字聊天和寻找角色使用所选模型；总结记忆会请求所选记忆模型。图片、视频与主动联系在工具包设置；主动回查与当场写记忆可在工具包的记忆工具中分别控制，主动回查默认开启，当场写记忆默认关闭。")
-            HorizontalDivider(Modifier.padding(start=68.dp,end=18.dp),color=SettingsLine)
-            InformationRow("info","应用版本",version,"settings-version")
-            InformationRow("info","开源许可",AppInformation.LICENSE)
-            val uri=androidx.compose.ui.platform.LocalUriHandler.current
-            TextButton(onClick={uri.openUri(AppInformation.REPOSITORY)}){Text("项目源码")}
-            TextButton(onClick={uri.openUri(AppInformation.LICENSE_URL)}){Text("查看许可")}
-            TextButton(onClick={uri.openUri(AppInformation.NOTICES_URL)}){Text("第三方致谢")}
+        Column(Modifier.fillMaxWidth().testTag("settings-info-page").padding(vertical=24.dp),
+            horizontalAlignment=Alignment.CenterHorizontally, verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            Text("恋叙", style=BrandStyle, color=Ink)
+            Text("安静陪伴，数据留在自己手里",style=MaterialTheme.typography.bodySmall,color=Muted)
+            Text(build?.versionLabel ?: "暂时无法读取", Modifier.testTag("settings-version")
+                .background(MaterialTheme.colorScheme.surfaceContainer,RoundedCornerShape(50)).padding(horizontal=12.dp,vertical=4.dp),
+                style=MaterialTheme.typography.labelMedium,color=Ink)
+        }
+        Column(Modifier.fillMaxWidth().background(Paper,RoundedCornerShape(18.dp)).padding(18.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            Text("隐私与存储",style=MaterialTheme.typography.labelSmall,color=Muted)
+            Text("角色、聊天、记忆与加密后的 API 密钥均保存在本机，不会自动上传。卸载应用会清除数据，换手机前请先做好备份。",style=MaterialTheme.typography.bodyMedium,color=Ink)
+        }
+        DirectoryGroup {
+            InformationRow("作者", AppInformation.AUTHOR)
+            InformationRow("开源许可", AppInformation.LICENSE)
+            InformationRow("项目源码", "›") { uri.openUri(AppInformation.REPOSITORY) }
+            InformationRow("查看许可", "›") { uri.openUri(AppInformation.LICENSE_URL) }
+            InformationRow("第三方致谢", "›", last=true) { uri.openUri(AppInformation.NOTICES_URL) }
         }
     }
 }
@@ -118,12 +123,11 @@ private val SettingsLine:androidx.compose.ui.graphics.Color @Composable get()=Li
     }
 }
 
-@Composable private fun InformationRow(icon:String,title:String,description:String,tag:String="") {
-    Row(Modifier.fillMaxWidth().padding(18.dp),verticalAlignment=Alignment.Top) {
-        ControlIcon(icon);Spacer(Modifier.width(14.dp))
-        Column(verticalArrangement=Arrangement.spacedBy(9.dp)) {
-            Text(title,style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Medium,color=SettingsInk)
-            Text(description,Modifier.then(if(tag.isEmpty())Modifier else Modifier.testTag(tag)),style=MaterialTheme.typography.bodySmall,color=SettingsMuted)
-        }
+@Composable private fun InformationRow(title:String,value:String,last:Boolean=false,open:(()->Unit)?=null) {
+    Row(Modifier.fillMaxWidth().then(if(open==null) Modifier else Modifier.clickable(role=Role.Button,onClick=open))
+        .heightIn(min=UiSpace.action).padding(horizontal=16.dp), verticalAlignment=Alignment.CenterVertically) {
+        Text(title,Modifier.weight(1f),style=MaterialTheme.typography.bodyMedium,color=Ink)
+        Text(value,style=MaterialTheme.typography.bodyMedium,color=Muted)
     }
+    if (!last) HorizontalDivider(Modifier.padding(horizontal=16.dp), thickness=.5.dp, color=Line)
 }

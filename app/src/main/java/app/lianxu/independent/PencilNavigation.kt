@@ -31,6 +31,8 @@ private val badgeArt=mapOf(
     "play" to BadgeArt(Color(0xFFF5E9DA),Color(0xFFA66E38),"M8.5 6.4c0-1.15 1.26-1.85 2.25-1.24l8.35 5.1c.94.58.94 1.94 0 2.52l-8.35 5.1c-.99.61-2.25-.09-2.25-1.24V6.4Z",""),
     "design" to BadgeArt(Color(0xFFF5E9DA),Color(0xFFA66E38),"M10.5 4.2 Q11.5 9.5 16.5 11.5 Q11.5 13.5 10.5 19 Q9.5 13.5 4.5 11.5 Q9.5 9.5 10.5 4.2Z","M18 4v4.2 M15.9 6.1h4.2 M17.2 15.8v2.8 M15.8 17.2h2.8"),
     "clone" to BadgeArt(Color(0xFFE3ECE5),Color(0xFF4C7759),"M8.8 6.7a3.2 3.2 0 0 1 6.4 0v3.8a3.2 3.2 0 0 1 -6.4 0Z","M5.6 10.8a6.4 6.4 0 0 0 12.8 0 M12 17.2v3.3 M9.2 20.5h5.6"),
+    "review" to BadgeArt(Color(0xFFEFE6F2),Color(0xFF7C588C),"M14.5 4.2a7.3 7.3 0 1 0 5.3 12.2A6.2 6.2 0 0 1 14.5 4.2Z","M17.5 5.2v3.6M15.7 7h3.6"),
+    "embedding" to BadgeArt(Color(0xFFE2EAF0),Color(0xFF4B6B88),"M12 3.1a2.4 2.4 0 1 0 .01 0Z M6 15.1a2.4 2.4 0 1 0 .01 0Z M18 15.1a2.4 2.4 0 1 0 .01 0Z","M10.5 7.5 6.8 15.5M13.5 7.5l3.7 8M8.5 17.5h7"),
     "model" to BadgeArt(Color(0xFFF5E9DA),Color(0xFFA66E38),"M11 3 Q12 9 18 12 Q12 14 10 21 Q9 15 3 12 Q9 10 11 3Z","M18 3v5 M15.5 5.5h5"),
     "purposes" to BadgeArt(Color(0xFFEFE6F2),Color(0xFF7C588C),"M8 5a3 3 0 1 0 .1 0Z M16 13a3 3 0 1 0 .1 0Z","M3 8h2 M11 8h10 M3 16h10 M19 16h2"),
     "memory" to BadgeArt(Color(0xFFF4E5DC),Color(0xFFB4634A),"M6 4 Q6 3 8 3 H16 Q18 3 18 5 V21 L12 17 L6 21Z","M12 6l1 3 3 1-3 1-1 3-1-3-3-1 3-1Z"),

@@ -22,7 +22,8 @@ class IncidentDiagnosticsTest {
         first.action(ProcessAction.OPEN_MODELS)
         first.view("settings") // recomposition must preserve the click
         val secret="user-supplied-private-message"
-        first.uncaught(IllegalStateException(secret))
+        class StorageReadFailure(message: String): RuntimeException(message)
+        first.uncaught(StorageReadFailure("cannot read: api_key=$secret " + "x".repeat(300)))
         first.uncaught(RuntimeException("second-fault"))
         val exit=System.currentTimeMillis()
         val next=ProcessEvidence(notes,74,exit+1)
@@ -37,7 +38,11 @@ class IncidentDiagnosticsTest {
                 val fault=all.single { it["event"]?.asString=="process.uncaught" }
                 assertEquals("settings",fault["page"].asString)
                 assertEquals("OPEN_MODELS",fault["action"].asString)
-                assertEquals("IllegalStateException",fault["exception_type"].asString)
+                assertEquals("StorageReadFailure",fault["exception_type"].asString)
+                if (b) {
+                    assertTrue(fault["error_summary"].asString.startsWith("cannot read: api_key=[已脱敏]"))
+                    assertEquals(240,fault["error_summary"].asString.length)
+                } else assertFalse(fault.has("error_summary"))
                 assertTrue(fault["app_frames"].asString.contains("IncidentDiagnosticsTest:"))
                 val exits=all.filter { it["event"]?.asString=="process.exit" }
                 assertEquals(setOf("JAVA_CRASH","LOW_MEMORY","USER_REQUESTED"),exits.map { it["reason"].asString }.toSet())
@@ -45,6 +50,21 @@ class IncidentDiagnosticsTest {
                 assertEquals(fault["trace"],exits.single { it["reason"].asString=="JAVA_CRASH" }["trace"])
                 assertFalse(exits.single { it["reason"].asString=="LOW_MEMORY" }.has("trace"))
             }
+        }
+    }
+
+    @Test fun basicFeatureEvidenceKeepsOnlyTypedOperationalValues() {
+        DiagnosticJournal(temp.newFolder(),"fixture").use { j ->
+            val privateText = "private chat text"
+            j.record("review.inner_note.ignored","trace",mapOf("reason" to "too_long","innerNote" to privateText))
+            j.record("memory.delete.experience","trace",mapOf("count" to 3,"reason" to privateText,"source" to privateText))
+            j.record("daily.plan.failure","trace",mapOf("kind" to "NETWORK","prompt" to privateText))
+            val output=j.export(false)
+            assertFalse(output.decodeToString().contains(privateText))
+            fun data(event:String)=rows(output).single { it["event"]?.asString==event }.getAsJsonObject("data")
+            assertEquals("too_long",data("review.inner_note.ignored")["reason"].asString)
+            assertEquals(3,data("memory.delete.experience")["count"].asInt)
+            assertEquals("NETWORK",data("daily.plan.failure")["kind"].asString)
         }
     }
 

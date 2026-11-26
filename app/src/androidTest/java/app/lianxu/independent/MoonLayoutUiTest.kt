@@ -59,7 +59,7 @@ class MoonLayoutUiTest {
     @Test fun aboutUsesInstalledVersionAndAuthor(){
         ui.runOnIdle{vm.open("settings-info")}
         ui.onNodeWithText("姜小星").assertExists()
-        ui.onNodeWithTag("settings-version").performScrollTo().assertTextContains(InstalledBuild.read(context).versionName,substring=true)
+        ui.onNodeWithTag("settings-version").performScrollTo().assertTextEquals(InstalledBuild.read(context).versionLabel)
         ui.onNodeWithText("第三方致谢").performScrollTo().assertExists()
     }
     @Test fun emptyTabsAndIndependentMemoryReturn(){

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -60,7 +61,7 @@ class BackupUiTest {
     private fun bytes()=instrument.context.contentResolver.openInputStream(saves.last())!!.use{it.readBytes()}
     private fun exportAll(keys:Boolean){val n=saves.size;ui.onNodeWithTag("backup-export-all").performScrollTo().performClick();ui.onNodeWithText("是否包含 API 密钥？").assertExists();assertEquals(n,saves.size);ui.onNodeWithTag(if(keys)"backup-with-keys"else"backup-without-keys").performClick();if(keys){ui.onNodeWithTag("backup-password").performTextInput("synthetic-test-password");ui.onNodeWithTag("backup-password-again").performTextInput("synthetic-test-password");ui.onNodeWithTag("backup-password-ok").performClick()};waitSaved(n)}
     private fun open(mode:String){openUri=saves.last();ui.onNodeWithTag("archive-open").performScrollTo().performClick();returnFromPicker();ui.waitUntil(30000){ui.onAllNodesWithTag("archive-mode-add").fetchSemanticsNodes().isNotEmpty()};ui.onNodeWithTag(if(mode=="ADD")"archive-mode-add"else"archive-mode-replace").performClick();ui.onNodeWithTag("archive-preview").performScrollTo().performClick();ui.waitUntil(30000){ui.onAllNodesWithTag("archive-impact").fetchSemanticsNodes().isNotEmpty()}}
-    private fun shot(label:String){ui.mainClock.advanceTimeBy(600);ui.waitForIdle();instrument.waitForIdleSync();SystemClock.sleep(350);val b=if(label=="replace-confirm"||label=="role-picker-in-page")instrument.uiAutomation.takeScreenshot()else ui.onNodeWithTag("backup-test-container").captureToImage().asAndroidBitmap();File(instrument.targetContext.filesDir,"backup-ui-$label.png").outputStream().use{b.compress(Bitmap.CompressFormat.PNG,100,it)};b.recycle()}
+    private fun shot(label:String){ui.mainClock.advanceTimeBy(600);ui.waitForIdle();instrument.waitForIdleSync();SystemClock.sleep(350);val b=if(label=="replace-confirm"||label=="role-picker-in-page"||label=="backup-help-sheet")instrument.uiAutomation.takeScreenshot()else ui.onNodeWithTag("backup-test-container").captureToImage().asAndroidBitmap();File(instrument.targetContext.filesDir,"backup-ui-$label.png").outputStream().use{b.compress(Bitmap.CompressFormat.PNG,100,it)};b.recycle()}
     private fun swipeTab(left:Boolean){ui.onNodeWithTag("role-archive-page").performTouchInput{swipe(Offset(width*(if(left).8f else .2f),height*.5f),Offset(width*(if(left).2f else .8f),height*.5f),400)}}
     @Test fun swipeDirectionsBoundariesAndClicksKeepSelectedTabAndPanelTogether(){
         show()
@@ -141,6 +142,28 @@ class BackupUiTest {
         ui.onNodeWithTag("backup-detailed").performClick();ui.waitUntil(15000){vm.diagnosticDetailed}
         assertEquals("1",runBlocking{vm.processing.store.preference(EXPORT_DETAIL_PREF,"0")});vm.diagnosticPersist=null
     }
+    @Test fun detailedExportConfirmationUsesDarkThemeAndKeepsBothActions() {
+        var errorColor = 0
+        var cancelled = false
+        var confirmed = false
+        ui.setContent {
+            LianxuTheme(true) {
+                errorColor = androidx.compose.material3.MaterialTheme.colorScheme.error.toArgb()
+                DiagnosticExportDialog({ cancelled = true }, { confirmed = true })
+            }
+        }
+        val button = ui.onNodeWithTag("confirm-detailed-export")
+        val bitmap = button.captureToImage().asAndroidBitmap().copy(Bitmap.Config.ARGB_8888, false)
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        bitmap.recycle()
+        assertTrue(pixels.count { it == errorColor } > pixels.size / 4)
+        ui.onNodeWithText("取消").performClick()
+        ui.runOnIdle { assertTrue(cancelled); assertFalse(confirmed) }
+        button.performClick()
+        ui.runOnIdle { assertTrue(confirmed) }
+    }
+
     @Test fun smallDarkLargeTextKeepsActionsTabsAndHelpReachable(){
         show(dark=true,big=true,small=true)
         assertEquals(ui.onNodeWithTag("backup-tab-data").fetchSemanticsNode().boundsInRoot.height,ui.onNodeWithTag("backup-tab-diagnostics").fetchSemanticsNode().boundsInRoot.height,.1f)
@@ -160,6 +183,11 @@ class BackupUiTest {
     @Test fun tabsHelpAndRoleCancelKeepPanelsExclusive(){
         show()
         ui.onNodeWithTag("backup-export-diagnostics").assertDoesNotExist()
+        ui.onNodeWithTag("backup-page-help").performClick()
+        ui.onNodeWithText("数据都在你本机，按需要选一种打包").assertIsDisplayed()
+        ui.onNode(hasText("从文件导入") and hasAnyAncestor(hasTestTag("backup-help-content"))).performScrollTo().assertIsDisplayed()
+        shot("backup-help-sheet")
+        ui.onNodeWithTag("backup-help-close").performClick()
         ui.onNodeWithTag("backup-role-entry").performClick()
         ui.onNodeWithTag("archive-export-seed-lin").performScrollTo().performClick()
         ui.onNodeWithTag("archive-export-seed-lin").assertIsSelected()

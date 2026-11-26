@@ -136,32 +136,29 @@ class ModelConfigTabsUiTest {
         ui.onNodeWithText("选择向量服务商").assertIsDisplayed();back()
         purposes();ui.onNodeWithTag("config-add-chat").assertDoesNotExist();ui.onNodeWithTag("config-services-empty").assertDoesNotExist()
         ui.onNodeWithTag("purpose-select-chat").assertExists()
-        ui.onNodeWithTag("purpose-help-embedding").performClick()
+        ui.onNodeWithTag("purpose-select-embedding").performScrollTo().assertTextContains("帮助更准确地翻找旧记忆，不配也能正常用").performClick()
         ui.activityRule.scenario.onActivity{it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE}
         ui.waitUntil(15000){ui.activity.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE}
         ui.onNodeWithTag("purpose-select-review").assertExists()
-        // Rotation recreates the transient dialog; its entry remains accessible on the same tab.
-        ui.onNodeWithTag("purpose-help-embedding").performScrollTo().performClick()
-        ui.onNodeWithText("所有角色共用用途选择，不设角色单独覆盖。先在“服务商”页添加并保存配置，再选择对应模型。保存配置和选择用途只保存设置，不发出请求。").performScrollTo().assertIsDisplayed()
-        ui.onNodeWithTag("purpose-help-close").assertIsDisplayed().performClick()
+        ui.onNodeWithTag("purpose-select-embedding").performScrollTo().performClick()
+        ui.onNodeWithTag("purpose-clear-embedding").assertIsDisplayed()
+        back()
         ui.activityRule.scenario.onActivity{it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}
         ui.waitUntil(15000){ui.activity.resources.configuration.orientation==Configuration.ORIENTATION_PORTRAIT}
-        ui.onNodeWithTag("purpose-help-chat").performScrollTo().assertContentDescriptionEquals("聊天说明").assertWidthIsEqualTo(48.dp).assertHeightIsEqualTo(48.dp).performClick()
-        ui.onNodeWithText("聊天时使用这个模型；未单独选择回顾模型时，心情与学习回顾也用它。").assertIsDisplayed()
-        ui.onNodeWithTag("purpose-clear-chat").assertDoesNotExist()
-        ui.onNodeWithTag("purpose-help-close").performClick()
-        ui.onNodeWithTag("purpose-help-memory").performScrollTo().performClick()
-        ui.onNodeWithText("主动总结记忆使用所选总结记忆模型；未选择时沿用聊天模型。").assertIsDisplayed()
-        ui.onNodeWithTag("purpose-help-close").performClick()
+        ui.onNodeWithTag("purpose-select-chat").performScrollTo().assertTextContains("日常对话与主动发消息").performClick()
+        ui.onNodeWithTag("purpose-clear-chat").assertIsDisplayed()
+        back()
+        ui.onNodeWithTag("purpose-select-memory").performScrollTo().assertTextContains("把长对话整理成长期记忆存档").performClick()
+        ui.onNodeWithTag("purpose-clear-memory").assertTextContains("沿用聊天模型")
+        back()
         ui.onNodeWithTag("auxiliary-vision-switch",useUnmergedTree=true).assertDoesNotExist()
         ui.waitUntil(5000){ui.activity.hasWindowFocus()}
         back()
         ui.waitUntil(5000){ui.onAllNodesWithTag("settings-toolbox").fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithTag("settings-toolbox").performScrollTo().performClick();ui.onNodeWithTag("tool-card-image").performClick()
-        ui.onNodeWithTag("purpose-help-aux-vision").performScrollTo().performClick()
-        ui.onNodeWithText("辅助看图开启时，所选辅助模型接收图片并提供观察，聊天模型接收观察与文字；关闭时图片直接发给所选聊天模型。不检测模型能力，不自动换模型或回退。图片只在发送时上传。").assertIsDisplayed()
+        ui.onNodeWithTag("purpose-select-aux-vision").performScrollTo().performClick()
+        ui.onNodeWithTag("purpose-clear-aux-vision").assertIsDisplayed()
         back()
-        ui.waitUntil(5000){ui.activity.hasWindowFocus() && ui.onAllNodesWithTag("purpose-help-close").fetchSemanticsNodes().isEmpty()}
         ui.onNodeWithTag("toolbox-image-page").assertIsDisplayed()
         back()
         ui.waitUntil(5000){ui.onAllNodesWithTag("toolbox-image-page").fetchSemanticsNodes().isEmpty()}

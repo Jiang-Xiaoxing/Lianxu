@@ -126,7 +126,7 @@ class SettingsHierarchyTest {
         ui.waitUntil(15000){ui.activity.resources.configuration.orientation==Configuration.ORIENTATION_PORTRAIT}
         shot("03-settings-after-rotation-real-app")
         ui.onNodeWithTag("settings-info").performScrollTo().performClick();ui.onNodeWithTag("settings-info-page").assertIsDisplayed()
-        ui.onNodeWithTag("settings-version").assertTextContains(InstalledBuild.read(context).versionName,substring=true)
+        ui.onNodeWithTag("settings-version").assertTextEquals(InstalledBuild.read(context).versionLabel)
         ui.onNodeWithTag("compact-switch").assertDoesNotExist();shot("04-data-version-secondary-real-app")
         ui.onNodeWithTag("settings-back").performClick();ui.onNodeWithTag("settings-home").assertIsDisplayed()
         listOf(0,3,1,2).forEach{i->ui.onNodeWithTag("tab-$i").performClick();ui.onNodeWithTag("tab-$i").assertIsSelected()}
