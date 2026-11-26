@@ -12,6 +12,7 @@ import java.util.UUID
 
 /** One live draft and its submission receipt survive an Activity rebuild together. */
 internal class ChatDraftState(text:String="",version:Long=0){
+    val quote=mutableStateOf<ChatReplyQuote?>(null)
     val image=mutableStateOf<PendingChatImage?>(null)
     val importing=mutableStateOf(false)
     val text=mutableStateOf(text)
@@ -313,10 +314,10 @@ class AppState @JvmOverloads constructor(application: Application, client:TextCh
         val f=Friend(UUID.randomUUID().toString(),name.trim(),bio.trim(),prompt.trim())
         save { store.add(listOf(f),demoGreeting=false); reload(); open("chat",f.id) }
     }
-    fun send(text:String,onPersisted:()->Unit={}):Boolean=sendImage(text,null,onPersisted)
-    fun sendImage(text:String,image:PendingChatImage?,onPersisted:()->Unit={}):Boolean {
+    fun send(text:String,onPersisted:()->Unit={}):Boolean=sendImage(text,null,onPersisted=onPersisted)
+    fun sendImage(text:String,image:PendingChatImage?,quote:ChatReplyQuote?=null,onPersisted:()->Unit={}):Boolean {
         if(saving||friends.none{it.id==activeId})return false
-        return runner.sendImage(activeId,text,image,onPersisted)
+        return runner.sendImage(activeId,text,image,quote,onPersisted)
     }
     fun cancelChat(friendId:String){runner.cancel(friendId)}
     fun cancelProcessing(id:String){memory.cancel(id)}

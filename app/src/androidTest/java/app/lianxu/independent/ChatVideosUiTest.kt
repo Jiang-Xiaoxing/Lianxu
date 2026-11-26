@@ -83,7 +83,10 @@ class ChatVideosUiTest {
         assertEquals(TurnState.COMPLETED,vm.turns.last{it.friendId=="seed-lin"}.state);assertEquals(1,calls.get())
         val sent=vm.messages.single{it.mine&&it.friendId=="seed-lin"&&it.image?.mime=="video/mp4"};shot("03-sent-video")
         ui.onNodeWithTag("message-image-${sent.id}",true).performClick();ui.onNodeWithTag("video-viewer").assertIsDisplayed();ui.onNodeWithTag("video-viewer-close").performClick()
-        ui.onNodeWithTag("message-image-${sent.id}",true).performTouchInput{longClick()};ui.onNodeWithText("这条消息的使用方式").assertIsDisplayed();ui.onNodeWithText("取消").performClick()
+        ui.onNodeWithTag("message-image-${sent.id}",true).performTouchInput{longClick()}
+        ui.onNodeWithTag("chat-menu-save").assertIsDisplayed()
+        ui.onNodeWithTag("chat-menu-quote").assertIsDisplayed()
+        ui.onNodeWithTag("chat-menu-dismiss").performClick()
     }
     @Test fun cancelAndInvalidVideoPreserveCaptionAndOldPendingOriginal(){
         show();ui.onNodeWithTag("message-input").performTextInput("保留合成视频附文");uri=null;ui.onNodeWithTag("chat-attach").performClick();ui.onNodeWithTag("message-input").assertTextEquals("保留合成视频附文")

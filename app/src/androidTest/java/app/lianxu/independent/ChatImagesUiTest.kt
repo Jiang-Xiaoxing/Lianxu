@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class ChatImagesUiTest {
     private val calls=AtomicInteger()
+    private val saves=AtomicInteger()
     private val client=object:TextChatClient{override suspend fun complete(config:ModelConfig,key:String,request:TextChatRequest):TextChatResult{calls.incrementAndGet();return TextChatResult.Success("这张合成图片已经收到了。")}}
     @get:Rule(order=0)val fixture=MockChatFixture({client},wrapFinalReply=false)
     @get:Rule(order=1)val ui=createAndroidComposeRule<MainActivity>()
@@ -42,7 +43,9 @@ class ChatImagesUiTest {
                 Handler(Looper.getMainLooper()).post{dispatchResult(requestCode,if(selected==null)Activity.RESULT_CANCELED else Activity.RESULT_OK,Intent().setData(selected))}
             }
         }}
-        ui.runOnUiThread{ui.activity.setContent{CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner){LianxuTheme(false){Lianxu(vm)}}}}
+        ui.runOnUiThread{ui.activity.setContent{CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner, LocalChatMediaSaver provides { _, ref, source ->
+            assertTrue(ref.mime.startsWith("image/")); source.input().use { assertTrue(it.read()>=0) }; saves.incrementAndGet(); Unit
+        }){LianxuTheme(false){Lianxu(vm)}}}}
     }
     private fun source():Uri{
         val b=Bitmap.createBitmap(320,260,Bitmap.Config.ARGB_8888);b.eraseColor(Color.rgb(199,218,173));val c=android.graphics.Canvas(b);val p=android.graphics.Paint().apply{color=Color.YELLOW;isAntiAlias=true};c.drawCircle(150f,130f,65f,p);p.color=Color.rgb(110,80,40);c.drawCircle(150f,130f,26f,p)
@@ -62,7 +65,13 @@ class ChatImagesUiTest {
         assertEquals(TurnState.COMPLETED,vm.turns.last{it.friendId=="seed-lin"}.state)
         val sent=vm.messages.single{it.friendId=="seed-lin"&&it.mine&&it.text.isEmpty()&&it.image!=null}
         ui.onNodeWithTag("pending-picture").assertDoesNotExist();ui.onNodeWithTag("message-image-${sent.id}",true).performClick();ui.onNodeWithTag("image-viewer").assertIsDisplayed();ui.onNodeWithTag("image-viewer-close").performClick()
-        ui.onNodeWithTag("message-image-${sent.id}",true).performTouchInput{longClick()};ui.onNodeWithText("这条消息的使用方式").assertIsDisplayed();ui.onNodeWithText("取消").performClick()
+        ui.onNodeWithTag("message-image-${sent.id}",true).performTouchInput{longClick()}
+        ui.onNodeWithTag("chat-menu-save").assertIsDisplayed()
+        ui.onNodeWithTag("chat-menu-quote").assertIsDisplayed()
+        ui.onNodeWithTag("chat-menu-copy").assertDoesNotExist()
+        ui.onNodeWithTag("chat-menu-save").performClick()
+        ui.waitUntil(5000) { saves.get()==1 }
+        ui.onNodeWithText("已保存到相册").assertIsDisplayed()
         pick();ui.onNodeWithTag("message-input").performTextInput("今天看到的花")
         ui.onNodeWithTag("send-message").performClick();ui.waitUntil(15000){vm.messages.any{it.text=="今天看到的花"&&it.image!=null}&&!vm.chatSending}
         assertEquals(TurnState.COMPLETED,vm.turns.last{it.friendId=="seed-lin"}.state)
