@@ -182,6 +182,27 @@ private suspend fun LazyListState.showEndOf(index:Int){
     var quoteHighlight by remember(friend.id) { mutableStateOf<Long?>(null) }
     var jumpJob by remember(friend.id) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val mediaSaver=LocalChatMediaSaver.current
+    val hasMediaPermission = LocalChatMediaPermissionCheck.current
+    var pendingSave by remember(friend.id) { mutableStateOf<ChatImageRef?>(null) }
+    fun saveMedia(ref: ChatImageRef) {
+        imageScope.launch {
+            val label=try {
+                mediaSaver(context,ref,vm.processing.read { db->ChatImages.source(db,ref) })
+                "已保存到相册"
+            } catch(e:kotlinx.coroutines.CancellationException) { throw e }
+            catch(_:SecurityException) { "没有相册写入权限" }
+            catch(_:Exception) { "保存失败，请重试" }
+            notice=System.nanoTime() to label
+        }
+    }
+    val storagePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val ref = pendingSave
+        pendingSave = null
+        if (ref != null && ref.friendId == friend.id) {
+            if (granted) saveMedia(ref)
+            else notice = System.nanoTime() to "未授予存储权限，无法保存到相册"
+        }
+    }
     LaunchedEffect(notice) { if(notice!=null) { kotlinx.coroutines.delay(1500);notice=null } }
     var viewport by remember{mutableStateOf(Rect.Zero)}
     var focused by remember{mutableStateOf(false)}
@@ -436,14 +457,10 @@ private suspend fun LazyListState.showEndOf(index:Int){
             "transcript" -> item.transcript?.invoke()
             "quote" -> { draftState.quote.value=ChatReplyQuote(item.message.id,item.message.mine,ChatReplyQuote.shorten(item.text),item.kind);draftVersion++ }
             "save" -> item.message.image?.let { ref ->
-                imageScope.launch {
-                    val label=try {
-                        mediaSaver(context,ref,vm.processing.read { db->ChatImages.source(db,ref) })
-                        "已保存到相册"
-                    } catch(e:kotlinx.coroutines.CancellationException) { throw e }
-                    catch(_:SecurityException) { "没有相册写入权限" }
-                    catch(_:Exception) { "保存失败，请重试" }
-                    notice=System.nanoTime() to label
+                if (hasMediaPermission(context)) saveMedia(ref)
+                else {
+                    pendingSave = ref
+                    storagePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
                 }
             }
         }
