@@ -65,6 +65,11 @@ class ToolReceiptFlowUiTest {
         assertTrue("提交后不能再显示暂存文案",staged.isEmpty())
         val unsaved=ui.onAllNodesWithText("回话没完成，这条没存下").fetchSemanticsNodes()
         assertTrue("提交成功后不能显示未保存",unsaved.isEmpty())
+        val thinkingTitles = ui.onAllNodesWithText("思考内容")
+        thinkingTitles.assertCountEquals(2)
+        listOf("先想一想。","然后再说。").forEachIndexed { index, text ->
+            if (ui.onAllNodesWithText(text).fetchSemanticsNodes().isEmpty()) thinkingTitles[index].performClick()
+        }
         val (first,capsule,second,body)=tops("先想一想。","我记住了","然后再说。","记下了，意面我也爱吃。")
         assertTrue("思考A要在胶囊上面：$first / $capsule",first<capsule)
         assertTrue("胶囊要在思考B上面：$capsule / $second",capsule<second)

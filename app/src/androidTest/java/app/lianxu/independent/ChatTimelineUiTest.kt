@@ -62,18 +62,41 @@ class ChatTimelineUiTest {
         ui.activityRule.scenario.onActivity{it.setContent{LianxuTheme(large){CompositionLocalProvider(LocalDensity provides Density(density,font)){Box(Modifier.requiredWidth((if(large)320 else 393).dp).fillMaxHeight()){Lianxu(vm)}}}}}
         ui.runOnIdle{vm.open("chat","seed-lin")};ui.onNodeWithTag("chat-history").performScrollToKey("group-$reply")
         val owner="message-$reply"
-        listOf(0,1).forEach{ui.onNodeWithTag("thinking-toggle-$owner-$it").performScrollTo().performClick()}
-        ui.onNodeWithTag("chat-history").performScrollToKey("group-$reply")
+        listOf(0,1).forEach { ui.onNodeWithTag("thinking-toggle-$owner-$it")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "已收起")) }
         ui.onNodeWithTag("thinking-text-$owner-0").assertDoesNotExist();ui.onNodeWithTag("thinking-text-$owner-1").assertDoesNotExist()
         val ids=listOf("thinking-$owner-0","tool-timeline-hit","tool-timeline-error","thinking-$owner-1","tool-timeline-record-failed","tool-timeline-record-saved")
         val nodes=ids.map{ui.onNodeWithTag("timeline-node-$it").fetchSemanticsNode().boundsInRoot}
         assertTrue(nodes.zipWithNext().all{(a,b)->a.bottom<=b.top+1});assertTrue(nodes.all{kotlin.math.abs(it.left-nodes.first().left)<1})
         ui.onNodeWithTag("tool-result-timeline-record-failed").assertExists();ui.onNodeWithTag("tool-result-timeline-record-saved").assertExists()
         ui.onNodeWithText("继续思考").assertDoesNotExist()
-        val bitmap=ui.onRoot().captureToImage().asAndroidBitmap();val x=(nodes.first().left+3*density).roundToInt();val bgX=(x+7*density).roundToInt();val begin=(nodes.first().top+(4+9*font)*density).roundToInt();val end=(nodes.last().top+(4+9*font)*density).roundToInt();var line=0
-        for(y in begin..end){val a=bitmap.getPixel(x,y);val b=bitmap.getPixel(bgX,y);if((0..2).sumOf{shift->kotlin.math.abs(((a ushr (shift*8))and 255)-((b ushr (shift*8))and 255))}>20)line++};bitmap.recycle()
-        assertTrue("Timeline rail disconnected: $line/${end-begin+1}",line.toFloat()/(end-begin+1)>.85f)
-        File(folder(),"$prefix-metrics.json").writeText(JSONObject().put("actualToolEvents",originalJournal.size).put("thinkingSegments",2).put("timelineNodes",nodes.size).put("railPaintFraction",line.toFloat()/(end-begin+1)).put("fontScale",font).put("nodes",nodes.map{it.toString()}).toString(2));shot("$prefix-collapsed-chat")
+        val bitmap=ui.onRoot().captureToImage().asAndroidBitmap()
+        val x=(nodes.first().left+8*density).roundToInt()
+        val bgX=(x+13*density).roundToInt()
+        val centers=nodes.map{(it.top+(5+9*font)*density).roundToInt()}
+        val gap=(10*density).roundToInt()
+        var line=0
+        var samples=0
+        for ((from,to) in centers.zipWithNext()) {
+            for (y in from+gap..to-gap) {
+                val a=bitmap.getPixel(x,y)
+                val b=bitmap.getPixel(bgX,y)
+                if ((0..2).sumOf{shift->kotlin.math.abs(((a ushr (shift*8))and 255)-((b ushr (shift*8))and 255))}>20) line++
+                samples++
+            }
+        }
+        val fraction=line.toFloat()/samples
+        assertTrue("节点间的轨道可见比例 $line/$samples", samples>0 && fraction>.90f)
+        for (index in listOf(1,2,4,5)) {
+            val pixel=bitmap.getPixel(x,centers[index])
+            val green=android.graphics.Color.green(pixel)
+            val red=android.graphics.Color.red(pixel)
+            if(index==1 || index==5) assertTrue("成功节点应为柔绿",green>red)
+            else assertTrue("失败节点应为柔赭红",red>green)
+        }
+        assertEquals("折叠思考圆环中间留白",bitmap.getPixel(bgX,centers.first()),bitmap.getPixel(x,centers.first()))
+        bitmap.recycle()
+        File(folder(),"$prefix-metrics.json").writeText(JSONObject().put("actualToolEvents",originalJournal.size).put("thinkingSegments",2).put("timelineNodes",nodes.size).put("railPaintFraction",fraction).put("fontScale",font).put("nodes",nodes.map{it.toString()}).toString(2));shot("$prefix-collapsed-chat")
         ui.onNodeWithTag("recall-toggle-timeline-hit").performClick();ui.waitUntil(10000){ui.onAllNodesWithText(recalled).fetchSemanticsNodes().isNotEmpty()}
         ui.onNodeWithTag("recall-toggle-timeline-error").assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription,"已收起"))
         ui.onNodeWithTag("recall-toggle-timeline-error").performScrollTo().performClick();ui.onNodeWithText("合成错误详情：该次操作未完成。").assertExists()

@@ -81,6 +81,7 @@ class RecallGroupingUiTest {
     }
     @Test fun interleavedThinkingKeepsBothSameResponseToolEvents(){
         render(listOf(row("a"),row("b")),thinking=true)
+        listOf(0,1).forEach { ui.onNodeWithTag("thinking-toggle-test-$it").performClick() }
         ui.onNodeWithText("之前").assertIsDisplayed();ui.onNodeWithText("之后").assertIsDisplayed()
         ui.onNodeWithTag("tool-result-a").assertIsDisplayed();ui.onNodeWithTag("tool-result-b").assertIsDisplayed()
         ui.onNodeWithTag("recall-toggle-b").performClick();ui.onNodeWithText("合成回想b").assertIsDisplayed()

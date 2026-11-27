@@ -16,8 +16,6 @@ import org.junit.*
 import org.junit.Assert.*
 import org.junit.rules.ExternalResource
 import java.io.File
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Native synthetic chunks through the real runner/UI. No network or provider credentials.
@@ -25,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class ChatReplyStreamingUiTest {
     private val allowBody=CompletableDeferred<Unit>()
     private val finish=CompletableDeferred<Unit>()
+    private val streamingJob=CompletableDeferred<kotlinx.coroutines.Job>()
     private val calls=AtomicInteger()
     private var emitReasoning=true
     private var failReply=false
@@ -38,6 +37,7 @@ class ChatReplyStreamingUiTest {
             syntheticCompanionStage(request)?:syntheticFinalReply(request,TextChatResult.Success(reply))
         override suspend fun streamEvents(config:ModelConfig,key:String,request:TextChatRequest,onEvent:suspend(TextStreamEvent)->Unit):TextChatResult {
             syntheticCompanionStage(request)?.let{return it}
+            streamingJob.complete(requireNotNull(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]))
             val call=calls.incrementAndGet()
             if(toolMode){
                 if(call==1){
@@ -78,6 +78,9 @@ class ChatReplyStreamingUiTest {
     }
     @get:Rule(order=2) val ui=createAndroidComposeRule<MainActivity>()
     private lateinit var vm:AppState
+    // Sample the label only once the 220ms page slide has settled.
+    private val pageSettleMs = 320L
+
     private fun start(input:String="今天有点累，想聊点轻松的。"){
         ui.activityRule.scenario.onActivity{vm=ViewModelProvider(it)[AppState::class.java]}
         ui.waitUntil(15000){vm.ready}
@@ -106,7 +109,7 @@ class ChatReplyStreamingUiTest {
         val label=ui.onNodeWithTag("replying-label",useUnmergedTree=true)
         try {
             ui.runOnUiThread { vm.back() }
-            ui.mainClock.advanceTimeBy(64)
+            ui.mainClock.advanceTimeBy(pageSettleMs)
             val bounds=label.getUnclippedBoundsInRoot()
             val glyphSamples=mutableSetOf<Int>()
             for (i in 0..16) {
@@ -171,30 +174,25 @@ class ChatReplyStreamingUiTest {
         val samples = mutableListOf<IntArray>()
         val instrument = InstrumentationRegistry.getInstrumentation()
         val dir = File(instrument.targetContext.getExternalFilesDir(null), "evidence-header-typing/$surface").apply { mkdirs() }
-        var previous = 0
+        var previous = pageSettleMs.toInt()
         // 2672 ms is the nearest 16 ms display frame to the 2670 ms cycle.
         for (time in times + times.map { it + 2672 }) {
             ui.mainClock.advanceTimeBy((time - previous).toLong())
             previous = time
             ui.waitForIdle()
             assertEquals(bounds, node.fetchSemanticsNode().boundsInWindow)
-            // The Compose test clock is paused. Wait for the Android window to present its
-            // updated buffer before UiAutomation samples the physical display.
-            val presented = CountDownLatch(1)
-            ui.runOnUiThread {
-                val view = ui.activity.window.decorView
-                view.postOnAnimation { view.postOnAnimation { view.postOnAnimation { presented.countDown() } } }
+            // Capture the rendered Compose node at the paused frame, including its actual bounds.
+            if (time == 800) {
+                val screen = ui.onRoot().captureToImage().asAndroidBitmap()
+                File(dir, "screen.png").outputStream().use { screen.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                screen.recycle()
             }
-            assertTrue("等待屏幕呈现采样帧", presented.await(5, TimeUnit.SECONDS))
-            val screen = instrument.uiAutomation.takeScreenshot()
-            if (time == 800) File(dir, "screen.png").outputStream().use { screen.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            val crop = Bitmap.createBitmap(screen, bounds.left.toInt(), bounds.top.toInt(), width, height)
+            val crop = node.captureToImage().asAndroidBitmap()
             File(dir, "glyph-$time.png").outputStream().use { crop.compress(Bitmap.CompressFormat.PNG, 100, it) }
             val pixels = IntArray(width * height)
             crop.getPixels(pixels, 0, width, 0, 0, width, height)
             samples += pixels
             crop.recycle()
-            screen.recycle()
         }
         fun distance(a: IntArray, b: IntArray) = a.indices.sumOf { kotlin.math.abs((a[it] and 255) - (b[it] and 255)) }
         val motion = distance(samples[1], samples[2])
@@ -210,12 +208,12 @@ class ChatReplyStreamingUiTest {
         ui.mainClock.autoAdvance = false
         try {
             ui.runOnUiThread { vm.back() }
-            ui.mainClock.advanceTimeBy(64)
+            ui.mainClock.advanceTimeBy(pageSettleMs)
             val listLabel = ui.onNodeWithTag("replying-label", useUnmergedTree = true)
             verifyTextSize(listLabel, 16)
             verifySweep(listLabel, "list")
             ui.runOnUiThread { vm.open("chat", "seed-lin") }
-            ui.mainClock.advanceTimeBy(64)
+            ui.mainClock.advanceTimeBy(pageSettleMs)
             val title = ui.onNodeWithTag("chat-title").assertTextEquals("对方正在输入…")
             verifyTextSize(title, 18)
             verifySweep(title, "header")
@@ -301,12 +299,7 @@ class ChatReplyStreamingUiTest {
         val owner="${turn.id}-${turn.attempt}"
         ui.onNodeWithTag("thinking-card-$owner").assertDoesNotExist()
         ui.onNodeWithTag("reply-draft-$owner").assertTextEquals(firstPart)
-        lateinit var owningJob:kotlinx.coroutines.Job
-        ui.runOnIdle{
-            val runner=AppState::class.java.getDeclaredField("runner").apply{isAccessible=true}.get(vm)
-            val jobs=ConversationRunner::class.java.getDeclaredField("jobs").apply{isAccessible=true}.get(runner) as Map<*,*>
-            owningJob=requireNotNull(jobs["seed-lin"] as? kotlinx.coroutines.Job)
-        }
+        val owningJob = kotlinx.coroutines.runBlocking { streamingJob.await() }
         ui.onNodeWithTag("cancel-turn-${turn.id}").performClick()
         ui.waitUntil(10000){!vm.chatSending}
         finish.complete(Unit)
