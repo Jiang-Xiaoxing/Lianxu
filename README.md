@@ -4,9 +4,9 @@
 
 恋叙是一款开源的 Android 角色陪伴应用。你写下她的性格、背景和你们的关系，从聊天开始认识彼此。相处中发生的事、她曾经怎样理解和回应、你后来给出的反馈，都可以留下记录，成为之后交流的依据。她可以表达自己的看法，也可以在有依据的相处中逐渐调整兴趣与习惯。
 
-当前正式版 **1.0.5**，支持 **Android 8.0 及以上**。使用时需要自行配置模型 API，费用由你选择的服务商收取。
+当前正式版 **1.0.7**，支持 **Android 8.0 及以上**。使用时需要自行配置模型 API，费用由你选择的服务商收取。
 
-[下载 APK](https://github.com/Jiang-Xiaoxing/Lianxu/releases/latest) · [这一版更新了什么](RELEASE-NOTES-1.0.5.md) · [开始使用](#开始使用) · [反馈问题](https://github.com/Jiang-Xiaoxing/Lianxu/issues)
+[下载 APK](https://github.com/Jiang-Xiaoxing/Lianxu/releases/latest) · [这一版更新了什么](RELEASE-NOTES-1.0.7.md) · [开始使用](#开始使用) · [反馈问题](https://github.com/Jiang-Xiaoxing/Lianxu/issues)
 
 <p>
   <img src="images/first-encounter.png" width="230" alt="首次进入恋叙，暖光门前的相遇入口">
@@ -178,7 +178,7 @@
 
 ## 更多资料
 
-- [1.0.5 更新公告](RELEASE-NOTES-1.0.5.md) · [历史版本](https://github.com/Jiang-Xiaoxing/Lianxu/releases)
+- [1.0.7 更新公告](RELEASE-NOTES-1.0.7.md) · [历史版本](https://github.com/Jiang-Xiaoxing/Lianxu/releases)
 - [开发与测试](docs/DEVELOPMENT.md) · [界面设计](docs/UI-DESIGN.md)
 - 历史架构说明保留了公开 v0.19 时的设计记录。当前实现请结合源码和对应版本公告阅读。[历史架构说明](docs/ARCHITECTURE.md)
 - 反馈时请写明应用版本、Android 版本、操作步骤，以及预期和实际发生的情况。[提交 Issue](https://github.com/Jiang-Xiaoxing/Lianxu/issues)

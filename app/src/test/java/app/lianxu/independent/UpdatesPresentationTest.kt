@@ -4,6 +4,17 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class UpdatesPresentationTest {
+    @Test fun release107HasThreeShortHighlightsAndPreservesPreviousEntry(){
+        val note=requireNotNull(LocalReleaseNotes.forVersion(66))
+        assertEquals("1.0.7",note.version)
+        val highlights=UpdatesPresentation.noticeSummary(note)
+        assertEquals(3,highlights.size)
+        assertTrue(highlights.all{it.length<=32})
+        for(word in listOf("暖纸","引用回复","免打扰","音色库")) assertTrue(word,highlights.any{word in it})
+        assertTrue(note.limits.any{"不要卸载" in it})
+        assertEquals("1.0.6",LocalReleaseNotes.forVersion(65)?.version)
+    }
+
     @Test fun release106HasThreeShortHighlightsAndPreservesPreviousEntry(){
         val note=requireNotNull(LocalReleaseNotes.forVersion(65))
         assertEquals("1.0.6",note.version)

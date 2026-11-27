@@ -20,6 +20,11 @@ internal object UpdatesPresentation {
     fun experienceFor(installedCode:Long)=experienceChanges.takeIf{installedCode==60L}
     /** Startup highlights only; the updates page keeps the complete facts and limitations. */
     fun noticeSummary(note:LocalReleaseNote):List<String> = when(note.code){
+        66L->listOf(
+            "重做聊天长按暖纸胶囊菜单，支持复制、保存相册与引用回复。",
+            "新增每日主动轻规划、夜间免打扰、独立回顾模型与三栏内心页。",
+            "重整设置与音色库体验，优化跟手滑块、视频抽帧与诊断脱敏。"
+        )
         65L->listOf(
             "聊天与思考提示词翻新，回复更贴合自写人设。",
             "全屏暖纸扉页新增「先进入主页」，个人资料提示更简洁。",
@@ -48,6 +53,13 @@ internal object UpdatesPresentation {
         else->summary(note)
     }
     fun summary(note:LocalReleaseNote):List<String> = when(note.code){
+        66L->listOf(
+            "重做聊天长按暖纸细胶囊菜单，支持按气泡复制、语音转文字、保存相册与引用回复。",
+            "主动联系升级为每日轻规划，新增夜间免打扰、后台运行引导与柔和页面过渡。",
+            "新增独立回顾模型，整合心情、学习与记忆三栏，并升级学习热度与轻回顾容错。",
+            "重整设置首页、模型用途、音色库、更新与关于页，新增跟手页签滑块并改用视频均匀抽帧。",
+            "修复中转站 token 字段兼容、无来源主动消息撤用、诊断深色确认框与脱敏误遮。"
+        )
         65L->listOf(
             "整体翻新前台聊天、默认思考与回话提示词，去除客服腔与后台英文状态词泄露。",
             "初次相遇的暖纸背景延伸至系统栏，可先进入主页；个人资料页去掉名字与称呼的重复提示。",

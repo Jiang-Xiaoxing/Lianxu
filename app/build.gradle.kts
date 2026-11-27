@@ -7,9 +7,9 @@ android {
         applicationId = "app.lianxu.independent"
         minSdk = 26
         targetSdk = 37
-        versionCode = localTestCode ?: 65
-        versionName = if (localTestCode == null) "1.0.6" else
-            "1.0.6-test.$localTestCode+" + providers.gradleProperty("lianxuSourceTree").get()
+        versionCode = localTestCode ?: 66
+        versionName = if (localTestCode == null) "1.0.7" else
+            "1.0.7-test.$localTestCode+" + providers.gradleProperty("lianxuSourceTree").get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
