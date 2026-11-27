@@ -2,8 +2,8 @@
 
 - 上一正式版为 v1.0.6（版本号 65）。使用本地留存的 `delivery-1.0.6-20261124/Lianxu-1.0.6.apk` 作为覆盖升级基线。
 - 新正式版为 1.0.7（版本号 66），包名为 `app.lianxu.independent`。两版证书 SHA-256 均为 `78e2ff6edc4468a700ce51e68681f03c38b11778918ec251fc3e367561e0c31b`。
-- 新 APK 共 18,833,625 字节，SHA-256 为 `cb1837abe9d07698b1d268d633b134c90206e6a6ece8e445c26393273c5d4bae`。APK Signature Scheme v2/v3 签名与 16 KiB 对齐校验通过，正式 APK 无调试标记（`pkgFlags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]`）。
-- 构建清单（`BUILD-INFO.json`）记录的编译提交为 `2514fa9acce250f8868650178ac211e5642ebe71`，`app` 源码树为 `36ecdea66cdc15282e31460ba91875054e371538`，与发布提交的 `app` 源码树完全一致。
-- 在 Android 15 / API 35 模拟器上先安装 1.0.6 并冷启动，随后 `adb install -r` 直接覆盖安装 1.0.7：`versionCode` 由 65 升至 66，`versionName` 为 `1.0.7`，`firstInstallTime` 保持一致（`2026-11-27 05:38:54`），冷启动正常、无异常崩溃。
-- 全量 JVM 单元测试 1703/1703 全部通过，0 失败、0 跳过；Release Lint 为 0 错误、49 条警告；更新页、启动提示与元数据模拟器界面测试 13/13 全绿零跳过。
+- 新 APK 共 18,833,625 字节，SHA-256 为 `8ad7a90a01c4801e4355da1a7f2cd71034c5dea5b727ab7ce66e92d5796b280b`。APK Signature Scheme v2/v3 签名与 16 KiB 对齐校验通过，正式 APK 无调试标记（`pkgFlags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]`）。
+- 构建清单（`BUILD-INFO.json`）记录的编译提交为 `c52e5f9b7b8a944458707984dfe2a97fcc72aa43`，`app` 源码树为 `c62f04a9fcec31bb934a7d2005275790979b0498`，与发布提交的 `app` 源码树完全一致。
+- 同证书覆盖升级已在 Android 15 / API 35 模拟器上用 `2514fa9` 实测（先装 1.0.6 冷启动，再 `adb install -r` 覆盖至 1.0.7，`versionCode` 由 65 升至 66、`firstInstallTime` 保持一致、冷启动无崩溃）；最终提交 `c52e5f9` 仅做思考与工具竖线 UI 美化及公告补充（不改包名、签名、清单或数据库结构），重签后通过同证书签名、16 KiB 对齐与非调试校验。
+- 全量 JVM 单元测试 1703/1703 全部通过，0 失败、0 跳过；Release Lint 为 0 错误、49 条警告；8 类聊天时间线/工具/更新模拟器 UI 测试 33/33 全绿零跳过。
 - 本次发布验证覆盖安装包构建、签名与 16 KiB 对齐、同证书 1.0.6→1.0.7 覆盖升级、全量 JVM 单测与定向界面测试。真实手机、长期后台省电策略、Android 8–9 实机存储权限弹窗及真实服务商长期表现仍需在真实设备上验证。
